@@ -1,0 +1,14 @@
+# Build products
+/dist/
+/riftops-ui.exe
+/rsrc_windows_amd64.syso
+/s
+
+# Frontend dependencies and output
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
+# Local tooling and operating-system files
+.DS_Store
+Thumbs.db

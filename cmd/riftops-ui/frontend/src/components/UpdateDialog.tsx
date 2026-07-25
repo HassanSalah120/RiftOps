@@ -1,0 +1,45 @@
+import { Shield, Download, X } from 'lucide-react';
+import type { Release } from '../types';
+
+export default function UpdateDialog({ release, onDismiss }: { release: Release | null; onDismiss: () => void }) {
+  if (!release) return null;
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+      <div className="hextech-modal max-w-sm w-full p-5 space-y-4 animate-[fadeIn_0.2s_ease-out] relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-primary shadow-[0_0_12px_#c8aa6e]" />
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Shield className="w-5 h-5 text-primary" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-primary bg-primary/10 border border-primary/20 px-2.5 py-0.5 rounded-full">
+              Update Available
+            </span>
+          </div>
+          <button onClick={onDismiss} className="text-text-dim hover:text-white transition">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div>
+          <h4 className="text-base font-black text-white">RiftOps v{release.version}</h4>
+          <p className="text-xs text-text-muted mt-1 leading-relaxed">
+            A new version of RiftOps is ready for download. Update recommended for patch and LCU compatibility.
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-2.5 pt-2 border-t border-white/[0.08]">
+          <button onClick={onDismiss} className="px-4 py-2 rounded-xl text-xs font-bold text-text-muted hover:text-white bg-white/[0.04] transition cursor-pointer border border-white/[0.06]">
+            Later
+          </button>
+          <a
+            href={release.url} target="_blank" rel="noreferrer"
+            className="btn-primary px-4 py-2 text-xs inline-flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Download</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
