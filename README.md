@@ -1,8 +1,47 @@
-# RiftOps desktop application
+# RiftOps
 
-This directory contains the maintained Go implementation of RiftOps for Windows
-and macOS. The core Riot/XMPP protocol handling is separated from the native
-Fyne dashboard and tray interface so stream transformations remain testable.
+RiftOps is a desktop hub for Riot games, with League presence controls and
+local League Client quality-of-life tools. It runs on Windows today, with macOS
+build support in the project.
+
+## Start here
+
+1. Download the latest `RiftOps-windows-amd64.exe` from the
+   [GitHub Releases page](https://github.com/HassanSalah120/RiftOps/releases).
+2. Put the file in a permanent folder, such as `C:\RiftOps`.
+3. Start **RiftOps**, choose the game you want, then press **Launch**.
+4. For League tools, open and sign in to the League Client first. In RiftOps,
+   select **Quality of Life** from the sidebar.
+
+There is no Riot password field in RiftOps. Riot Client handles your normal
+sign-in and remembers your session as usual.
+
+## What you can do
+
+- Launch League, VALORANT, Runeterra, 2XKO, or Riot Client from one app.
+- Set your League presence to online, offline, or mobile-style masking.
+- View League account data, match history, and skin collection.
+- Customize your League profile background with any champion skin.
+- Accept a ready check, save lobby role preferences, dodge in champion select,
+  play again after a match, and claim completed missions.
+- Use tray controls, diagnostics, update checks, and Windows startup settings.
+
+## League QoL quick guide
+
+Open League first, then use RiftOps → **Quality of Life**.
+
+| You want to… | In RiftOps |
+|---|---|
+| Change your profile background | Profile Customization → Champion → Skin → Apply Background |
+| Appear offline | Social & Presence → Appear Offline |
+| Save lane preferences | Queue & Lobby → choose roles → Save Roles |
+| Accept a queue pop | Queue & Lobby → Accept Ready Check |
+| Dodge | Champion Select → Dodge Game |
+| Return to the lobby | End of Game → Play Again |
+
+Controls become available only when League is in the right phase. If the
+Champion dropdown does not load after League opens, choose **Retry loading
+champions**.
 
 ## Implemented
 
