@@ -1,0 +1,58 @@
+name: Build macOS release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag to receive the macOS ZIP (for example v2.3.7)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package-macos:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Choose release tag
+        id: release
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          # Manual runs use the current main commit; release events use the tag.
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cmd/riftops-ui/frontend/package-lock.json
+
+      - name: Install Fyne packaging CLI
+        run: go install fyne.io/tools/cmd/fyne@v1.7.2
+
+      - name: Build signed-identity-free macOS ZIP
+        run: bash ./scripts/build-macos.sh "${{ steps.release.outputs.version }}" "${{ github.run_number }}"
+
+      - name: Attach macOS ZIP to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ steps.release.outputs.tag }}" dist/RiftOps-macOS.zip --clobber

@@ -15,13 +15,28 @@ if ! command -v fyne >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm is required to build the embedded dashboard." >&2
+  exit 1
+fi
+
+echo "[1/5] Building the embedded frontend..."
+pushd cmd/riftops-ui/frontend >/dev/null
+npm ci
+npm run build
+popd >/dev/null
+
+echo "[2/5] Running tests..."
 go test ./...
+echo "[3/5] Running go vet..."
 go vet ./...
+echo "[4/5] Packaging the macOS app..."
 fyne package --os darwin --src cmd/riftops-ui --release --tags desktop \
   --name RiftOps --app-id io.github.hassansalah120.riftops --app-version "$version" \
   --app-build "$build" --icon "$root/assets/riftops.png"
 
 mkdir -p dist
 rm -f dist/RiftOps-macOS.zip
+echo "[5/5] Creating the release archive..."
 ditto -c -k --sequesterRsrc --keepParent RiftOps.app dist/RiftOps-macOS.zip
 echo "Created dist/RiftOps-macOS.zip"
