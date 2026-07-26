@@ -55,4 +55,4 @@ jobs:
       - name: Attach macOS ZIP to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ steps.release.outputs.tag }}" dist/RiftOps-macOS.zip --clobber
+        run: gh release upload "${{ steps.release.outputs.tag }}" dist/RiftOps-macOS.zip --clobber --repo "${{ github.repository }}"
