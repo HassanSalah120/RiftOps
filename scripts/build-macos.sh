@@ -33,7 +33,7 @@ go vet ./...
 echo "[4/5] Packaging the macOS app..."
 fyne package --os darwin --src cmd/riftops-ui --release --tags desktop \
   --name RiftOps --app-id io.github.hassansalah120.riftops --app-version "$version" \
-  --app-build "$build" --icon "$root/assets/riftops.png"
+  --app-build "$build" --icon "$root/cmd/riftops-ui/app.png"
 
 # GitHub-hosted runners do not have a Developer ID certificate. Ad-hoc signing
 # still gives the archive a valid local code signature and prevents macOS from

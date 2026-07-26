@@ -370,6 +370,13 @@ func main() {
 		}
 	}()
 
+	// The macOS host owns the native WebKit event loop so RiftOps appears as a
+	// normal Dock application. Windows keeps its WebView2 window and tray flow.
+	if runtime.GOOS == "darwin" {
+		safeOpenDashboard(clientURL)
+		return
+	}
+
 	safeOpenDashboard(clientURL)
 	systray.Run(onTrayReady, onTrayExit)
 }

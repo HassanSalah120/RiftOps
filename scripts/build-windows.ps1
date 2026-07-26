@@ -67,7 +67,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Vet failed." }
     }
 
-    $Icon = (Resolve-Path -LiteralPath "assets/riftops.png").Path
+    $Icon = (Resolve-Path -LiteralPath "cmd/riftops-ui/app.png").Path
     $Manifest = "cmd/riftops-ui/riftops-ui.exe.manifest"
     Copy-Item -Force -LiteralPath "packaging/windows/app.manifest" -Destination $Manifest
 	Write-Host "[4/5] Compiling and packaging the desktop host..."
