@@ -709,11 +709,23 @@ func (lf *Lockfile) AutoRequeue(ctx context.Context) error {
 	return err
 }
 
+// StopQueue cancels matchmaking for the current lobby.
+func (lf *Lockfile) StopQueue(ctx context.Context) error {
+	_, err := lf.DoRequest(ctx, "DELETE", "/lol-lobby/v2/lobby/matchmaking/search")
+	return err
+}
+
 // AutoSetRoles sets the preferred primary and secondary roles in a lobby.
 func (lf *Lockfile) AutoSetRoles(ctx context.Context, first, second string) error {
-	_, err := lf.doJSON(ctx, "PUT", "/lol-lobby/v1/lobby/members/localMember/position-preferences", map[string]string{
+	payload := map[string]string{
 		"firstPreference": first, "secondPreference": second,
-	})
+	}
+	if _, err := lf.doJSON(ctx, "PUT", "/lol-lobby/v1/lobby/members/localMember/position-preferences", payload); err == nil {
+		return nil
+	}
+	// Both versions are present in recent LCU schemas. Some regional client
+	// builds only expose the v2 route.
+	_, err := lf.doJSON(ctx, "PUT", "/lol-lobby/v2/lobby/members/localMember/position-preferences", payload)
 	return err
 }
 
@@ -745,6 +757,10 @@ func (lf *Lockfile) SetAppearOffline(ctx context.Context, offline bool) error {
 	if offline {
 		availability = "offline"
 	}
+	return lf.SetAvailability(ctx, availability)
+}
+
+func (lf *Lockfile) SetAvailability(ctx context.Context, availability string) error {
 	_, err := lf.doJSON(ctx, "PUT", "/lol-chat/v1/me", map[string]string{"availability": availability})
 	return err
 }
@@ -774,11 +790,10 @@ func (lf *Lockfile) GetHonorBallot(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, "GET", "/lol-honor-v2/v1/ballot")
 }
 
-// HonorPlayer sends an honor to a summoner by ID.
-// category is one of: "SHOTCALLER", "HEART", "COOL"
-func (lf *Lockfile) HonorPlayer(ctx context.Context, summonerID int64, gameID int64, category string) error {
+// HonorPlayer submits one post-game honor vote.
+func (lf *Lockfile) HonorPlayer(ctx context.Context, summonerID uint64, puuid, honorType string, gameID uint64) error {
 	_, err := lf.doJSON(ctx, "POST", "/lol-honor-v2/v1/honor-player", map[string]any{
-		"summonerId": summonerID, "gameId": gameID, "honorCategory": category,
+		"summonerId": summonerID, "puuid": puuid, "gameId": gameID, "honorType": honorType,
 	})
 	return err
 }
@@ -794,35 +809,100 @@ func (lf *Lockfile) GetChampSelectSession(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/session")
 }
 
-// ClaimMissions claims all claimable missions and returns the count claimed.
-func (lf *Lockfile) ClaimMissions(ctx context.Context) (int, error) {
-	body, err := lf.DoRequest(ctx, "GET", "/lol-missions/v1/missions")
+// ClaimEventRewards claims every currently available event-pass reward. Mission
+// completion rewards themselves are granted by Riot automatically; the old
+// POST /lol-missions/v1/missions/{id} route is not part of current LCU builds.
+func (lf *Lockfile) ClaimEventRewards(ctx context.Context) (int, error) {
+	body, err := lf.DoRequest(ctx, "GET", "/lol-event-hub/v1/events")
 	if err != nil {
 		return 0, err
 	}
-	type mission struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
+	var events []struct {
+		EventID string `json:"eventId"`
 	}
-	var missions []mission
-	if err := json.Unmarshal(body, &missions); err != nil {
-		var wrapped struct {
-			Missions []mission `json:"missions"`
-		}
-		if wrappedErr := json.Unmarshal(body, &wrapped); wrappedErr != nil || wrapped.Missions == nil {
-			return 0, fmt.Errorf("decode missions response: %w", err)
-		}
-		missions = wrapped.Missions
+	if err := json.Unmarshal(body, &events); err != nil {
+		return 0, fmt.Errorf("decode active events: %w", err)
 	}
 	claimed := 0
-	for _, m := range missions {
-		if m.ID != "" && strings.EqualFold(m.Status, "COMPLETED") {
-			if _, err := lf.DoRequest(ctx, "POST", "/lol-missions/v1/missions/"+url.PathEscape(m.ID)); err == nil {
-				claimed++
-			}
+	for _, event := range events {
+		if event.EventID == "" {
+			continue
+		}
+		eventPath := "/lol-event-hub/v1/events/" + url.PathEscape(event.EventID) + "/reward-track"
+		unclaimedBody, err := lf.DoRequest(ctx, "GET", eventPath+"/unclaimed-rewards")
+		if err != nil {
+			continue
+		}
+		var unclaimed struct {
+			RewardsCount int `json:"rewardsCount"`
+		}
+		if json.Unmarshal(unclaimedBody, &unclaimed) != nil || unclaimed.RewardsCount <= 0 {
+			continue
+		}
+		if _, err := lf.DoRequest(ctx, "POST", eventPath+"/claim-all"); err == nil {
+			claimed += unclaimed.RewardsCount
 		}
 	}
 	return claimed, nil
+}
+
+type QoLState struct {
+	Phase          string `json:"phase"`
+	Availability   string `json:"availability"`
+	StatusMessage  string `json:"statusMessage"`
+	ProfileIconID  int    `json:"profileIconId"`
+	QueueState     string `json:"queueState"`
+	FirstRole      string `json:"firstRole"`
+	SecondRole     string `json:"secondRole"`
+	BackgroundSkin int    `json:"backgroundSkinId"`
+}
+
+// FetchQoLState gathers the small pieces of client state needed to render the
+// QoL dashboard accurately. Optional surfaces are allowed to be unavailable
+// outside their relevant gameflow phases.
+func (lf *Lockfile) FetchQoLState(ctx context.Context) (QoLState, error) {
+	phase, err := lf.GetGameflowPhase(ctx)
+	if err != nil {
+		return QoLState{}, err
+	}
+	state := QoLState{Phase: phase}
+
+	if body, err := lf.DoRequest(ctx, "GET", "/lol-chat/v1/me"); err == nil {
+		var chat struct {
+			Availability  string `json:"availability"`
+			StatusMessage string `json:"statusMessage"`
+			Icon          int    `json:"icon"`
+		}
+		if json.Unmarshal(body, &chat) == nil {
+			state.Availability = chat.Availability
+			state.StatusMessage = chat.StatusMessage
+			state.ProfileIconID = chat.Icon
+		}
+	}
+	if body, err := lf.DoRequest(ctx, "GET", "/lol-lobby/v2/lobby/matchmaking/search-state"); err == nil {
+		_ = json.Unmarshal(body, &state.QueueState)
+	}
+	if body, err := lf.DoRequest(ctx, "GET", "/lol-lobby/v2/lobby"); err == nil {
+		var lobby struct {
+			LocalMember struct {
+				FirstPositionPreference  string `json:"firstPositionPreference"`
+				SecondPositionPreference string `json:"secondPositionPreference"`
+			} `json:"localMember"`
+		}
+		if json.Unmarshal(body, &lobby) == nil {
+			state.FirstRole = lobby.LocalMember.FirstPositionPreference
+			state.SecondRole = lobby.LocalMember.SecondPositionPreference
+		}
+	}
+	if body, err := lf.DoRequest(ctx, "GET", "/lol-summoner/v1/current-summoner/summoner-profile"); err == nil {
+		var profile struct {
+			BackgroundSkinID int `json:"backgroundSkinId"`
+		}
+		if json.Unmarshal(body, &profile) == nil {
+			state.BackgroundSkin = profile.BackgroundSkinID
+		}
+	}
+	return state, nil
 }
 
 // findLeagueClient searches known install paths for LeagueClientUx.exe.

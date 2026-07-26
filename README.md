@@ -1,8 +1,8 @@
 # RiftOps
 
 RiftOps is a desktop hub for Riot games, with League presence controls and
-local League Client quality-of-life tools. It runs on Windows today, with macOS
-build support in the project.
+local League Client quality-of-life tools. Native downloads are available for
+Windows and macOS.
 
 ## Start here
 
@@ -33,8 +33,11 @@ xattr -dr com.apple.quarantine /Applications/RiftOps.app
 - Set your League presence to online, offline, or mobile-style masking.
 - View League account data, match history, and skin collection.
 - Customize your League profile background with any champion skin.
-- Accept a ready check, save lobby role preferences, dodge in champion select,
-  play again after a match, and claim completed missions.
+- Automatically accept ready checks or return to the lobby after a match.
+- Start or stop matchmaking, save lane preferences, and dodge during champion
+  select with a clear safety confirmation.
+- Browse profile icons visually, use any champion skin as your background,
+  honor players, and claim available event-track rewards.
 - Use tray controls, diagnostics, update checks, and Windows startup settings.
 
 ## League QoL quick guide
@@ -43,12 +46,15 @@ Open League first, then use RiftOps → **Quality of Life**.
 
 | You want to… | In RiftOps |
 |---|---|
-| Change your profile background | Profile Customization → Champion → Skin → Apply Background |
-| Appear offline | Social & Presence → Appear Offline |
-| Save lane preferences | Queue & Lobby → choose roles → Save Roles |
-| Accept a queue pop | Queue & Lobby → Accept Ready Check |
-| Dodge | Champion Select → Dodge Game |
-| Return to the lobby | End of Game → Play Again |
+| Change your profile background | Profile Studio → Champion → Skin → Apply |
+| Browse profile icons | Profile Studio → search an icon → select it |
+| Change presence or bio | Social → choose presence or update status message |
+| Save lane preferences | Queue Command → choose roles → Save Roles |
+| Automatically accept queue pops | Automation → Auto-accept ready checks |
+| Start or stop matchmaking | Queue Command → Start Queue / Stop Queue |
+| Dodge | Champion Select → Dodge Game → confirm |
+| Return to the lobby | Post Game → Play Again |
+| Claim event rewards | Post Game → Claim Event Rewards |
 
 Controls become available only when League is in the right phase. If the
 Champion dropdown does not load after League opens, choose **Retry loading
@@ -89,11 +95,11 @@ go install fyne.io/tools/cmd/fyne@v1.7.2
 Build a native package:
 
 ```powershell
-./scripts/build-windows.ps1 -Version 2.3.7 -Build 1
+./scripts/build-windows.ps1 -Version 2.4.0 -Build 1
 ```
 
 ```sh
-bash ./scripts/build-macos.sh 2.3.7 1
+bash ./scripts/build-macos.sh 2.4.0 1
 ```
 
 Outputs are `dist/RiftOps-windows-amd64.exe` and
@@ -102,7 +108,7 @@ macOS notarization.
 
 If Windows reports that the standard executable is in use, close RiftOps and
 build again. The script safely writes a versioned fallback such as
-`dist/RiftOps-windows-amd64-v2.3.7.exe` instead of replacing a running file.
+`dist/RiftOps-windows-amd64-v2.4.0.exe` instead of replacing a running file.
 
 ## League Quality of Life controls
 
@@ -110,14 +116,17 @@ League must be open before using these local-client controls. RiftOps detects
 the active League Client API and ignores stale lockfiles left after a prior
 League session.
 
-- **Social:** appear online/offline and update the chat status message.
+- **Automation:** persistent auto-accept and auto-return-to-lobby options work
+  while RiftOps is running, even if the QoL page is closed.
+- **Social:** use live Online, Away, Mobile, or Offline presence and update the
+  chat status message.
 - **Profile:** select a champion, choose any of its skins as a profile
-  background, and set a profile icon ID.
-- **Queue & Lobby:** accept an active ready check and save primary/secondary
-  role preferences from a lobby.
+  background, and search a visual profile-icon library.
+- **Queue & Lobby:** accept a ready check, start or stop matchmaking, and save
+  validated primary/secondary role preferences from a lobby.
 - **Champion Select:** dodge only during champion select.
-- **End of Game:** return to the lobby with Play Again only at end of game.
-- **Missions:** claim each completed mission through the local League client.
+- **End of Game:** return to the lobby, submit an honor vote, and claim
+  available event-track rewards using current League Client routes.
 
 Buttons are disabled outside their valid League phase. If profile data was
 requested before League finished connecting, use **Retry loading champions**.
@@ -138,7 +147,7 @@ dashboard. It keeps normal launch and presence preferences locally, while Riot
 Client remains responsible for authentication and remembered-login behavior.
 
 League-only panels use the locally running League Client API. They require the
-League Client to be open, and actions such as dodge, play again, mission claim,
+League Client to be open, and actions such as dodge, play again, reward claims,
 or profile customization are sent only when the local client confirms success.
 
 ## Safety boundary

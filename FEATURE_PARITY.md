@@ -47,18 +47,24 @@ Status meanings:
 
 ## Release gates
 
-## LCU QoL reliability update (v2.3.7)
+## LCU QoL reliability update
 
-- The dashboard exposes phase-aware ready-check acceptance, lobby role
-  preferences, champion-select dodge, end-of-game Play Again, mission claims,
-  social presence, and profile customization.
+- The dashboard exposes live client state, persistent auto-accept and
+  auto-return, queue start/stop, lobby role preferences, champion-select dodge,
+  post-game honor, event reward claims, social presence, and profile
+  customization.
 - Profile backgrounds use Champion → any Skin → Apply; they are not restricted
   to skins owned by the active account.
 - A League lockfile is probed before use. Stale lockfiles are ignored, and on
   Windows RiftOps reads the live LeagueClientUx process arguments when needed.
-- Request-path tests cover the profile background, dodge, role preference,
-  mission claim, and live-LCU probe behavior. A current live League session is
-  still needed for end-to-end validation.
+- Current Swagger evidence confirms the ready-check, queue, dual role
+  preference, dodge, Play Again, honor, chat, profile, and event-reward routes.
+  The removed mission POST route was replaced with the current event reward
+  claim-all flow.
+- Request-path tests cover the profile background, dodge, role preference
+  fallback, honor payload, event reward claim, QoL state, and live-LCU probe
+  behavior. A current live League session is still needed for end-to-end
+  validation.
 
 1. Run an end-to-end Riot login/chat/game smoke test on a current Windows 11 machine.
 2. Run the same smoke test on a supported macOS version and confirm Riot's actual app-bundle layout.

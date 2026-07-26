@@ -208,7 +208,7 @@ export function fetchDDChampions(): Promise<DDChampionList> {
 
 export interface DDProfileIcon {
   id: number;
-  image: string;
+  image: { full: string; sprite: string; group: string };
   name: string;
 }
 
@@ -224,53 +224,6 @@ export const DDBASE = 'https://ddragon.leagueoflegends.com';
 export function ddChampionIcon(version: string, champId: string) { return `${DDBASE}/cdn/${version}/img/champion/${champId}.png`; }
 export function ddChampionSplash(champId: string) { return `${DDBASE}/cdn/img/champion/splash/${champId}_0.jpg`; }
 export function ddProfileIcon(version: string, id: number) { return `${DDBASE}/cdn/${version}/img/profileicon/${id}.png`; }
-
-// ---------------------------------------------------------------------------
-// Lua Scripting
-// ---------------------------------------------------------------------------
-
-export interface LuaScript {
-  name: string;
-  code: string;
-  enabled: boolean;
-  onEvent: string;
-}
-
-export function fetchLuaScripts(): Promise<LuaScript[]> {
-  return fetch('/api/lua/scripts').then((r) => r.json());
-}
-
-export function saveLuaScript(name: string, code: string, enabled: boolean): Promise<void> {
-  return fetch('/api/lua/save', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, code, enabled }),
-  }).then((r) => { if (!r.ok) throw new Error('Failed to save script'); });
-}
-
-export function deleteLuaScript(name: string): Promise<void> {
-  return fetch('/api/lua/delete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  }).then((r) => { if (!r.ok) throw new Error('Failed to delete script'); });
-}
-
-export function toggleLuaScript(name: string, enabled: boolean): Promise<void> {
-  return fetch('/api/lua/toggle', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, enabled }),
-  }).then((r) => { if (!r.ok) throw new Error('Failed to toggle script'); });
-}
-
-export function runLuaScript(name: string): Promise<void> {
-  return fetch('/api/lua/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  }).then((r) => { if (!r.ok) throw new Error('Script error'); });
-}
 
 // ---------------------------------------------------------------------------
 // LCU (local client) — no RG_API_KEY needed
@@ -381,6 +334,13 @@ export function lcuAutoRequeue(): Promise<{ requeued: boolean }> {
   });
 }
 
+export function lcuStopQueue(): Promise<{ stopped: boolean }> {
+  return fetch('/api/lcu/stop-queue', { method: 'POST' }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Failed to stop matchmaking');
+    return r.json();
+  });
+}
+
 export function lcuAutoRoles(first: string, second: string): Promise<{ ok: boolean }> {
   return fetch('/api/lcu/auto-roles', {
     method: 'POST',
@@ -395,6 +355,47 @@ export function lcuAutoRoles(first: string, second: string): Promise<{ ok: boole
 export function fetchLCULoot(): Promise<any> {
   return fetch('/api/lcu/loot').then((r) => {
     if (!r.ok) return [];
+    return r.json();
+  });
+}
+
+export interface QoLPreferences {
+  autoAccept: boolean;
+  autoPlayAgain: boolean;
+}
+
+export interface QoLState {
+  phase: string;
+  availability: string;
+  statusMessage: string;
+  profileIconId: number;
+  queueState: string;
+  firstRole: string;
+  secondRole: string;
+  backgroundSkinId: number;
+}
+
+export function fetchQoLPreferences(): Promise<QoLPreferences> {
+  return fetch('/api/qol/preferences').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Failed to load QoL preferences');
+    return r.json();
+  });
+}
+
+export function saveQoLPreferences(preferences: QoLPreferences): Promise<QoLPreferences> {
+  return fetch('/api/qol/preferences', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(preferences),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Failed to save QoL preferences');
+    return r.json();
+  });
+}
+
+export function fetchQoLState(): Promise<QoLState> {
+  return fetch('/api/qol/state').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'League client is not connected');
     return r.json();
   });
 }

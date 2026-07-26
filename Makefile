@@ -1,4 +1,4 @@
-VERSION ?= 2.3.7
+VERSION ?= 2.4.0
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 

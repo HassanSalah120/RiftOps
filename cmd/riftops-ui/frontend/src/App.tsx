@@ -8,7 +8,6 @@ import LogViewer from './components/LogViewer';
 import Toast from './components/Toast';
 import Sidebar from './components/Sidebar';
 import RiotPanel from './components/RiotPanel';
-import ScriptsManager from './components/ScriptsManager';
 import MatchHistory from './components/MatchHistory';
 import SkinShowcase from './components/SkinShowcase';
 import QoLPanel from './components/QoLPanel';
@@ -384,14 +383,8 @@ export default function App() {
           )}
 
           {/* ═══════════════════════════════════════════════
-             SCRIPTS MANAGER
+             NAVIGATION
              ═══════════════════════════════════════════════ */}
-          {activeTab === 'scripts' && (
-            <div className="flex-1 overflow-y-auto p-4 animate-fadeIn">
-              <ScriptsManager />
-            </div>
-          )}
-
           {/* ═══════════════════════════════════════════════
              RIOT ACCOUNT TAB
              ═══════════════════════════════════════════════ */}
@@ -508,7 +501,7 @@ export default function App() {
                   Private Riot Client launcher with real-time presence masking, script execution, and LCU integration.
                 </p>
                 <div className="flex items-center justify-between text-[11px] text-text-dim pt-2 border-t border-white/[0.04]">
-                  <span>Version: v2.3.7</span>
+                  <span>Version: v2.4.0</span>
                   <span>Build: Windows x64</span>
                 </div>
               </div>

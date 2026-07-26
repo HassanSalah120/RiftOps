@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing GitHub release tag to receive the macOS ZIP (for example v2.3.7)
+        description: Existing GitHub release tag to receive the macOS ZIP (for example v2.4.0)
         required: true
         type: string
 

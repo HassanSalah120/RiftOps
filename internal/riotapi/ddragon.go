@@ -59,13 +59,13 @@ type ChampionList struct {
 }
 
 type ChampionData struct {
-	ID      string `json:"id"`
-	Key     string `json:"key"`
-	Name    string `json:"name"`
-	Title   string `json:"title"`
-	Blurb   string `json:"blurb"`
+	ID      string   `json:"id"`
+	Key     string   `json:"key"`
+	Name    string   `json:"name"`
+	Title   string   `json:"title"`
+	Blurb   string   `json:"blurb"`
 	Tags    []string `json:"tags"`
-	Partype string `json:"partype"`
+	Partype string   `json:"partype"`
 	Image   struct {
 		Full   string `json:"full"`
 		Sprite string `json:"sprite"`
@@ -99,9 +99,13 @@ type ProfileIconList struct {
 }
 
 type ProfileIconData struct {
-	ID    int    `json:"id"`
-	Image string `json:"image"`
-	Name  string `json:"name"`
+	ID    int `json:"id"`
+	Image struct {
+		Full   string `json:"full"`
+		Sprite string `json:"sprite"`
+		Group  string `json:"group"`
+	} `json:"image"`
+	Name string `json:"name"`
 }
 
 // GetProfileIcons fetches all profile icons from Data Dragon.

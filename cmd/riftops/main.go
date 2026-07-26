@@ -16,7 +16,7 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
-var version = "2.3.7"
+var version = "2.4.0"
 
 type stringList []string
 

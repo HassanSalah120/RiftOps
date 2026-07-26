@@ -23,9 +23,9 @@ import (
 	"fyne.io/systray"
 	"github.com/HassanSalah120/RiftOps/internal/diagnostics"
 	"github.com/HassanSalah120/RiftOps/internal/engine"
-	"github.com/HassanSalah120/RiftOps/internal/luascript"
 	"github.com/HassanSalah120/RiftOps/internal/model"
 	"github.com/HassanSalah120/RiftOps/internal/platform"
+	"github.com/HassanSalah120/RiftOps/internal/qol"
 	"github.com/HassanSalah120/RiftOps/internal/riotapi"
 	"github.com/HassanSalah120/RiftOps/internal/riotclient"
 	"github.com/HassanSalah120/RiftOps/internal/sessionvault"
@@ -37,9 +37,6 @@ import (
 //go:embed frontend/dist
 var frontendFS embed.FS
 
-//go:embed scripts/*.lua
-var defaultScriptsFS embed.FS
-
 //go:embed app.ico
 var appIco []byte
 
@@ -48,8 +45,8 @@ var appPng []byte
 
 var (
 	backendEngine *engine.Engine
-	luaEngine     *luascript.Engine
-	version       = "2.3.7"
+	qolManager    *qol.Manager
+	version       = "2.4.0"
 	port          = 24080
 	clientURL     = fmt.Sprintf("http://127.0.0.1:%d", port)
 
@@ -197,8 +194,15 @@ func main() {
 
 	path := *dataDir
 	if path == "" {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, "AppData", "Local", "riftops")
+		if runtime.GOOS == "windows" {
+			home, _ := os.UserHomeDir()
+			path = filepath.Join(home, "AppData", "Local", "riftops")
+		} else if configDir, configErr := os.UserConfigDir(); configErr == nil {
+			path = filepath.Join(configDir, "RiftOps")
+		} else {
+			home, _ := os.UserHomeDir()
+			path = filepath.Join(home, ".riftops")
+		}
 	}
 	if err := os.MkdirAll(path, 0755); err != nil {
 		logFatalStartup("RiftOps could not create data directory", err.Error())
@@ -224,38 +228,11 @@ func main() {
 		return
 	}
 	backendEngine = backend
-
-	// Initialize Lua scripting engine
-	{
-		luaDir := filepath.Join(filepath.Dir(path), "scripts")
-		api := luascript.RiftOpsAPI{
-			GetStatus:  func() string { return string(backendEngine.Snapshot().Status) },
-			SetStatus:  func(s string) { _ = backendEngine.SetStatus(context.Background(), model.Status(s)) },
-			GetGame:    func() string { return string(backendEngine.Snapshot().Game) },
-			IsMasking:  func() bool { return backendEngine.Snapshot().Enabled },
-			SetMasking: func(b bool) { _ = backendEngine.SetEnabled(context.Background(), b) },
-			Log:        func(msg string) { slog.Info("lua:script", "message", msg) },
-			GetConfig:  func(key string) string { return os.Getenv(key) },
-			SetConfig:  func(key, value string) { slog.Warn("lua:set_config not implemented", "key", key) },
-		}
-		_ = os.MkdirAll(luaDir, 0755)
-		entries, _ := defaultScriptsFS.ReadDir("scripts")
-		for _, entry := range entries {
-			target := filepath.Join(luaDir, entry.Name())
-			if _, err := os.Stat(target); os.IsNotExist(err) {
-				data, _ := defaultScriptsFS.ReadFile("scripts/" + entry.Name())
-				if data != nil {
-					_ = os.WriteFile(target, data, 0644)
-				}
-			}
-		}
-		le, err := luascript.NewEngine(luaDir, api)
-		if err != nil {
-			slog.Warn("Failed to initialize Lua engine", "error", err)
-		} else {
-			luaEngine = le
-		}
+	qolManager, err = qol.NewManager(filepath.Join(path, "qol.json"))
+	if err != nil {
+		slog.Warn("Could not load QoL preferences; using safe defaults", "error", err)
 	}
+	go qolManager.Run(context.Background())
 
 	broker.Start()
 
@@ -320,30 +297,25 @@ func main() {
 	mux.HandleFunc("/api/lcu/background-skins", originCheck(lcuBackgroundSkinsHandler))
 	mux.HandleFunc("/api/lcu/auto-accept", originCheck(lcuAutoAcceptHandler))
 	mux.HandleFunc("/api/lcu/auto-requeue", originCheck(lcuAutoRequeueHandler))
+	mux.HandleFunc("/api/lcu/stop-queue", originCheck(lcuStopQueueHandler))
 	mux.HandleFunc("/api/lcu/auto-roles", originCheck(lcuAutoRolesHandler))
 	mux.HandleFunc("/api/lcu/loot", originCheck(lcuLootHandler))
 	// QoL actions
 	mux.HandleFunc("/api/lcu/dodge", originCheck(lcuDodgeHandler))
 	mux.HandleFunc("/api/lcu/appear-offline", originCheck(lcuAppearOfflineHandler))
+	mux.HandleFunc("/api/lcu/availability", originCheck(lcuAvailabilityHandler))
 	mux.HandleFunc("/api/lcu/status-message", originCheck(lcuStatusMessageHandler))
 	mux.HandleFunc("/api/lcu/profile-background", originCheck(lcuProfileBackgroundHandler))
 	mux.HandleFunc("/api/lcu/profile-icon", originCheck(lcuProfileIconHandler))
 	mux.HandleFunc("/api/lcu/honor-ballot", originCheck(lcuHonorBallotHandler))
 	mux.HandleFunc("/api/lcu/honor-player", originCheck(lcuHonorPlayerHandler))
 	mux.HandleFunc("/api/lcu/play-again", originCheck(lcuPlayAgainHandler))
-	mux.HandleFunc("/api/lcu/claim-missions", originCheck(lcuClaimMissionsHandler))
+	mux.HandleFunc("/api/lcu/claim-event-rewards", originCheck(lcuClaimEventRewardsHandler))
 	mux.HandleFunc("/api/lcu/gameflow-phase", originCheck(lcuGameflowPhaseHandler))
 	mux.HandleFunc("/api/lcu/champ-select", originCheck(lcuChampSelectHandler))
+	mux.HandleFunc("/api/qol/preferences", originCheck(qolPreferencesHandler))
+	mux.HandleFunc("/api/qol/state", originCheck(qolStateHandler))
 	mux.HandleFunc("/lol-game-data/", lcuAssetProxyHandler)
-
-	// Lua Scripting routes
-	if luaEngine != nil {
-		mux.HandleFunc("/api/lua/scripts", originCheck(luaListHandler))
-		mux.HandleFunc("/api/lua/save", originCheck(luaSaveHandler))
-		mux.HandleFunc("/api/lua/delete", originCheck(luaDeleteHandler))
-		mux.HandleFunc("/api/lua/toggle", originCheck(luaToggleHandler))
-		mux.HandleFunc("/api/lua/run", originCheck(luaRunHandler))
-	}
 
 	distFS, err := fs.Sub(frontendFS, "frontend/dist")
 	if err != nil {
@@ -1049,110 +1021,6 @@ func ddragonProfileIconsHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(icons)
 }
 
-// ---------------------------------------------------------------------------
-// Lua Scripting Handlers
-// ---------------------------------------------------------------------------
-
-func luaListHandler(w http.ResponseWriter, r *http.Request) {
-	if luaEngine == nil {
-		_ = json.NewEncoder(w).Encode([]luascript.Script{})
-		return
-	}
-	_ = json.NewEncoder(w).Encode(luaEngine.List())
-}
-
-func luaSaveHandler(w http.ResponseWriter, r *http.Request) {
-	if luaEngine == nil {
-		httpError(w, "Lua engine not initialized", http.StatusInternalServerError)
-		return
-	}
-	var body struct {
-		Name    string `json:"name"`
-		Code    string `json:"code"`
-		Enabled bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpError(w, "Invalid request body", http.StatusBadRequest)
-		slog.Debug("luaSaveHandler decode", "error", err)
-		return
-	}
-	if err := luaEngine.Save(body.Name, body.Code, body.Enabled); err != nil {
-		httpError(w, "Failed to save script", http.StatusInternalServerError)
-		slog.Error("luaSaveHandler", "error", err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func luaDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	if luaEngine == nil {
-		httpError(w, "Lua engine not initialized", http.StatusInternalServerError)
-		return
-	}
-	var body struct{ Name string }
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpError(w, "Invalid request body", http.StatusBadRequest)
-		slog.Debug("luaDeleteHandler decode", "error", err)
-		return
-	}
-	if err := luaEngine.Delete(body.Name); err != nil {
-		httpError(w, "Failed to delete script", http.StatusInternalServerError)
-		slog.Error("luaDeleteHandler", "error", err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func luaToggleHandler(w http.ResponseWriter, r *http.Request) {
-	if luaEngine == nil {
-		httpError(w, "Lua engine not initialized", http.StatusInternalServerError)
-		return
-	}
-	var body struct {
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpError(w, "Invalid request body", http.StatusBadRequest)
-		slog.Debug("luaToggleHandler decode", "error", err)
-		return
-	}
-	if err := luaEngine.Toggle(body.Name, body.Enabled); err != nil {
-		httpError(w, "Failed to toggle script", http.StatusInternalServerError)
-		slog.Error("luaToggleHandler", "error", err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func luaRunHandler(w http.ResponseWriter, r *http.Request) {
-	if luaEngine == nil {
-		httpError(w, "Lua engine not initialized", http.StatusInternalServerError)
-		return
-	}
-	var body struct{ Name string }
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpError(w, "Invalid request body", http.StatusBadRequest)
-		slog.Debug("luaRunHandler decode", "error", err)
-		return
-	}
-	api := luascript.RiftOpsAPI{
-		GetStatus:  func() string { return string(backendEngine.Snapshot().Status) },
-		SetStatus:  func(s string) { _ = backendEngine.SetStatus(context.Background(), model.Status(s)) },
-		GetGame:    func() string { return string(backendEngine.Snapshot().Game) },
-		IsMasking:  func() bool { return backendEngine.Snapshot().Enabled },
-		SetMasking: func(b bool) { _ = backendEngine.SetEnabled(context.Background(), b) },
-		Log:        func(msg string) { slog.Info("lua:run", "name", body.Name, "message", msg) },
-	}
-	if err := luaEngine.Run(body.Name, api); err != nil {
-		httpError(w, "Script execution failed", http.StatusInternalServerError)
-		slog.Error("luaRunHandler", "error", err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // LCU (local client) Handlers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1383,12 +1251,32 @@ func lcuAutoRequeueHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
 		return
 	}
+	if !requireLCUPhase(w, r, lf, "Lobby") {
+		return
+	}
 	if err := lf.AutoRequeue(r.Context()); err != nil {
-		httpError(w, "Failed to requeue", http.StatusInternalServerError)
+		httpError(w, "Failed to start matchmaking", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"requeued": true})
+}
+
+func lcuStopQueueHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	if !requireLCUPhase(w, r, lf, "Matchmaking") {
+		return
+	}
+	if err := lf.StopQueue(r.Context()); err != nil {
+		httpError(w, "Failed to stop matchmaking", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"stopped": true})
 }
 
 func lcuAutoRolesHandler(w http.ResponseWriter, r *http.Request) {
@@ -1470,6 +1358,33 @@ func lcuAppearOfflineHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := lf.SetAppearOffline(r.Context(), body.Offline); err != nil {
 		httpError(w, "Failed to set offline status", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuAvailabilityHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Availability string `json:"availability"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	body.Availability = strings.ToLower(strings.TrimSpace(body.Availability))
+	allowed := map[string]bool{"chat": true, "away": true, "mobile": true, "offline": true}
+	if !allowed[body.Availability] {
+		httpError(w, "Availability must be chat, away, mobile, or offline", http.StatusBadRequest)
+		return
+	}
+	if err := lf.SetAvailability(r.Context(), body.Availability); err != nil {
+		httpError(w, "Failed to update presence", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1569,15 +1484,22 @@ func lcuHonorPlayerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		SummonerID int64  `json:"summonerId"`
-		GameID     int64  `json:"gameId"`
-		Category   string `json:"category"`
+		SummonerID uint64 `json:"summonerId"`
+		PUUID      string `json:"puuid"`
+		GameID     uint64 `json:"gameId"`
+		HonorType  string `json:"honorType"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if err := lf.HonorPlayer(r.Context(), body.SummonerID, body.GameID, body.Category); err != nil {
+	body.PUUID = strings.TrimSpace(body.PUUID)
+	body.HonorType = strings.ToUpper(strings.TrimSpace(body.HonorType))
+	if body.SummonerID == 0 || body.GameID == 0 || body.PUUID == "" || body.HonorType == "" {
+		httpError(w, "Honor player details are incomplete", http.StatusBadRequest)
+		return
+	}
+	if err := lf.HonorPlayer(r.Context(), body.SummonerID, body.PUUID, body.HonorType, body.GameID); err != nil {
 		httpError(w, "Failed to honor player", http.StatusInternalServerError)
 		return
 	}
@@ -1602,15 +1524,15 @@ func lcuPlayAgainHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-func lcuClaimMissionsHandler(w http.ResponseWriter, r *http.Request) {
+func lcuClaimEventRewardsHandler(w http.ResponseWriter, r *http.Request) {
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
 		return
 	}
-	count, err := lf.ClaimMissions(r.Context())
+	count, err := lf.ClaimEventRewards(r.Context())
 	if err != nil {
-		httpError(w, "Failed to claim missions", http.StatusInternalServerError)
+		httpError(w, "Failed to claim event rewards", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1645,6 +1567,44 @@ func lcuChampSelectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
+}
+
+func qolPreferencesHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(qolManager.Preferences())
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var preferences qol.Preferences
+	if err := json.NewDecoder(r.Body).Decode(&preferences); err != nil {
+		httpError(w, "Invalid QoL preferences", http.StatusBadRequest)
+		return
+	}
+	if err := qolManager.Update(preferences); err != nil {
+		slog.Error("qolPreferencesHandler", "error", err)
+		httpError(w, "Failed to save QoL preferences", http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(preferences)
+}
+
+func qolStateHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "League client is not connected", http.StatusServiceUnavailable)
+		return
+	}
+	state, err := lf.FetchQoLState(r.Context())
+	if err != nil {
+		httpError(w, "League client is not ready", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(state)
 }
 
 func lcuAssetProxyHandler(w http.ResponseWriter, r *http.Request) {

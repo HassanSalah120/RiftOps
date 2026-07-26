@@ -146,13 +146,107 @@ func TestSetRolesUsesCurrentLobbyRoute(t *testing.T) {
 	}
 }
 
-func TestClaimMissionsPostsEachCompletedMission(t *testing.T) {
+func TestSetRolesFallsBackToV2LobbyRoute(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/lol-lobby/v1/lobby/members/localMember/position-preferences" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.URL.Path != "/lol-lobby/v2/lobby/members/localMember/position-preferences" {
+			t.Fatalf("unexpected fallback path %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	if err := testLockfile(server.URL).AutoSetRoles(context.Background(), "JUNGLE", "MIDDLE"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(paths, ","), "/lol-lobby/v1/lobby/members/localMember/position-preferences,/lol-lobby/v2/lobby/members/localMember/position-preferences"; got != want {
+		t.Fatalf("paths = %q, want %q", got, want)
+	}
+}
+
+func TestHonorPlayerUsesCurrentPayload(t *testing.T) {
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/lol-honor-v2/v1/honor-player" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	if err := testLockfile(server.URL).HonorPlayer(context.Background(), 42, "player-puuid", "HEART", 9001); err != nil {
+		t.Fatal(err)
+	}
+	if received["puuid"] != "player-puuid" || received["honorType"] != "HEART" ||
+		received["summonerId"] != float64(42) || received["gameId"] != float64(9001) {
+		t.Fatalf("honor payload = %#v", received)
+	}
+	if _, exists := received["honorCategory"]; exists {
+		t.Fatalf("honor payload still contains obsolete honorCategory: %#v", received)
+	}
+}
+
+func TestFetchQoLStateUsesLiveClientSurfaces(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/lol-gameflow/v1/gameflow-phase":
+			_, _ = w.Write([]byte(`"Lobby"`))
+		case "/lol-chat/v1/me":
+			_, _ = w.Write([]byte(`{"availability":"away","statusMessage":"ranked","icon":123}`))
+		case "/lol-lobby/v2/lobby/matchmaking/search-state":
+			_, _ = w.Write([]byte(`"Invalid"`))
+		case "/lol-lobby/v2/lobby":
+			_, _ = w.Write([]byte(`{"localMember":{"firstPositionPreference":"MIDDLE","secondPositionPreference":"TOP"}}`))
+		case "/lol-summoner/v1/current-summoner/summoner-profile":
+			_, _ = w.Write([]byte(`{"backgroundSkinId":147002}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	state, err := testLockfile(server.URL).FetchQoLState(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != "Lobby" || state.Availability != "away" || state.StatusMessage != "ranked" ||
+		state.ProfileIconID != 123 || state.QueueState != "Invalid" ||
+		state.FirstRole != "MIDDLE" || state.SecondRole != "TOP" || state.BackgroundSkin != 147002 {
+		t.Fatalf("QoL state = %#v", state)
+	}
+}
+
+func TestClaimEventRewardsOnlyClaimsAvailableRewards(t *testing.T) {
 	var claims []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/lol-missions/v1/missions":
-			_, _ = w.Write([]byte(`[{"id":"complete-1","status":"COMPLETED"},{"id":"progress-1","status":"IN_PROGRESS"},{"id":"complete 2","status":"completed"}]`))
-		case r.Method == http.MethodPost:
+		case r.Method == http.MethodGet && r.URL.Path == "/lol-event-hub/v1/events":
+			_, _ = w.Write([]byte(`[{"eventId":"event-1"},{"eventId":"event 2"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/lol-event-hub/v1/events/event-1/reward-track/unclaimed-rewards":
+			_, _ = w.Write([]byte(`{"rewardsCount":2}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/lol-event-hub/v1/events/event 2/reward-track/unclaimed-rewards":
+			_, _ = w.Write([]byte(`{"rewardsCount":0}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/lol-event-hub/v1/events/event-1/reward-track/claim-all":
 			claims = append(claims, r.URL.Path)
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -165,14 +259,14 @@ func TestClaimMissionsPostsEachCompletedMission(t *testing.T) {
 	httpClient = server.Client()
 	defer func() { httpClient = previousClient }()
 
-	claimed, err := testLockfile(server.URL).ClaimMissions(context.Background())
+	claimed, err := testLockfile(server.URL).ClaimEventRewards(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if claimed != 2 {
-		t.Fatalf("claimed = %d, want 2", claimed)
+		t.Fatalf("claimed rewards = %d, want 2", claimed)
 	}
-	if got, want := strings.Join(claims, ","), "/lol-missions/v1/missions/complete-1,/lol-missions/v1/missions/complete 2"; got != want {
+	if got, want := strings.Join(claims, ","), "/lol-event-hub/v1/events/event-1/reward-track/claim-all"; got != want {
 		t.Fatalf("claim paths = %q, want %q", got, want)
 	}
 }
