@@ -501,7 +501,7 @@ export default function App() {
                   Private Riot Client launcher with real-time presence masking, script execution, and LCU integration.
                 </p>
                 <div className="flex items-center justify-between text-[11px] text-text-dim pt-2 border-t border-white/[0.04]">
-                  <span>Version: v2.4.0</span>
+                  <span>Version: v2.4.1</span>
                   <span>Build: Windows x64</span>
                 </div>
               </div>

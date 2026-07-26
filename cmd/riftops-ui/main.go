@@ -46,7 +46,7 @@ var appPng []byte
 var (
 	backendEngine *engine.Engine
 	qolManager    *qol.Manager
-	version       = "2.4.0"
+	version       = "2.4.1"
 	port          = 24080
 	clientURL     = fmt.Sprintf("http://127.0.0.1:%d", port)
 
