@@ -16,6 +16,17 @@ build support in the project.
 There is no Riot password field in RiftOps. Riot Client handles your normal
 sign-in and remembers your session as usual.
 
+### macOS first launch
+
+The GitHub build is ad-hoc signed but is not yet Apple-notarized. After
+extracting `RiftOps-macOS.zip`, move `RiftOps.app` to Applications, then
+Control-click the app and choose **Open** on first launch. If macOS still says
+the app is damaged, remove the download quarantine in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/RiftOps.app
+```
+
 ## What you can do
 
 - Launch League, VALORANT, Runeterra, 2XKO, or Riot Client from one app.

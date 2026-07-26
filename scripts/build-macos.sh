@@ -35,6 +35,13 @@ fyne package --os darwin --src cmd/riftops-ui --release --tags desktop \
   --name RiftOps --app-id io.github.hassansalah120.riftops --app-version "$version" \
   --app-build "$build" --icon "$root/assets/riftops.png"
 
+# GitHub-hosted runners do not have a Developer ID certificate. Ad-hoc signing
+# still gives the archive a valid local code signature and prevents macOS from
+# treating a modified/unsigned app bundle as damaged. A public release still
+# needs Developer ID signing and notarization for seamless Gatekeeper approval.
+codesign --force --deep --sign - RiftOps.app
+codesign --verify --deep --strict --verbose=2 RiftOps.app
+
 mkdir -p dist
 rm -f dist/RiftOps-macOS.zip
 echo "[5/5] Creating the release archive..."
