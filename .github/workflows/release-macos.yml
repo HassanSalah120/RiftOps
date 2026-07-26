@@ -52,6 +52,13 @@ jobs:
       - name: Build signed-identity-free macOS ZIP
         run: bash ./scripts/build-macos.sh "${{ steps.release.outputs.version }}" "${{ github.run_number }}"
 
+      - name: Preserve macOS ZIP as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RiftOps-macOS-${{ steps.release.outputs.tag }}
+          path: dist/RiftOps-macOS.zip
+          if-no-files-found: error
+
       - name: Attach macOS ZIP to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
