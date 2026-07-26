@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -189,13 +188,13 @@ func readLockfileFromProcess() (*Lockfile, error) {
 		return nil, errors.New("process inspection unavailable on non-windows")
 	}
 	cmd := exec.Command("wmic", "process", "where", "name='LeagueClientUx.exe' or name='RiotClientServices.exe'", "get", "CommandLine,ProcessId,Name")
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideCommandWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
 		// WMIC was removed from current Windows releases. CIM is the supported
 		// replacement and preserves the command-line data needed for the LCU.
 		ps := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('LeagueClientUx.exe', 'RiotClientServices.exe') } | Select-Object Name,ProcessId,CommandLine | ConvertTo-Json -Compress")
-		ps.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		hideCommandWindow(ps)
 		out, err = ps.Output()
 		if err != nil || len(out) == 0 {
 			return nil, errors.New("no running client processes found")
@@ -561,7 +560,7 @@ func LaunchLeague(ctx context.Context) error {
 	}
 
 	cmd := exec.CommandContext(ctx, exe)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideCommandWindow(cmd)
 	if startErr := cmd.Start(); startErr != nil {
 		return fmt.Errorf("launch League: %w", startErr)
 	}
