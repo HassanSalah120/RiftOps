@@ -1,0 +1,19 @@
+//go:build !windows
+
+package main
+
+import "log"
+
+// macOS and Linux use the system browser for the local dashboard. Windows has
+// a native WebView2 host in webview.go.
+func safeOpenDashboard(url string) {
+	if err := launchBrowserApp(url); err != nil {
+		log.Printf("Failed to open RiftOps dashboard: %v", err)
+	}
+}
+
+func showWebViewWindow() {
+	safeOpenDashboard(clientURL)
+}
+
+func destroyWebView() {}
