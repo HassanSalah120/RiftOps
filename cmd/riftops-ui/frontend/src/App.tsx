@@ -50,7 +50,7 @@ const GAME_IMGS: Record<string, string> = {
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [snapshot, setSnapshot] = useState<Snapshot>({
-    Phase: 'idle', Detail: 'Choose a game and launch with presence masking.',
+    Version: '', Phase: 'idle', Detail: 'Choose a game and launch with presence masking.',
     Game: '', Status: 'offline', Enabled: false, ChatPort: 0, StartedAt: '',
     ActiveProfileID: '',
   });
@@ -498,10 +498,10 @@ export default function App() {
                   <span className="text-xs font-bold text-white">About RiftOps</span>
                 </div>
                 <p className="text-xs text-text-muted leading-relaxed">
-                  Private Riot Client launcher with real-time presence masking, script execution, and LCU integration.
+                  Private Riot Client launcher with real-time presence masking, automation, and LCU integration.
                 </p>
                 <div className="flex items-center justify-between text-[11px] text-text-dim pt-2 border-t border-white/[0.04]">
-                  <span>Version: v2.4.1</span>
+                  <span>Version: {snapshot.Version ? `v${snapshot.Version}` : 'loading...'}</span>
                   <span>Build: Windows x64</span>
                 </div>
               </div>

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"fyne.io/systray"
+	"github.com/HassanSalah120/RiftOps/internal/buildinfo"
 	"github.com/HassanSalah120/RiftOps/internal/diagnostics"
 	"github.com/HassanSalah120/RiftOps/internal/engine"
 	"github.com/HassanSalah120/RiftOps/internal/model"
@@ -46,7 +47,6 @@ var appPng []byte
 var (
 	backendEngine *engine.Engine
 	qolManager    *qol.Manager
-	version       = "2.4.1"
 	port          = 24080
 	clientURL     = fmt.Sprintf("http://127.0.0.1:%d", port)
 
@@ -98,6 +98,7 @@ func (b *sseBroker) Start() {
 }
 
 type WebSnapshot struct {
+	Version         string            `json:"Version"`
 	Phase           string            `json:"Phase"`
 	Detail          string            `json:"Detail"`
 	Game            string            `json:"Game"`
@@ -117,6 +118,7 @@ func snapshotToWeb(snap engine.Snapshot) WebSnapshot {
 		gs[string(game)] = string(status)
 	}
 	return WebSnapshot{
+		Version:         buildinfo.Version,
 		Phase:           string(snap.Phase),
 		Detail:          snap.Detail,
 		Game:            string(snap.Game),
@@ -208,7 +210,6 @@ func main() {
 		logFatalStartup("RiftOps could not create data directory", err.Error())
 		return
 	}
-
 	instance, err := singleinstance.Acquire(filepath.Join(path, "lock"))
 	if err != nil {
 		logFatalStartup("RiftOps could not start", err.Error())
@@ -286,7 +287,7 @@ func main() {
 	mux.HandleFunc("/api/ddragon/champions", originCheck(ddragonChampionsHandler))
 	mux.HandleFunc("/api/ddragon/profile-icons", originCheck(ddragonProfileIconsHandler))
 
-	// LCU (local client) data routes — no RG_API_KEY needed
+	// LCU (local client) data routes
 	mux.HandleFunc("/api/lcu/status", originCheck(lcuStatusHandler))
 	mux.HandleFunc("/api/lcu/profile", originCheck(lcuProfileHandler))
 	mux.HandleFunc("/api/lcu/launch-league", originCheck(lcuLaunchLeagueHandler))
@@ -833,7 +834,7 @@ func checkUpdate(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"available": false})
 		return
 	}
-	newer, err := update.IsNewer(version, release.Version)
+	newer, err := update.IsNewer(buildinfo.Version, release.Version)
 	if err != nil || !newer {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"available": false})
 		return
@@ -1053,8 +1054,6 @@ func lcuStatusHandler(w http.ResponseWriter, r *http.Request) {
 				leagueReady = true
 			}
 		}
-	} else if os.Getenv("RG_API_KEY") != "" {
-		source = "env"
 	} else {
 		detail = checkLcuPaths()
 	}

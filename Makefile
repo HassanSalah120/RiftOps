@@ -1,4 +1,4 @@
-VERSION ?= 2.4.1
+VERSION ?= 2.4.2
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 
@@ -7,7 +7,7 @@ BINARY  := $(OUTDIR)/RiftOps.exe
 
 # ldflags: strip debug (-s -w), GUI subsystem, inject version
 LDFLAGS := -s -w -H windowsgui
-LDFLAGS += -X main.version=$(VERSION)
+LDFLAGS += -X github.com/HassanSalah120/RiftOps/internal/buildinfo.Version=$(VERSION)
 
 # Build flags for determinism
 BUILDFLAGS := -trimpath -ldflags="$(LDFLAGS)"

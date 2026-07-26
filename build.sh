@@ -3,7 +3,7 @@ set -euo pipefail
 
 export PATH="$PATH:$HOME/go/bin"
 
-VERSION="${1:-2.4.1}"
+VERSION="${1:-2.4.2}"
 OUTDIR="${OUTDIR:-dist}"
 BINARY="${OUTDIR}/RiftOps.exe"
 
@@ -36,7 +36,7 @@ echo "  ✓ rsrc_windows_amd64.sygo"
 
 # 3. Go build
 echo "==> [4/4] Go build (trimpath, stripped, GUI)..."
-LDFLAGS="-s -w -H windowsgui -X main.version=${VERSION}"
+LDFLAGS="-s -w -H windowsgui -X github.com/HassanSalah120/RiftOps/internal/buildinfo.Version=${VERSION}"
 mkdir -p "${OUTDIR}"
 go build \
     -trimpath \

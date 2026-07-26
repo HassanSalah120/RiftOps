@@ -10,13 +10,12 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/HassanSalah120/RiftOps/internal/buildinfo"
 	"github.com/HassanSalah120/RiftOps/internal/diagnostics"
 	"github.com/HassanSalah120/RiftOps/internal/engine"
 	"github.com/HassanSalah120/RiftOps/internal/model"
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
-
-var version = "2.4.1"
 
 type stringList []string
 
@@ -41,7 +40,7 @@ func run() error {
 	flag.Var(&gameArgs, "game-arg", "extra game argument; repeatable")
 	flag.Parse()
 	if *showVersion {
-		fmt.Println("RiftOps", version)
+		fmt.Println("RiftOps", buildinfo.Version)
 		return nil
 	}
 

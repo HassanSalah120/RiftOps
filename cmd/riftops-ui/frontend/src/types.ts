@@ -1,4 +1,5 @@
 export interface Snapshot {
+  Version: string;
   Phase: string;
   Detail: string;
   Game: string;

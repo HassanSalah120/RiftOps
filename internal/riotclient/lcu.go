@@ -427,7 +427,7 @@ func GetLCULockfile() *Lockfile {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LCU Data — fetched directly from the local LCU API (no RG_API_KEY needed)
+// LCU Data — fetched directly from the local LCU API.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // LCUSummoner is the response from /lol-summoner/v1/current-summoner.

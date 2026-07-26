@@ -226,7 +226,7 @@ export function ddChampionSplash(champId: string) { return `${DDBASE}/cdn/img/ch
 export function ddProfileIcon(version: string, id: number) { return `${DDBASE}/cdn/${version}/img/profileicon/${id}.png`; }
 
 // ---------------------------------------------------------------------------
-// LCU (local client) — no RG_API_KEY needed
+// LCU (local client)
 // ---------------------------------------------------------------------------
 
 export interface LCUSummoner {

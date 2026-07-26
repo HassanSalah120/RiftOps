@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -15,55 +14,29 @@ import (
 
 // API key is resolved in this priority:
 //  1. LCU RSO access token (if Riot Client is running) — Bearer auth
-//  2. RG_API_KEY environment variable — X-Riot-Token auth
 //
 // LCU is re-checked on every call (it's cached internally for 5min),
 // so launching the Riot Client later will be picked up automatically.
-// The env var is cached once at first read.
 
-var (
-	envKey     string
-	envKeyOnce sync.Once
-	usingLCU   bool
-)
-
-// resolveAuth returns the API key and the auth header type to use.
-// "Bearer" = Authorization: Bearer <token> (RSO token from LCU)
-// "X-Riot-Token" = X-Riot-Token: <key> (legacy API key from env var)
-func resolveAuth() (string, string) {
+// resolveAuth returns the LCU RSO access token. The client caches it and
+// refreshes when Riot Client starts or changes its local connection details.
+func resolveAuth() string {
 	// Try LCU RSO token first (cached for 5min inside GetRSOAccessToken)
 	if token, ok := riotclient.GetRSOAccessToken(); ok {
-		usingLCU = true
 		slog.Debug("riotapi: auth via LCU RSO token")
-		return token, "Bearer"
+		return token
 	}
-
-	usingLCU = false
-
-	// Fall back to env var (cached once)
-	envKeyOnce.Do(func() {
-		envKey = os.Getenv("RG_API_KEY")
-	})
-	if envKey != "" {
-		return envKey, "X-Riot-Token"
-	}
-
-	return "", ""
+	return ""
 }
 
-// IsUsingLCU returns true if the current auth is from the LCU RSO token.
+// IsUsingLCU returns true when local Riot Client authentication is available.
 func IsUsingLCU() bool {
-	resolveAuth() // ensure current state
-	return usingLCU
+	return resolveAuth() != ""
 }
 
-// ClearAuthCache forces re-resolution on the next call.
-// Called when the LCU connection changes or env var is updated.
+// ClearAuthCache forces local-token re-resolution on the next call.
 func ClearAuthCache() {
 	riotclient.ClearTokenCache()
-	envKeyOnce = sync.Once{}
-	envKey = ""
-	usingLCU = false
 }
 
 // Regions maps common region codes to the API routing value.
@@ -102,14 +75,14 @@ type Summoner struct {
 }
 
 type ChampionMastery struct {
-	ChampionID              int   `json:"championId"`
-	ChampionLevel           int   `json:"championLevel"`
-	ChampionPoints          int   `json:"championPoints"`
-	LastPlayTime            int64 `json:"lastPlayTime"`
-	ChampionPointsSinceLastLevel int `json:"championPointsSinceLastLevel"`
-	ChampionPointsUntilNextLevel int `json:"championPointsUntilNextLevel"`
-	ChestGranted            bool  `json:"chestGranted"`
-	TokensEarned            int   `json:"tokensEarned"`
+	ChampionID                   int   `json:"championId"`
+	ChampionLevel                int   `json:"championLevel"`
+	ChampionPoints               int   `json:"championPoints"`
+	LastPlayTime                 int64 `json:"lastPlayTime"`
+	ChampionPointsSinceLastLevel int   `json:"championPointsSinceLastLevel"`
+	ChampionPointsUntilNextLevel int   `json:"championPointsUntilNextLevel"`
+	ChestGranted                 bool  `json:"chestGranted"`
+	TokensEarned                 int   `json:"tokensEarned"`
 }
 
 type LeagueEntry struct {
@@ -149,15 +122,15 @@ type CurrentGameInfo struct {
 }
 
 type RegionStatus struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Locales []string `json:"locales"`
-	MaintenanceStatus string `json:"maintenanceStatus"`
-	Incidents []struct {
-		Active       bool   `json:"active"`
-		CreatedAt    string `json:"created_at"`
-		UpdatedAt    string `json:"updated_at"`
-		Titles []struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Locales           []string `json:"locales"`
+	MaintenanceStatus string   `json:"maintenanceStatus"`
+	Incidents         []struct {
+		Active    bool   `json:"active"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+		Titles    []struct {
 			Content string `json:"content"`
 			Locale  string `json:"locale"`
 		} `json:"titles"`
@@ -175,9 +148,9 @@ var (
 )
 
 func doRequest(url string) ([]byte, error) {
-	key, authType := resolveAuth()
+	key := resolveAuth()
 	if key == "" {
-		return nil, fmt.Errorf("RIOT API key not set (launch Riot Client or set RG_API_KEY env var)")
+		return nil, fmt.Errorf("Riot Client authentication is unavailable; launch Riot Client and sign in")
 	}
 
 	// Basic rate limiting: max 20 req/s
@@ -194,12 +167,7 @@ func doRequest(url string) ([]byte, error) {
 		return nil, err
 	}
 
-	// Set the correct auth header based on token type
-	if authType == "Bearer" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	} else {
-		req.Header.Set("X-Riot-Token", key)
-	}
+	req.Header.Set("Authorization", "Bearer "+key)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -336,11 +304,11 @@ func GetRegionStatus(regionCode string) ([]RegionStatus, error) {
 	}
 	// The status endpoint returns a wrapper object.
 	var wrapper struct {
-		ID      string         `json:"id"`
-		Name    string         `json:"name"`
-		Locales []string       `json:"locales"`
-		MaintenanceStatus string `json:"maintenance_status"`
-		Incidents []struct {
+		ID                string   `json:"id"`
+		Name              string   `json:"name"`
+		Locales           []string `json:"locales"`
+		MaintenanceStatus string   `json:"maintenance_status"`
+		Incidents         []struct {
 			Active    bool   `json:"active"`
 			CreatedAt string `json:"created_at"`
 			UpdatedAt string `json:"updated_at"`
@@ -362,23 +330,15 @@ func GetRegionStatus(regionCode string) ([]RegionStatus, error) {
 	}}, nil
 }
 
-// IsConfigured returns whether a Riot API key is available (from LCU or env var).
+// IsConfigured reports whether local Riot Client authentication is available.
 func IsConfigured() bool {
-	key, _ := resolveAuth()
-	return key != ""
+	return resolveAuth() != ""
 }
 
-// AuthSource returns where the API key was sourced from.
+// AuthSource returns where authentication was sourced from.
 func AuthSource() string {
-	resolveAuth()
-	if usingLCU {
+	if resolveAuth() != "" {
 		return "lcu"
-	}
-	envKeyOnce.Do(func() {
-		envKey = os.Getenv("RG_API_KEY")
-	})
-	if envKey != "" {
-		return "env"
 	}
 	return "none"
 }
