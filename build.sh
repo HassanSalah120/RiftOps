@@ -3,7 +3,7 @@ set -euo pipefail
 
 export PATH="$PATH:$HOME/go/bin"
 
-VERSION="${1:-2.4.2}"
+VERSION="${1:-2.4.3}"
 OUTDIR="${OUTDIR:-dist}"
 BINARY="${OUTDIR}/RiftOps.exe"
 

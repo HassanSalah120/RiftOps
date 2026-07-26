@@ -116,6 +116,26 @@ func (e *Engine) Settings() settings.Settings {
 	return e.config
 }
 
+// ResolveRiotClientExecutable validates a configured location or falls back to
+// native installation discovery.
+func (e *Engine) ResolveRiotClientExecutable() (string, error) {
+	e.mu.RLock()
+	configured := e.config.RiotClientPath
+	e.mu.RUnlock()
+	return resolveRiotClientExecutable(platform.New(), configured)
+}
+
+func resolveRiotClientExecutable(adapter platform.Adapter, configured string) (string, error) {
+	if strings.TrimSpace(configured) != "" {
+		executable, err := platform.ResolveRiotClientExecutable(configured)
+		if err != nil {
+			return "", fmt.Errorf("saved Riot Client location is invalid: %w", err)
+		}
+		return executable, nil
+	}
+	return adapter.DiscoverRiotClient()
+}
+
 func (e *Engine) LaunchProfiles() []settings.LaunchProfile {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -417,7 +437,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 			}
 		}
 	}
-	executable, err := adapter.DiscoverRiotClient()
+	executable, err := resolveRiotClientExecutable(adapter, config.RiotClientPath)
 	if err != nil {
 		return e.fail(game, status, err)
 	}
@@ -617,6 +637,33 @@ func (e *Engine) SavePreferences(game model.Game, startup settings.StartupStatus
 		policy.setMUC(connectToMUC)
 	}
 	return e.saveSettings()
+}
+
+// SaveRiotClientPath stores a validated machine-local executable location.
+// Passing an empty path clears the override and restores automatic discovery.
+func (e *Engine) SaveRiotClientPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	resolved := ""
+	if path != "" {
+		var err error
+		resolved, err = platform.ResolveRiotClientExecutable(path)
+		if err != nil {
+			return "", err
+		}
+	}
+	e.mu.Lock()
+	updated := e.config
+	updated.RiotClientPath = resolved
+	if err := updated.Validate(); err != nil {
+		e.mu.Unlock()
+		return "", err
+	}
+	e.config = updated
+	e.mu.Unlock()
+	if err := e.saveSettings(); err != nil {
+		return "", err
+	}
+	return resolved, nil
 }
 
 func (e *Engine) MarkUpdatePrompted(version string) error {

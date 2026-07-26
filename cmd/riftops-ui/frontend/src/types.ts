@@ -1,5 +1,6 @@
 export interface Snapshot {
   Version: string;
+  Platform: string;
   Phase: string;
   Detail: string;
   Game: string;

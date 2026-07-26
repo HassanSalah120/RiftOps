@@ -27,6 +27,7 @@ type Settings struct {
 	DefaultGame       model.Game      `json:"defaultGame"`
 	ConnectToMUC      bool            `json:"connectToMUC"`
 	CheckUpdates      bool            `json:"checkUpdates"`
+	RiotClientPath    string          `json:"riotClientPath,omitempty"`
 	PromptedUpdate    string          `json:"promptedUpdate,omitempty"`
 	IntroductionShown bool            `json:"introductionShown"`
 	ActiveProfileID   string          `json:"activeProfileId"`
@@ -57,6 +58,9 @@ func (s *Settings) Validate() error {
 	}
 	if _, err := model.ParseGame(string(s.DefaultGame)); err != nil {
 		return err
+	}
+	if len(s.RiotClientPath) > 4096 || strings.ContainsRune(s.RiotClientPath, '\x00') {
+		return fmt.Errorf("Riot Client location is invalid")
 	}
 	if len(s.Profiles) == 0 {
 		return fmt.Errorf("at least one launch profile is required")

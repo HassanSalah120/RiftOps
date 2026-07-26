@@ -36,8 +36,8 @@ func (windowsAdapter) DiscoverRiotClient() (string, error) {
 	for _, key := range []string{"rc_default", "rc_live", "rc_beta"} {
 		path, _ := installs[key].(string)
 		path = filepath.Clean(filepath.FromSlash(path))
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path, nil
+		if executable, resolveErr := ResolveRiotClientExecutable(path); resolveErr == nil {
+			return executable, nil
 		}
 	}
 	return "", fmt.Errorf("no installed Riot Client executable was found")

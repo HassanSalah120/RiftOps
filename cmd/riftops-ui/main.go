@@ -99,6 +99,7 @@ func (b *sseBroker) Start() {
 
 type WebSnapshot struct {
 	Version         string            `json:"Version"`
+	Platform        string            `json:"Platform"`
 	Phase           string            `json:"Phase"`
 	Detail          string            `json:"Detail"`
 	Game            string            `json:"Game"`
@@ -119,6 +120,7 @@ func snapshotToWeb(snap engine.Snapshot) WebSnapshot {
 	}
 	return WebSnapshot{
 		Version:         buildinfo.Version,
+		Platform:        runtime.GOOS,
 		Phase:           string(snap.Phase),
 		Detail:          snap.Detail,
 		Game:            string(snap.Game),
@@ -260,6 +262,9 @@ func main() {
 	mux.HandleFunc("/api/profiles/import", originCheck(importProfiles))
 	mux.HandleFunc("/api/preferences", originCheck(getPreferences))
 	mux.HandleFunc("/api/save-preferences", originCheck(savePreferences))
+	mux.HandleFunc("/api/riot-client-location", originCheck(riotClientLocationHandler))
+	mux.HandleFunc("/api/riot-client-location/detect", originCheck(detectRiotClientLocation))
+	mux.HandleFunc("/api/riot-client-location/browse", originCheck(browseRiotClientLocation))
 	mux.HandleFunc("/api/set-enabled", originCheck(setEnabled))
 	mux.HandleFunc("/api/set-status", originCheck(setStatus))
 	mux.HandleFunc("/api/start", originCheck(startEngine))
@@ -675,11 +680,109 @@ func getPreferences(w http.ResponseWriter, r *http.Request) {
 	prefs := backendEngine.Settings()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"game":          prefs.DefaultGame,
-		"startupStatus": prefs.StartupStatus,
-		"connectToMUC":  prefs.ConnectToMUC,
-		"checkUpdates":  prefs.CheckUpdates,
+		"game":           prefs.DefaultGame,
+		"startupStatus":  prefs.StartupStatus,
+		"connectToMUC":   prefs.ConnectToMUC,
+		"checkUpdates":   prefs.CheckUpdates,
+		"riotClientPath": prefs.RiotClientPath,
 	})
+}
+
+func writeRiotClientLocation(w http.ResponseWriter, path, source string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"path":   path,
+		"source": source,
+	})
+}
+
+func riotClientLocationHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		configured := backendEngine.Settings().RiotClientPath
+		if configured != "" {
+			writeRiotClientLocation(w, configured, "configured")
+			return
+		}
+		executable, err := backendEngine.ResolveRiotClientExecutable()
+		if err != nil {
+			writeRiotClientLocation(w, "", "not-found")
+			return
+		}
+		writeRiotClientLocation(w, executable, "detected")
+	case http.MethodPost:
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpError(w, "Enter a valid Riot Client or League application location", http.StatusBadRequest)
+			return
+		}
+		resolved, err := backendEngine.SaveRiotClientPath(body.Path)
+		if err != nil {
+			httpError(w, "No launchable Riot Client was found at that location", http.StatusUnprocessableEntity)
+			slog.Info("manual Riot Client location rejected", "error", err)
+			return
+		}
+		writeRiotClientLocation(w, resolved, "configured")
+	case http.MethodDelete:
+		if _, err := backendEngine.SaveRiotClientPath(""); err != nil {
+			httpError(w, "Could not clear the saved Riot Client location", http.StatusInternalServerError)
+			return
+		}
+		writeRiotClientLocation(w, "", "automatic")
+	default:
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func detectRiotClientLocation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	executable, err := platform.New().DiscoverRiotClient()
+	if err != nil {
+		httpError(w, "Riot Client was not found automatically. Use Browse or enter the application path.", http.StatusNotFound)
+		return
+	}
+	resolved, err := backendEngine.SaveRiotClientPath(executable)
+	if err != nil {
+		httpError(w, "The detected Riot Client location could not be saved", http.StatusInternalServerError)
+		return
+	}
+	writeRiotClientLocation(w, resolved, "detected")
+}
+
+func browseRiotClientLocation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if runtime.GOOS != "darwin" {
+		httpError(w, "Native application browsing is currently available on macOS", http.StatusNotImplemented)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	script := `POSIX path of (choose file with prompt "Select Riot Client or League of Legends" of type {"com.apple.application-bundle"})`
+	output, err := exec.CommandContext(ctx, "osascript", "-e", script).CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(output), "-128") {
+			httpError(w, "Selection cancelled", http.StatusConflict)
+			return
+		}
+		httpError(w, "The macOS application picker could not select Riot Client", http.StatusInternalServerError)
+		slog.Info("macOS Riot Client picker failed", "error", err)
+		return
+	}
+	resolved, err := backendEngine.SaveRiotClientPath(strings.TrimSpace(string(output)))
+	if err != nil {
+		httpError(w, "The selected application does not contain RiotClientServices or LeagueClient", http.StatusUnprocessableEntity)
+		slog.Info("selected macOS Riot Client location rejected", "error", err)
+		return
+	}
+	writeRiotClientLocation(w, resolved, "browse")
 }
 
 func setEnabled(w http.ResponseWriter, r *http.Request) {
@@ -740,6 +843,11 @@ func startEngine(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		game = parsed
+	}
+	if _, err := backendEngine.ResolveRiotClientExecutable(); err != nil {
+		httpError(w, "Riot Client was not found. Open Settings, then locate Riot Client or League of Legends.", http.StatusUnprocessableEntity)
+		slog.Info("launch preflight could not resolve Riot Client", "error", err)
+		return
 	}
 	if !body.StopExisting {
 		adapter := platform.New()

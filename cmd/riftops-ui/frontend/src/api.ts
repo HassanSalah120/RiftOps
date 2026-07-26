@@ -49,6 +49,7 @@ export interface Preferences {
   startupStatus: string;
   connectToMUC: boolean;
   checkUpdates: boolean;
+  riotClientPath: string;
 }
 
 export async function fetchPreferences(): Promise<Preferences> {
@@ -64,6 +65,40 @@ export async function savePreferences(prefs: Preferences): Promise<void> {
     body: JSON.stringify(prefs),
   });
   if (!res.ok) throw new Error(await res.text());
+}
+
+export interface RiotClientLocation {
+  path: string;
+  source: 'configured' | 'detected' | 'browse' | 'automatic' | 'not-found';
+}
+
+async function locationResponse(res: Response): Promise<RiotClientLocation> {
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Riot Client location request failed');
+  return res.json();
+}
+
+export function fetchRiotClientLocation(): Promise<RiotClientLocation> {
+  return fetch('/api/riot-client-location').then(locationResponse);
+}
+
+export function saveRiotClientLocation(path: string): Promise<RiotClientLocation> {
+  return fetch('/api/riot-client-location', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  }).then(locationResponse);
+}
+
+export function detectRiotClientLocation(): Promise<RiotClientLocation> {
+  return fetch('/api/riot-client-location/detect', { method: 'POST' }).then(locationResponse);
+}
+
+export function browseRiotClientLocation(): Promise<RiotClientLocation> {
+  return fetch('/api/riot-client-location/browse', { method: 'POST' }).then(locationResponse);
+}
+
+export function clearRiotClientLocation(): Promise<RiotClientLocation> {
+  return fetch('/api/riot-client-location', { method: 'DELETE' }).then(locationResponse);
 }
 
 export async function quitApp(): Promise<void> {

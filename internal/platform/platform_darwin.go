@@ -5,7 +5,6 @@ package platform
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,33 +25,11 @@ func (darwinAdapter) DiscoverRiotClient() (string, error) {
 		filepath.Join(home, "Applications", "Riot Client.app"),
 	}
 	for _, root := range roots {
-		if _, err := os.Stat(root); err != nil {
-			continue
-		}
-		var found string
-		_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil || found != "" {
-				return fs.SkipAll
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			name := strings.ToLower(entry.Name())
-			if name != "riotclientservices" && name != "riot client" {
-				return nil
-			}
-			info, infoErr := entry.Info()
-			if infoErr == nil && info.Mode()&0o111 != 0 {
-				found = path
-				return fs.SkipAll
-			}
-			return nil
-		})
-		if found != "" {
-			return found, nil
+		if executable, err := ResolveRiotClientExecutable(root); err == nil {
+			return executable, nil
 		}
 	}
-	return "", fmt.Errorf("no Riot Client executable found inside an installed app bundle")
+	return "", fmt.Errorf("Riot Client was not found in /Applications or ~/Applications")
 }
 
 func (darwinAdapter) KnownProcesses(ctx context.Context) ([]ProcessInfo, error) {
@@ -60,7 +37,7 @@ func (darwinAdapter) KnownProcesses(ctx context.Context) ([]ProcessInfo, error) 
 	if err != nil {
 		return nil, err
 	}
-	known := []string{"riotclientservices", "leagueclient", "league of legends"}
+	known := []string{"riotclientservices", "riot client", "leagueclient", "league of legends"}
 	var result []ProcessInfo
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)

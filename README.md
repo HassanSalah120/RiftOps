@@ -13,6 +13,12 @@ Windows and macOS.
 4. For League tools, open and sign in to the League Client first. In RiftOps,
    select **Quality of Life** from the sidebar.
 
+On macOS, RiftOps checks both `/Applications/League of Legends.app` and
+`~/Applications`. If League is installed elsewhere, open **Settings → Riot
+Client location**, then use **Browse**, **Auto-detect**, or paste the `.app`
+path. RiftOps validates the selection and stores the resolved executable in
+`settings.json`.
+
 There is no Riot password field in RiftOps. Riot Client handles your normal
 sign-in and remembers your session as usual.
 
@@ -95,11 +101,11 @@ go install fyne.io/tools/cmd/fyne@v1.7.2
 Build a native package:
 
 ```powershell
-./scripts/build-windows.ps1 -Version 2.4.2 -Build 1
+./scripts/build-windows.ps1 -Version 2.4.3 -Build 1
 ```
 
 ```sh
-bash ./scripts/build-macos.sh 2.4.2 1
+bash ./scripts/build-macos.sh 2.4.3 1
 ```
 
 Outputs are `dist/RiftOps-windows-amd64.exe` and
@@ -108,7 +114,7 @@ macOS notarization.
 
 If Windows reports that the standard executable is in use, close RiftOps and
 build again. The script safely writes a versioned fallback such as
-`dist/RiftOps-windows-amd64-v2.4.2.exe` instead of replacing a running file.
+`dist/RiftOps-windows-amd64-v2.4.3.exe` instead of replacing a running file.
 
 ## League Quality of Life controls
 

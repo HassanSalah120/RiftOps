@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Square, Shield, Server, Sparkles, Settings, Power } from 'lucide-react';
+import { Play, Square, Shield, Server, Sparkles, Settings, Power, FolderOpen, Search, RotateCcw } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
 import GameSelector from './components/GameSelector';
@@ -50,7 +50,7 @@ const GAME_IMGS: Record<string, string> = {
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [snapshot, setSnapshot] = useState<Snapshot>({
-    Version: '', Phase: 'idle', Detail: 'Choose a game and launch with presence masking.',
+    Version: '', Platform: '', Phase: 'idle', Detail: 'Choose a game and launch with presence masking.',
     Game: '', Status: 'offline', Enabled: false, ChatPort: 0, StartedAt: '',
     ActiveProfileID: '',
   });
@@ -66,6 +66,8 @@ export default function App() {
   const [prefStartup, setPrefStartup] = useState('last');
   const [prefMUC, setPrefMUC] = useState(true);
   const [prefUpdates, setPrefUpdates] = useState(true);
+  const [riotClientPath, setRiotClientPath] = useState('');
+  const [riotLocationBusy, setRiotLocationBusy] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [gameImgError, setGameImgError] = useState(false);
 
@@ -102,9 +104,10 @@ export default function App() {
   useEffect(() => {
     const loadPreferences = async () => {
       try {
-        const [preferences, autostart] = await Promise.all([
+        const [preferences, autostart, location] = await Promise.all([
           api.fetchPreferences(),
           api.getAutostart(),
+          api.fetchRiotClientLocation(),
         ]);
         const game = GAMES.some((candidate) => candidate.value === preferences.game)
           ? preferences.game
@@ -114,6 +117,7 @@ export default function App() {
         setPrefStartup(preferences.startupStatus || 'last');
         setPrefMUC(preferences.connectToMUC);
         setPrefUpdates(preferences.checkUpdates);
+        setRiotClientPath(preferences.riotClientPath || location.path || '');
         setAutostartEnabled(autostart.enabled);
       } catch (err: any) {
         showToast('Preferences unavailable', err.message || 'Using safe defaults until settings can be loaded.', 'error');
@@ -128,12 +132,30 @@ export default function App() {
       startupStatus: next.startupStatus ?? prefStartup,
       connectToMUC: next.connectToMUC ?? prefMUC,
       checkUpdates: next.checkUpdates ?? prefUpdates,
+      riotClientPath: next.riotClientPath ?? riotClientPath,
     };
     await api.savePreferences(preferences);
     setPrefGame(preferences.game);
     setPrefStartup(preferences.startupStatus);
     setPrefMUC(preferences.connectToMUC);
     setPrefUpdates(preferences.checkUpdates);
+    setRiotClientPath(preferences.riotClientPath);
+  };
+
+  const updateRiotLocation = async (
+    action: () => Promise<api.RiotClientLocation>,
+    successMessage: string,
+  ) => {
+    setRiotLocationBusy(true);
+    try {
+      const location = await action();
+      setRiotClientPath(location.path);
+      showToast('Riot Client location', successMessage, 'success');
+    } catch (err: any) {
+      showToast('Location failed', err.message, 'error');
+    } finally {
+      setRiotLocationBusy(false);
+    }
   };
 
   const handleLaunch = async () => {
@@ -473,16 +495,87 @@ export default function App() {
 
               <div className="glass-card p-4 space-y-3">
                 <h4 className="text-xs font-bold text-white">Desktop App</h4>
-                <div className="flex items-center justify-between">
+                <div className="space-y-2 pb-3 border-b border-white/[0.06]">
                   <div>
-                    <p className="text-xs text-text">Start RiftOps with Windows</p>
-                    <p className="text-[11px] text-text-muted mt-0.5">Run RiftOps after you sign in to this PC.</p>
+                    <p className="text-xs text-text">Riot Client location</p>
+                    <p className="text-[11px] text-text-muted mt-0.5">
+                      Select League of Legends.app, Riot Client.app, or the client executable.
+                    </p>
                   </div>
-                  <label className="toggle">
-                    <input type="checkbox" checked={autostartEnabled} onChange={(e) => void handleAutostart(e.target.checked)} />
-                    <span className="slider" />
-                  </label>
+                  <input
+                    value={riotClientPath}
+                    disabled={riotLocationBusy}
+                    onChange={(event) => setRiotClientPath(event.target.value)}
+                    placeholder={snapshot.Platform === 'darwin'
+                      ? '/Applications/League of Legends.app'
+                      : 'RiotClientServices executable or application folder'}
+                    className="w-full text-xs"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={riotLocationBusy || !riotClientPath.trim()}
+                      onClick={() => void updateRiotLocation(
+                        () => api.saveRiotClientLocation(riotClientPath),
+                        'Saved and validated.',
+                      )}
+                      className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-[11px]"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      Save Path
+                    </button>
+                    <button
+                      type="button"
+                      disabled={riotLocationBusy}
+                      onClick={() => void updateRiotLocation(
+                        api.detectRiotClientLocation,
+                        'Installation detected and saved.',
+                      )}
+                      className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-[11px]"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      Auto-detect
+                    </button>
+                    {snapshot.Platform === 'darwin' && (
+                      <button
+                        type="button"
+                        disabled={riotLocationBusy}
+                        onClick={() => void updateRiotLocation(
+                          api.browseRiotClientLocation,
+                          'Application selected and saved.',
+                        )}
+                        className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-[11px]"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        Browse…
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={riotLocationBusy || !riotClientPath}
+                      onClick={() => void updateRiotLocation(
+                        api.clearRiotClientLocation,
+                        'Saved override cleared; automatic discovery restored.',
+                      )}
+                      className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-[11px]"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Clear
+                    </button>
+                  </div>
                 </div>
+                {snapshot.Platform === 'windows' && (
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-text">Start RiftOps with Windows</p>
+                      <p className="text-[11px] text-text-muted mt-0.5">Run RiftOps after you sign in to this PC.</p>
+                    </div>
+                    <label className="toggle">
+                      <input type="checkbox" checked={autostartEnabled} onChange={(e) => void handleAutostart(e.target.checked)} />
+                      <span className="slider" />
+                    </label>
+                  </div>
+                )}
                 <div className="pt-2 border-t border-white/[0.06]">
                   <button onClick={handleQuit} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-danger/15 text-danger border border-danger/30 hover:bg-danger hover:text-white transition text-xs font-bold">
                     <Power className="w-3.5 h-3.5" />
@@ -502,7 +595,7 @@ export default function App() {
                 </p>
                 <div className="flex items-center justify-between text-[11px] text-text-dim pt-2 border-t border-white/[0.04]">
                   <span>Version: {snapshot.Version ? `v${snapshot.Version}` : 'loading...'}</span>
-                  <span>Build: Windows x64</span>
+                  <span>Build: {snapshot.Platform === 'darwin' ? 'macOS' : snapshot.Platform === 'windows' ? 'Windows x64' : snapshot.Platform || 'detecting...'}</span>
                 </div>
               </div>
             </div>

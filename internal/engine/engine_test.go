@@ -3,8 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -89,6 +91,32 @@ func TestInvalidPreferencesDoNotPoisonEngineState(t *testing.T) {
 	}
 	if got := backend.Settings(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("settings changed after validation failure: got %+v, want %+v", got, want)
+	}
+}
+
+func TestSaveRiotClientPathValidatesAndPersists(t *testing.T) {
+	backend, store := newTestEngine(t)
+	name := "RiotClientServices"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	executable := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(executable, []byte("test"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := backend.SaveRiotClientPath(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != executable {
+		t.Fatalf("resolved path = %q, want %q", resolved, executable)
+	}
+	persisted, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.RiotClientPath != executable {
+		t.Fatalf("persisted path = %q, want %q", persisted.RiotClientPath, executable)
 	}
 }
 
