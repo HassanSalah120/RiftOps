@@ -77,6 +77,16 @@ var (
 
 // LockfileSearchBases returns the list of base directories searched for lockfiles.
 func LockfileSearchBases() []string {
+	if runtime.GOOS == "darwin" {
+		home, _ := os.UserHomeDir()
+		return []string{
+			"/Applications",
+			filepath.Join(home, "Applications"),
+			filepath.Join(home, "Library", "Application Support"),
+			"/Library/Application Support",
+		}
+	}
+
 	bases := []string{
 		os.Getenv("LOCALAPPDATA"),
 		os.Getenv("USERPROFILE"),
@@ -121,11 +131,7 @@ func ReadLockfile() (*Lockfile, error) {
 	bases := LockfileSearchBases()
 
 	// Pass 1: Search specifically for League of Legends lockfiles first
-	for _, base := range bases {
-		if base == "" {
-			continue
-		}
-		path := filepath.Join(base, `League of Legends\lockfile`)
+	for _, path := range leagueLockfileCandidates(bases) {
 		data, err := os.ReadFile(path)
 		if err == nil {
 			lf, err := parseLockfile(strings.TrimSpace(string(data)))
@@ -148,11 +154,7 @@ func ReadLockfile() (*Lockfile, error) {
 	}
 
 	// Pass 3: Search for Riot Client lockfiles.
-	for _, base := range bases {
-		if base == "" {
-			continue
-		}
-		path := filepath.Join(base, `Riot Games\Riot Client\Config\lockfile`)
+	for _, path := range riotClientLockfileCandidates(bases) {
 		data, err := os.ReadFile(path)
 		if err == nil {
 			lf, err := parseLockfile(strings.TrimSpace(string(data)))
@@ -173,6 +175,50 @@ func ReadLockfile() (*Lockfile, error) {
 	return nil, fmt.Errorf("LCU lockfile not found — Riot Client may not be running")
 }
 
+func leagueLockfileCandidates(bases []string) []string {
+	paths := make([]string, 0, len(bases)*2)
+	if runtime.GOOS == "darwin" {
+		for _, base := range bases {
+			if base == "" {
+				continue
+			}
+			// League is distributed as an app bundle on macOS. The LCU lockfile
+			// is normally inside Contents/LoL; older client revisions used
+			// Contents directly, so retain that fallback.
+			paths = append(paths,
+				filepath.Join(base, "League of Legends.app", "Contents", "LoL", "lockfile"),
+				filepath.Join(base, "League of Legends.app", "Contents", "lockfile"),
+			)
+		}
+		return paths
+	}
+	for _, base := range bases {
+		if base != "" {
+			paths = append(paths, filepath.Join(base, `League of Legends\lockfile`))
+		}
+	}
+	return paths
+}
+
+func riotClientLockfileCandidates(bases []string) []string {
+	paths := make([]string, 0, len(bases))
+	if runtime.GOOS == "darwin" {
+		for _, base := range bases {
+			if base == "" {
+				continue
+			}
+			paths = append(paths, filepath.Join(base, "Riot Games", "Riot Client", "Config", "lockfile"))
+		}
+		return paths
+	}
+	for _, base := range bases {
+		if base != "" {
+			paths = append(paths, filepath.Join(base, `Riot Games\Riot Client\Config\lockfile`))
+		}
+	}
+	return paths
+}
+
 // lockfileResponds distinguishes a live League LCU from a stale lockfile left
 // behind by a previous client instance. The endpoint is read-only and exists
 // whenever the League UX API is ready.
@@ -184,21 +230,33 @@ func lockfileResponds(lf *Lockfile) bool {
 }
 
 func readLockfileFromProcess() (*Lockfile, error) {
-	if runtime.GOOS != "windows" {
-		return nil, errors.New("process inspection unavailable on non-windows")
-	}
-	cmd := exec.Command("wmic", "process", "where", "name='LeagueClientUx.exe' or name='RiotClientServices.exe'", "get", "CommandLine,ProcessId,Name")
-	hideCommandWindow(cmd)
-	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
+	var (
+		out []byte
+		err error
+	)
+	switch runtime.GOOS {
+	case "darwin":
+		// The LCU starts with the same --app-port and
+		// --remoting-auth-token arguments on macOS. Reading the process
+		// command line also supports non-standard app installation paths.
+		out, err = exec.Command("ps", "-axo", "pid=,command=").Output()
+	case "windows":
+		cmd := exec.Command("wmic", "process", "where", "name='LeagueClientUx.exe' or name='RiotClientServices.exe'", "get", "CommandLine,ProcessId,Name")
+		hideCommandWindow(cmd)
+		out, err = cmd.Output()
+		if err == nil && len(out) > 0 {
+			break
+		}
 		// WMIC was removed from current Windows releases. CIM is the supported
 		// replacement and preserves the command-line data needed for the LCU.
 		ps := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('LeagueClientUx.exe', 'RiotClientServices.exe') } | Select-Object Name,ProcessId,CommandLine | ConvertTo-Json -Compress")
 		hideCommandWindow(ps)
 		out, err = ps.Output()
-		if err != nil || len(out) == 0 {
-			return nil, errors.New("no running client processes found")
-		}
+	default:
+		return nil, errors.New("process inspection unavailable on this platform")
+	}
+	if err != nil || len(out) == 0 {
+		return nil, errors.New("no running client processes found")
 	}
 	output := string(out)
 	portMatch := regexp.MustCompile(`--app-port=(\d+)`).FindStringSubmatch(output)
@@ -206,7 +264,7 @@ func readLockfileFromProcess() (*Lockfile, error) {
 	if len(portMatch) >= 2 && len(tokenMatch) >= 2 {
 		port, _ := strconv.Atoi(portMatch[1])
 		source := "riot-client"
-		if strings.Contains(output, "LeagueClientUx") {
+		if strings.Contains(strings.ToLower(output), "leagueclientux") {
 			source = "league"
 		}
 		return &Lockfile{
@@ -527,8 +585,8 @@ func (lf *Lockfile) FetchLCUProfile(ctx context.Context) (*LCUProfile, error) {
 }
 
 // LaunchLeague tells the Riot Client LCU to launch League of Legends.
-// It tries the Riot Client's product-launcher API first, then falls back
-// to launching LeagueClientUx.exe directly from known install paths.
+// It tries the Riot Client's product-launcher API first, then uses the
+// operating system's app-launch mechanism when the LCU is not ready yet.
 func LaunchLeague(ctx context.Context) error {
 	lf, err := ReadLockfile()
 	if err == nil && lf != nil {
@@ -553,20 +611,7 @@ func LaunchLeague(ctx context.Context) error {
 		}
 	}
 
-	// Fallback: find and launch LeagueClientUx.exe directly.
-	exe, findErr := findLeagueClient()
-	if findErr != nil {
-		return fmt.Errorf("launch League: %w", findErr)
-	}
-
-	cmd := exec.CommandContext(ctx, exe)
-	hideCommandWindow(cmd)
-	if startErr := cmd.Start(); startErr != nil {
-		return fmt.Errorf("launch League: %w", startErr)
-	}
-
-	slog.Info("lcu: launched League via direct executable", "path", exe)
-	return nil
+	return launchLeagueFallback(ctx)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
