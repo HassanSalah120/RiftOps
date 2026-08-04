@@ -436,10 +436,27 @@ type LCUSummoner struct {
 	AccountID              int64  `json:"accountId"`
 	PUUID                  string `json:"puuid"`
 	DisplayName            string `json:"displayName"`
+	GameName               string `json:"gameName"`
+	TagLine                string `json:"tagLine"`
 	ProfileIconID          int    `json:"profileIconId"`
 	SummonerLevel          int    `json:"summonerLevel"`
 	XPUntilNextLevel       int64  `json:"xpUntilNextLevel"`
 	PercentCompleteForNext int    `json:"percentCompleteForNext"`
+}
+
+// Name returns the best available summoner name: gameName#tagLine (Riot ID),
+// falling back to displayName for legacy accounts.
+func (s *LCUSummoner) Name() string {
+	if s.GameName != "" {
+		if s.TagLine != "" {
+			return s.GameName + "#" + s.TagLine
+		}
+		return s.GameName
+	}
+	if s.DisplayName != "" {
+		return s.DisplayName
+	}
+	return "Unknown"
 }
 
 // LCULeagueEntry is a single ranked entry from the LCU league endpoint.
@@ -717,8 +734,10 @@ func (lf *Lockfile) StopQueue(ctx context.Context) error {
 
 // AutoSetRoles sets the preferred primary and secondary roles in a lobby.
 func (lf *Lockfile) AutoSetRoles(ctx context.Context, first, second string) error {
-	payload := map[string]string{
-		"firstPreference": first, "secondPreference": second,
+	payload := map[string]any{
+		"positionPreferences": map[string]string{
+			"firstPositionPreference": first, "secondPositionPreference": second,
+		},
 	}
 	if _, err := lf.doJSON(ctx, "PUT", "/lol-lobby/v1/lobby/members/localMember/position-preferences", payload); err == nil {
 		return nil
@@ -781,8 +800,60 @@ func (lf *Lockfile) SetProfileBackground(ctx context.Context, skinID int) error 
 
 // SetProfileIcon changes the player's profile icon.
 func (lf *Lockfile) SetProfileIcon(ctx context.Context, iconID int) error {
-	_, err := lf.doJSON(ctx, "PUT", "/lol-summoner/v1/current-summoner/icon", map[string]int{"profileIconId": iconID})
+	inventoryToken, _ := lf.FetchInventoryToken(ctx)
+	// Newer LCU schemas require inventoryToken in the request model. An empty
+	// token preserves compatibility with clients that resolve the active
+	// inventory session themselves, while keeping the payload shape current.
+	_, err := lf.doJSON(ctx, "PUT", "/lol-summoner/v1/current-summoner/icon", map[string]any{
+		"profileIconId":  iconID,
+		"inventoryToken": inventoryToken,
+	})
 	return err
+}
+
+// FetchInventoryToken returns the current LCU simple-inventory token used by
+// account customization requests. The token is exposed only while the LCU
+// party registration is ready and is intentionally never persisted.
+func (lf *Lockfile) FetchInventoryToken(ctx context.Context) (string, error) {
+	body, err := lf.DoRequest(ctx, "GET", "/lol-lobby/v1/parties/player")
+	if err != nil {
+		return "", err
+	}
+	var payload struct {
+		Registration struct {
+			InventoryToken       string   `json:"inventoryToken"`
+			InventoryTokens      []string `json:"inventoryTokens"`
+			SimpleInventoryToken string   `json:"simpleInventoryToken"`
+		} `json:"registration"`
+		MultiProductRegistration struct {
+			InventoryTokens      []string `json:"inventoryTokens"`
+			SimpleInventoryToken string   `json:"simpleInventoryToken"`
+		} `json:"multiProductRegistration"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", fmt.Errorf("parse LCU inventory token: %w", err)
+	}
+	for _, token := range []string{
+		payload.Registration.InventoryToken,
+		firstNonEmpty(payload.Registration.InventoryTokens),
+		firstNonEmpty(payload.MultiProductRegistration.InventoryTokens),
+		payload.Registration.SimpleInventoryToken,
+		payload.MultiProductRegistration.SimpleInventoryToken,
+	} {
+		if strings.TrimSpace(token) != "" {
+			return token, nil
+		}
+	}
+	return "", fmt.Errorf("lcu inventory token is not ready")
+}
+
+func firstNonEmpty(values []string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // GetHonorBallot returns the post-game honor ballot (eligible players to honor).
@@ -807,6 +878,12 @@ func (lf *Lockfile) PlayAgain(ctx context.Context) error {
 // GetChampSelectSession returns the current champion select session data.
 func (lf *Lockfile) GetChampSelectSession(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/session")
+}
+
+// FetchLCUFriends returns the League chat friend list. The payload is kept raw
+// because Riot adds fields to friend records between client releases.
+func (lf *Lockfile) FetchLCUFriends(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, "GET", "/lol-chat/v1/friends")
 }
 
 // ClaimEventRewards claims every currently available event-pass reward. Mission

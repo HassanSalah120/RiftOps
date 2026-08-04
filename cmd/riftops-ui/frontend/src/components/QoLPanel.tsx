@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, BellRing, Check, CheckCircle2, ChevronRight, CircleStop,
-  Clock3, Gift, Heart, Image, Loader2, MessageSquareText, Play,
+  ChevronDown, Clock3, Gift, Heart, Image, Loader2, MessageSquareText, Play,
   RefreshCw, Search, ShieldCheck, Sparkles, Swords, UserRound, Users,
   Wifi, WifiOff, XCircle,
   type LucideIcon,
@@ -12,18 +12,23 @@ import {
   fetchDDragonVersion,
   fetchLCUBackgroundChampions,
   fetchLCUBackgroundSkins,
+  fetchLCUProfileIconMetadata,
+  fetchQueuePresets,
   fetchQoLPreferences,
   fetchQoLState,
   lcuAutoAccept,
   lcuAutoRequeue,
   lcuAutoRoles,
   lcuStopQueue,
+  saveQueuePreset,
   saveQoLPreferences,
   type DDProfileIcon,
   type QoLPreferences,
   type QoLState,
 } from '../api';
 import ConfirmModal from './ConfirmModal';
+import ChampSelectWorkspace from './ChampSelectWorkspace';
+import FriendsPanel from './FriendsPanel';
 import type { ConfirmAction } from '../types';
 
 const ROLE_OPTIONS = [
@@ -184,7 +189,7 @@ export default function QoLPanel() {
   const [state, setState] = useState<QoLState | null>(null);
   const [connected, setConnected] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [preferences, setPreferences] = useState<QoLPreferences>({ autoAccept: false, autoPlayAgain: false });
+  const [preferences, setPreferences] = useState<QoLPreferences>({ autoAccept: false, autoPlayAgain: false, autoHonor: false, autoStartQueue: false, autoClaimRewards: false, grindMode: false });
   const [preferencesLoading, setPreferencesLoading] = useState(true);
   const [activeAction, setActiveAction] = useState('');
   const [toast, setToast] = useState<ToastState>(null);
@@ -206,8 +211,19 @@ export default function QoLPanel() {
   const [profileIcons, setProfileIcons] = useState<DDProfileIcon[]>([]);
   const [ddVersion, setDDVersion] = useState('');
   const [iconSearch, setIconSearch] = useState('');
+  const [iconsLoading, setIconsLoading] = useState(true);
+  const [iconsError, setIconsError] = useState('');
+  const [iconReloadKey, setIconReloadKey] = useState(0);
+  const [iconLimit, setIconLimit] = useState(72);
+  const [failedIconImages, setFailedIconImages] = useState<Set<number>>(() => new Set());
   const [honorBallot, setHonorBallot] = useState<HonorBallot | null>(null);
-  const [honorType, setHonorType] = useState('HEART');
+  const honorType = 'HEART';
+
+  const [queuePresets, setQueuePresets] = useState<Record<string, { first: string; second: string }>>({});
+  const [queueLabels, setQueueLabels] = useState<Record<string, string>>({});
+  const [presetQueue, setPresetQueue] = useState('ranked_solo');
+  const [presetFirst, setPresetFirst] = useState('MIDDLE');
+  const [presetSecond, setPresetSecond] = useState('TOP');
 
   const showToast = useCallback((message: string, ok = true) => {
     setToast({ message, ok });
@@ -253,14 +269,77 @@ export default function QoLPanel() {
   }, [showToast]);
 
   useEffect(() => {
-    Promise.all([fetchDDragonVersion(), fetchDDProfileIcons()])
-      .then(([version, icons]) => {
-        setDDVersion(version.version);
-        setProfileIcons(Object.values(icons.data || {}).sort((a, b) => b.id - a.id));
+    let cancelled = false;
+    setIconsLoading(true);
+    setIconsError('');
+    Promise.allSettled([fetchDDragonVersion(), fetchDDProfileIcons()])
+      .then(([versionResult, iconsResult]) => {
+        if (cancelled) return;
+        if (versionResult.status === 'fulfilled') setDDVersion(versionResult.value.version);
+        if (iconsResult.status === 'fulfilled') {
+          const icons = Object.values(iconsResult.value.data || {})
+            .filter((icon) => Number.isFinite(icon.id) && icon.id >= 0)
+            .map((icon) => ({ ...icon, name: icon.name || `Profile icon ${icon.id}` }))
+            .sort((a, b) => b.id - a.id);
+          setProfileIcons(icons);
+          setIconLimit(72);
+          setFailedIconImages(new Set());
+          if (icons.length === 0) setIconsError('No profile icons were returned by Data Dragon.');
+        } else {
+          setProfileIcons([]);
+          setIconsError('The profile icon catalogue could not be loaded.');
+        }
       })
       .catch(() => {
-        setProfileIcons([]);
+        if (!cancelled) {
+          setProfileIcons([]);
+          setIconsError('The profile icon catalogue could not be loaded.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIconsLoading(false);
       });
+    return () => { cancelled = true; };
+  }, [iconReloadKey]);
+
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    fetchLCUProfileIconMetadata()
+      .then((metadata) => {
+        if (cancelled) return;
+        setProfileIcons((current) => {
+          const byID = new Map(current.map((icon) => [icon.id, icon]));
+          metadata.forEach((metadataIcon) => {
+            const id = Number(metadataIcon.id);
+            if (!Number.isFinite(id) || id < 0) return;
+            const title = String(metadataIcon.title || '').trim();
+            const existing = byID.get(id);
+            byID.set(id, {
+              ...(existing || {
+                id,
+                image: { full: '', sprite: '', group: 'profileicon' },
+              }),
+              name: title || existing?.name || `Profile icon ${id}`,
+              lcuImagePath: metadataIcon.imagePath || existing?.lcuImagePath,
+            });
+          });
+          return Array.from(byID.values()).sort((a, b) => b.id - a.id);
+        });
+      })
+      .catch(() => {
+        // Data Dragon remains the catalogue fallback when the LCU metadata is unavailable.
+      });
+    return () => { cancelled = true; };
+  }, [connected, iconReloadKey]);
+
+  useEffect(() => {
+    fetchQueuePresets()
+      .then((data) => {
+        setQueuePresets(data.presets || {});
+        setQueueLabels(data.queues || {});
+      })
+      .catch(() => {});
   }, []);
 
   const loadChampions = useCallback(async () => {
@@ -339,8 +418,20 @@ export default function QoLPanel() {
     const query = iconSearch.trim().toLowerCase();
     return profileIcons
       .filter((icon) => !query || String(icon.id).includes(query) || icon.name?.toLowerCase().includes(query))
-      .slice(0, 72);
-  }, [iconSearch, profileIcons]);
+      .slice(0, iconLimit);
+  }, [iconLimit, iconSearch, profileIcons]);
+
+  const iconImageURL = (icon: DDProfileIcon) => {
+    if (failedIconImages.has(icon.id)) {
+      return `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/profile-icons/${icon.id}.jpg`;
+    }
+    if (icon.lcuImagePath && icon.lcuImagePath.startsWith('/lol-game-data/')) {
+      return icon.lcuImagePath;
+    }
+    return ddVersion
+      ? ddProfileIcon(ddVersion, icon.id)
+      : `https://ddragon.leagueoflegends.com/cdn/img/profileicon/${icon.id}.png`;
+  };
 
   const loadHonorBallot = () => runAction('honor-load', 'Honor ballot loaded.', async () => {
     const response = await fetch('/api/lcu/honor-ballot');
@@ -420,6 +511,13 @@ export default function QoLPanel() {
         >
           <div className="qol-stack">
             <Toggle
+              title="Grind mode"
+              description="Auto-accept, auto-honor, play again, start queue, and claim rewards — one toggle for the full loop."
+              checked={preferences.grindMode}
+              disabled={preferencesLoading}
+              onChange={(grindMode) => void updatePreferences({ ...preferences, grindMode })}
+            />
+            <Toggle
               title="Auto-accept ready checks"
               description="Accept a queue pop as soon as League enters Ready Check."
               checked={preferences.autoAccept}
@@ -432,6 +530,27 @@ export default function QoLPanel() {
               checked={preferences.autoPlayAgain}
               disabled={preferencesLoading}
               onChange={(autoPlayAgain) => void updatePreferences({ ...preferences, autoPlayAgain })}
+            />
+            <Toggle
+              title="Auto-honor first teammate"
+              description="Automatically honor the first eligible ally after each game."
+              checked={preferences.autoHonor}
+              disabled={preferencesLoading}
+              onChange={(autoHonor) => void updatePreferences({ ...preferences, autoHonor })}
+            />
+            <Toggle
+              title="Auto-start queue"
+              description="Automatically start matchmaking when you return to a lobby."
+              checked={preferences.autoStartQueue}
+              disabled={preferencesLoading}
+              onChange={(autoStartQueue) => void updatePreferences({ ...preferences, autoStartQueue })}
+            />
+            <Toggle
+              title="Auto-claim event rewards"
+              description="Claim available event-track rewards after each game cycle."
+              checked={preferences.autoClaimRewards}
+              disabled={preferencesLoading}
+              onChange={(autoClaimRewards) => void updatePreferences({ ...preferences, autoClaimRewards })}
             />
           </div>
         </Panel>
@@ -494,7 +613,45 @@ export default function QoLPanel() {
             </div>
             {firstRole === secondRole && <p className="qol-field-error">Primary and secondary roles must be different.</p>}
           </div>
+          <div className="qol-form-group" style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.055)' }}>
+            <div className="qol-form-heading">
+              <span><Users /> Queue role presets</span>
+              <small>Saved roles apply automatically when entering a lobby</small>
+            </div>
+            <div className="qol-inline-form">
+              <select value={presetQueue} onChange={(event) => {
+                const q = event.target.value;
+                setPresetQueue(q);
+                const preset = queuePresets[q];
+                if (preset) { setPresetFirst(preset.first); setPresetSecond(preset.second); }
+              }}>
+                {Object.entries(queueLabels).map(([key, label]) => (
+                  <option key={key} value={key}>{label}{queuePresets[key] ? ' ✓' : ''}</option>
+                ))}
+              </select>
+              <select value={presetFirst} onChange={(event) => setPresetFirst(event.target.value)}>
+                {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label} (primary)</option>)}
+              </select>
+              <select value={presetSecond} onChange={(event) => setPresetSecond(event.target.value)}>
+                {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label} (secondary)</option>)}
+              </select>
+              <ActionButton
+                icon={ShieldCheck}
+                disabled={presetFirst === presetSecond}
+                loading={activeAction === `preset-${presetQueue}`}
+                onClick={() => void runAction(`preset-${presetQueue}`, `Roles saved for ${queueLabels[presetQueue] || presetQueue}.`, async () => {
+                  const result = await saveQueuePreset(presetQueue, presetFirst, presetSecond);
+                  setQueuePresets(result);
+                })}
+              >
+                Save preset
+              </ActionButton>
+            </div>
+            {presetFirst === presetSecond && <p className="qol-field-error">Primary and secondary roles must be different.</p>}
+          </div>
         </Panel>
+
+        <FriendsPanel connected={connected} />
 
         <Panel
           icon={MessageSquareText}
@@ -616,28 +773,57 @@ export default function QoLPanel() {
               value={iconSearch}
               onChange={(event) => setIconSearch(event.target.value)}
               placeholder="Search by icon name or ID"
+              aria-label="Search profile icons"
             />
-            <span>{visibleIcons.length} shown</span>
+            <span>{profileIcons.length ? `${visibleIcons.length} of ${profileIcons.length}` : '—'}</span>
           </div>
-          <div className="qol-icon-grid">
-            {visibleIcons.map((icon) => (
-              <button
-                type="button"
-                key={icon.id}
-                title={`${icon.name || 'Profile icon'} #${icon.id}`}
-                className={state?.profileIconId === icon.id ? 'is-current' : ''}
-                disabled={!connected || activeAction === `icon-${icon.id}`}
-                onClick={() => void runAction(`icon-${icon.id}`, `Profile icon ${icon.id} applied.`, () =>
-                  post('/api/lcu/profile-icon', { iconId: icon.id }),
-                )}
-              >
-                {ddVersion && <img src={ddProfileIcon(ddVersion, icon.id)} alt="" loading="lazy" />}
-                {activeAction === `icon-${icon.id}` && <Loader2 className="animate-spin" />}
-                <span>#{icon.id}</span>
-              </button>
-            ))}
-          </div>
-          {profileIcons.length === 0 && <p className="qol-empty">Profile icon catalogue is unavailable. Check your internet connection and retry.</p>}
+          {iconsLoading && <div className="qol-library-state"><Loader2 className="animate-spin" /><span>Loading the icon library…</span></div>}
+          {!iconsLoading && iconsError && (
+            <div className="qol-library-state qol-library-state--error">
+              <XCircle />
+              <span>{iconsError}</span>
+              <button type="button" onClick={() => setIconReloadKey((key) => key + 1)}>Retry</button>
+            </div>
+          )}
+          {!iconsLoading && !iconsError && (
+            <>
+              <div className="qol-icon-grid">
+                {visibleIcons.map((icon) => (
+                  <button
+                    type="button"
+                    key={icon.id}
+                    title={`${icon.name || `Profile icon ${icon.id}`} (#${icon.id})`}
+                    aria-label={`Apply ${icon.name || `profile icon ${icon.id}`}`}
+                    className={state?.profileIconId === icon.id ? 'is-current' : ''}
+                    disabled={!connected || activeAction === `icon-${icon.id}`}
+                    onClick={() => void runAction(`icon-${icon.id}`, 'Profile icon applied.', () =>
+                      post('/api/lcu/profile-icon', { iconId: icon.id }),
+                    )}
+                  >
+                    <img
+                      src={iconImageURL(icon)}
+                      alt={icon.name || `Profile icon ${icon.id}`}
+                      loading="lazy"
+                      onError={(event) => {
+                        if (!failedIconImages.has(icon.id)) {
+                          setFailedIconImages((current) => new Set(current).add(icon.id));
+                          return;
+                        }
+                        event.currentTarget.style.opacity = '0';
+                      }}
+                    />
+                    {activeAction === `icon-${icon.id}` && <Loader2 className="animate-spin" />}
+                    <span>{icon.name || `Profile icon ${icon.id}`} · #{icon.id}</span>
+                  </button>
+                ))}
+              </div>
+              {visibleIcons.length < profileIcons.length && (
+                <button type="button" className="qol-library-more" onClick={() => setIconLimit((limit) => limit + 72)}>
+                  Load more icons <ChevronDown />
+                </button>
+              )}
+            </>
+          )}
         </Panel>
 
         <Panel
@@ -673,6 +859,8 @@ export default function QoLPanel() {
             </ActionButton>
           </div>
         </Panel>
+
+        <ChampSelectWorkspace connected={connected} active={inChampSelect} />
 
         <Panel
           icon={Clock3}
@@ -724,17 +912,6 @@ export default function QoLPanel() {
               <div className="qol-form-heading">
                 <span><Heart /> Honor a player</span>
                 <small>{honorBallot.votePool?.votes ?? 0} vote(s) available</small>
-              </div>
-              <div className="qol-segmented qol-segmented--compact">
-                {[
-                  ['HEART', 'Great teammate'],
-                  ['SHOTCALLER', 'Shotcaller'],
-                  ['COOL', 'Stayed cool'],
-                ].map(([value, label]) => (
-                  <button key={value} type="button" className={honorType === value ? 'is-selected' : ''} onClick={() => setHonorType(value)}>
-                    {label}
-                  </button>
-                ))}
               </div>
               <div className="qol-honor-grid">
                 {[...(honorBallot.eligibleAllies || []), ...(honorBallot.eligibleOpponents || [])].map((player) => (

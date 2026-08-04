@@ -10,7 +10,11 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:24080',
         changeOrigin: true,
-      }
+      },
+      '/lol-game-data': {
+        target: 'http://127.0.0.1:24080',
+        changeOrigin: true,
+      },
     }
   }
 })

@@ -252,7 +252,7 @@ export default function RiotPanel() {
           />
         )}
         <div>
-          <p className="text-sm font-black text-white">{summoner.displayName}</p>
+          <p className="text-sm font-black text-white">{summoner.gameName || summoner.displayName}{summoner.gameName && summoner.tagLine ? `#${summoner.tagLine}` : ''}</p>
           <p className="text-xs text-text-dim font-medium">
             Level {summoner.summonerLevel}
             {summoner.percentCompleteForNext > 0 && summoner.percentCompleteForNext < 100 && (

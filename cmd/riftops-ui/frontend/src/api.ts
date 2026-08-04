@@ -220,7 +220,10 @@ export function fetchRiotCurrentGame(region: string, puuid: string): Promise<Rio
 // ---------------------------------------------------------------------------
 
 export function fetchDDragonVersion(): Promise<{ version: string }> {
-  return fetch('/api/ddragon/version').then((r) => r.json());
+  return fetch('/api/ddragon/version').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Data Dragon version is unavailable');
+    return r.json();
+  });
 }
 
 export interface DDChampion {
@@ -245,6 +248,7 @@ export interface DDProfileIcon {
   id: number;
   image: { full: string; sprite: string; group: string };
   name: string;
+  lcuImagePath?: string;
 }
 
 export interface DDProfileIconList {
@@ -252,7 +256,26 @@ export interface DDProfileIconList {
 }
 
 export function fetchDDProfileIcons(): Promise<DDProfileIconList> {
-  return fetch('/api/ddragon/profile-icons').then((r) => r.json());
+  return fetch('/api/ddragon/profile-icons').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Profile icon catalogue is unavailable');
+    return r.json();
+  });
+}
+
+export interface LCUProfileIconMetadata {
+  id: number;
+  title?: string;
+  yearReleased?: number;
+  isLegacy?: boolean;
+  imagePath?: string;
+}
+
+export function fetchLCUProfileIconMetadata(): Promise<LCUProfileIconMetadata[]> {
+  return fetch('/api/lcu/profile-icons').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'League profile icon names are unavailable');
+    const data = await r.json();
+    return Array.isArray(data) ? data : [];
+  });
 }
 
 export const DDBASE = 'https://ddragon.leagueoflegends.com';
@@ -269,6 +292,8 @@ export interface LCUSummoner {
   accountId: number;
   puuid: string;
   displayName: string;
+  gameName: string;
+  tagLine: string;
   profileIconId: number;
   summonerLevel: number;
   xpUntilNextLevel: number;
@@ -376,6 +401,13 @@ export function lcuStopQueue(): Promise<{ stopped: boolean }> {
   });
 }
 
+export function lcuPlayAgain(): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/play-again', { method: 'POST' }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Play Again is not available yet');
+    return r.json();
+  });
+}
+
 export function lcuAutoRoles(first: string, second: string): Promise<{ ok: boolean }> {
   return fetch('/api/lcu/auto-roles', {
     method: 'POST',
@@ -397,6 +429,61 @@ export function fetchLCULoot(): Promise<any> {
 export interface QoLPreferences {
   autoAccept: boolean;
   autoPlayAgain: boolean;
+  autoHonor: boolean;
+  autoStartQueue: boolean;
+  autoClaimRewards: boolean;
+  grindMode: boolean;
+  rolePresets?: Record<string, RolePreset>;
+}
+
+export interface RolePreset {
+  first: string;
+  second: string;
+}
+
+export interface QueuePresetsResponse {
+  presets: Record<string, RolePreset>;
+  queues: Record<string, string>;
+}
+
+export function fetchQueuePresets(): Promise<QueuePresetsResponse> {
+  return fetch('/api/qol/queue-presets').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Failed to load queue presets');
+    return r.json();
+  });
+}
+
+export function saveQueuePreset(queue: string, first: string, second: string): Promise<Record<string, RolePreset>> {
+  return fetch('/api/qol/queue-presets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queue, preset: { first, second } }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Failed to save queue preset');
+    return r.json();
+  });
+}
+
+export interface LCUHealth {
+  connected: boolean;
+  latencyMs: number;
+  uptime: number;
+  memoryMB: number;
+}
+
+export function fetchLCUHealth(): Promise<LCUHealth> {
+  return fetch('/api/lcu/health').then((r) => r.json());
+}
+
+export interface ServerStatusItem {
+  server_name: string;
+  status: string;
+  message?: string;
+}
+
+export function fetchServerStatus(region?: string): Promise<ServerStatusItem[]> {
+  const q = region ? `?region=${encodeURIComponent(region)}` : '';
+  return fetch(`/api/lcu/server-status${q}`).then((r) => r.json());
 }
 
 export interface QoLState {
@@ -431,6 +518,20 @@ export function saveQoLPreferences(preferences: QoLPreferences): Promise<QoLPref
 export function fetchQoLState(): Promise<QoLState> {
   return fetch('/api/qol/state').then(async (r) => {
     if (!r.ok) throw new Error((await r.text()) || 'League client is not connected');
+    return r.json();
+  });
+}
+
+export function fetchLCUChampSelect(): Promise<unknown> {
+  return fetch('/api/lcu/champ-select').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Champion Select is not active');
+    return r.json();
+  });
+}
+
+export function fetchLCUFriends(): Promise<unknown> {
+  return fetch('/api/lcu/friends').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'League friends are unavailable');
     return r.json();
   });
 }

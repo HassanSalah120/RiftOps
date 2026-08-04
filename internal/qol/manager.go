@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,9 +16,21 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/riotclient"
 )
 
+// RolePreset stores saved primary/secondary role preferences per queue type.
+type RolePreset struct {
+	First  string `json:"first"`
+	Second string `json:"second"`
+}
+
+// Preferences holds all opt-in QoL automations and presets.
 type Preferences struct {
-	AutoAccept    bool `json:"autoAccept"`
-	AutoPlayAgain bool `json:"autoPlayAgain"`
+	AutoAccept      bool                   `json:"autoAccept"`
+	AutoPlayAgain   bool                   `json:"autoPlayAgain"`
+	AutoHonor       bool                   `json:"autoHonor"`
+	AutoStartQueue  bool                   `json:"autoStartQueue"`
+	AutoClaimRewards bool                  `json:"autoClaimRewards"`
+	GrindMode       bool                   `json:"grindMode"`
+	RolePresets     map[string]RolePreset  `json:"rolePresets,omitempty"`
 }
 
 type Manager struct {
@@ -88,7 +101,9 @@ func (m *Manager) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	lastPhase := ""
-	handled := false
+	handled := make(map[string]bool) // tracks which automations fired per phase
+	cooldowns := make(map[string]time.Time)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -96,7 +111,9 @@ func (m *Manager) Run(ctx context.Context) {
 		case <-ticker.C:
 			lockfile := riotclient.GetLCULockfile()
 			if lockfile == nil {
-				lastPhase, handled = "", false
+				lastPhase = ""
+				handled = make(map[string]bool)
+				cooldowns = make(map[string]time.Time)
 				continue
 			}
 			requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -105,32 +122,208 @@ func (m *Manager) Run(ctx context.Context) {
 			if err != nil {
 				continue
 			}
+
+			// Reset handled map when phase changes
 			if phase != lastPhase {
-				lastPhase, handled = phase, false
-			}
-			if handled {
-				continue
+				lastPhase = phase
+				handled = make(map[string]bool)
 			}
 
-			preferences := m.Preferences()
-			switch {
-			case preferences.AutoAccept && phase == "ReadyCheck":
+			prefs := m.Preferences()
+			grind := prefs.GrindMode
+
+			// ── Auto-accept ready check ──
+			if (prefs.AutoAccept || grind) && phase == "ReadyCheck" && !handled["accept"] {
 				actionCtx, actionCancel := context.WithTimeout(ctx, 2*time.Second)
 				err = lockfile.AcceptReadyCheck(actionCtx)
 				actionCancel()
 				if err == nil {
-					handled = true
+					handled["accept"] = true
 					slog.Info("qol: automatically accepted ready check")
 				}
-			case preferences.AutoPlayAgain && phase == "EndOfGame":
-				actionCtx, actionCancel := context.WithTimeout(ctx, 2*time.Second)
-				err = lockfile.PlayAgain(actionCtx)
-				actionCancel()
-				if err == nil {
-					handled = true
-					slog.Info("qol: automatically returned to lobby")
+			}
+
+			// ── Auto-play-again ──
+			if (prefs.AutoPlayAgain || grind) && phase == "EndOfGame" && !handled["playagain"] {
+				// Short cooldown: don't fire instantly, wait for post-game screen
+				if _, ok := cooldowns["playagain"]; !ok {
+					cooldowns["playagain"] = time.Now().Add(3 * time.Second)
+				}
+				if time.Now().After(cooldowns["playagain"]) {
+					actionCtx, actionCancel := context.WithTimeout(ctx, 2*time.Second)
+					err = lockfile.PlayAgain(actionCtx)
+					actionCancel()
+					if err == nil {
+						handled["playagain"] = true
+						slog.Info("qol: automatically returned to lobby")
+					}
+				}
+			}
+
+			// ── Auto-honor first eligible teammate ──
+			if (prefs.AutoHonor || grind) && phase == "EndOfGame" && !handled["honor"] {
+				if _, ok := cooldowns["honor"]; !ok {
+					cooldowns["honor"] = time.Now().Add(5 * time.Second)
+				}
+				if time.Now().After(cooldowns["honor"]) {
+					actionCtx, actionCancel := context.WithTimeout(ctx, 2*time.Second)
+					honorErr := m.autoHonorFirstTeammate(actionCtx, lockfile)
+					actionCancel()
+					if honorErr == nil {
+						handled["honor"] = true
+					}
+				}
+			}
+
+			// ── Auto-start queue after returning to lobby ──
+			if (prefs.AutoStartQueue || grind) && phase == "Lobby" && !handled["startqueue"] {
+				// Short delay: wait for lobby to fully form
+				if _, ok := cooldowns["startqueue"]; !ok {
+					cooldowns["startqueue"] = time.Now().Add(2 * time.Second)
+				}
+				if time.Now().After(cooldowns["startqueue"]) {
+					// Apply role presets if configured for this queue type
+					m.applyRolePreset(lockfile, prefs)
+					actionCtx, actionCancel := context.WithTimeout(ctx, 2*time.Second)
+					err = lockfile.AutoRequeue(actionCtx)
+					actionCancel()
+					if err == nil {
+						handled["startqueue"] = true
+						slog.Info("qol: automatically started matchmaking")
+					}
+				}
+			}
+
+			// ── Auto-claim event rewards ──
+			if (prefs.AutoClaimRewards || grind) && !handled["rewards"] {
+				// Fire once per game cycle: after game ends or when returning to lobby
+				if phase == "EndOfGame" || phase == "WaitingForStats" || phase == "PreEndOfGame" {
+					if _, ok := cooldowns["rewards"]; !ok {
+						cooldowns["rewards"] = time.Now().Add(8 * time.Second)
+					}
+					if time.Now().After(cooldowns["rewards"]) {
+						actionCtx, actionCancel := context.WithTimeout(ctx, 4*time.Second)
+						claimed, rewardErr := lockfile.ClaimEventRewards(actionCtx)
+						actionCancel()
+						if rewardErr == nil && claimed > 0 {
+							handled["rewards"] = true
+							slog.Info("qol: auto-claimed event rewards", "count", claimed)
+						}
+					}
 				}
 			}
 		}
+	}
+}
+
+// autoHonorFirstTeammate honors the first eligible ally with the single honor type.
+func (m *Manager) autoHonorFirstTeammate(ctx context.Context, lf *riotclient.Lockfile) error {
+	ballotBody, err := lf.GetHonorBallot(ctx)
+	if err != nil {
+		return err
+	}
+	var ballot struct {
+		GameID uint64 `json:"gameId"`
+		EligibleAllies []struct {
+			SummonerID uint64 `json:"summonerId"`
+			PUUID      string `json:"puuid"`
+			GameID     uint64 `json:"gameId"`
+		} `json:"eligibleAllies"`
+		VotePool *struct {
+			Votes int `json:"votes"`
+		} `json:"votePool,omitempty"`
+	}
+	if err := json.Unmarshal(ballotBody, &ballot); err != nil {
+		return err
+	}
+	if len(ballot.EligibleAllies) == 0 {
+		return fmt.Errorf("no eligible players to honor")
+	}
+	if ballot.VotePool != nil && ballot.VotePool.Votes <= 0 {
+		return fmt.Errorf("no honor votes remaining")
+	}
+	// Honor the first eligible ally with the universal honor type
+	target := ballot.EligibleAllies[0]
+	gameID := target.GameID
+	if gameID == 0 {
+		gameID = ballot.GameID
+	}
+	return lf.HonorPlayer(ctx, target.SummonerID, target.PUUID, "HEART", gameID)
+}
+
+// applyRolePreset sets saved role preferences for the current queue if configured.
+func (m *Manager) applyRolePreset(lf *riotclient.Lockfile, prefs Preferences) {
+	if len(prefs.RolePresets) == 0 {
+		return
+	}
+	// Detect current queue type from lobby
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	lobbyBody, err := lf.DoRequest(ctx, "GET", "/lol-lobby/v2/lobby")
+	cancel()
+	if err != nil {
+		return
+	}
+	var lobby struct {
+		GameMode string `json:"gameMode"`
+		QueueID  int    `json:"queueId"`
+	}
+	if json.Unmarshal(lobbyBody, &lobby) != nil {
+		return
+	}
+	// Map queue ID to preset key
+	key := queueIDToKey(lobby.QueueID)
+	if key == "" {
+		return
+	}
+	preset, ok := prefs.RolePresets[key]
+	if !ok || preset.First == "" || preset.Second == "" {
+		return
+	}
+	// Apply role preset
+	setCtx, setCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = lf.AutoSetRoles(setCtx, preset.First, preset.Second)
+	setCancel()
+	slog.Info("qol: applied role preset", "queue", key, "first", preset.First, "second", preset.Second)
+}
+
+// queueIDToKey maps Riot queue IDs to human-readable preset keys.
+func queueIDToKey(queueID int) string {
+	switch queueID {
+	case 420:
+		return "ranked_solo"
+	case 440:
+		return "ranked_flex"
+	case 400:
+		return "normal_draft"
+	case 430:
+		return "normal_blind"
+	case 450:
+		return "aram"
+	case 1700:
+		return "arena"
+	case 1300:
+		return "swiftplay"
+	default:
+		return ""
+	}
+}
+
+// QueueKeys returns the supported queue preset keys sorted.
+func QueueKeys() []string {
+	keys := []string{"ranked_solo", "ranked_flex", "normal_draft", "normal_blind", "aram", "arena", "swiftplay"}
+	sort.Strings(keys)
+	return keys
+}
+
+// QueueKeyLabels returns a map of queue key → display label.
+func QueueKeyLabels() map[string]string {
+	return map[string]string{
+		"ranked_solo":  "Ranked Solo",
+		"ranked_flex":  "Ranked Flex",
+		"normal_draft": "Normal Draft",
+		"normal_blind": "Normal Blind",
+		"aram":         "ARAM",
+		"arena":        "Arena",
+		"swiftplay":    "Swiftplay",
 	}
 }

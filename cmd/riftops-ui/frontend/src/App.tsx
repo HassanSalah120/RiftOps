@@ -11,6 +11,10 @@ import RiotPanel from './components/RiotPanel';
 import MatchHistory from './components/MatchHistory';
 import SkinShowcase from './components/SkinShowcase';
 import QoLPanel from './components/QoLPanel';
+import LootDashboard from './components/LootDashboard';
+import QuickActions from './components/QuickActions';
+import CommandPalette from './components/CommandPalette';
+import WorkspaceHeader from './components/WorkspaceHeader';
 import * as api from './api';
 import ConfirmModal from './components/ConfirmModal';
 import UpdateDialog from './components/UpdateDialog';
@@ -70,13 +74,15 @@ export default function App() {
   const [riotLocationBusy, setRiotLocationBusy] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [gameImgError, setGameImgError] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   const showToast = useCallback((title: string, message: string, type: 'info' | 'success' | 'error' = 'info') => {
     setNotification({ title, message, type });
     setTimeout(() => setNotification(null), 4000);
   }, []);
 
-  // Poll snapshot
+  // Prefer the backend event stream and keep a slow polling fallback for
+  // clients that temporarily lose the stream during a restart.
   useEffect(() => {
     const poll = async () => {
       try {
@@ -90,8 +96,20 @@ export default function App() {
       }
     };
     void poll();
-    const interval = setInterval(poll, 1500);
-    return () => clearInterval(interval);
+    const interval = setInterval(poll, 5000);
+    const source = new EventSource('/api/events');
+    source.onmessage = (event) => {
+      try {
+        setSnapshot(JSON.parse(event.data) as Snapshot);
+      } catch {
+        // Ignore malformed event frames; the fallback poll will recover state.
+      }
+    };
+    source.onerror = () => { void poll(); };
+    return () => {
+      clearInterval(interval);
+      source.close();
+    };
   }, []);
 
   // Load preferences & update check
@@ -99,6 +117,32 @@ export default function App() {
     api.checkUpdate().then((res) => {
       if (res.available && res.release) setUpdateAvailable(res.release);
     }).catch(() => {});
+  }, []);
+
+  // Keep navigation discoverable for keyboard users without hijacking text inputs.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT' || target?.isContentEditable;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandPaletteOpen((open) => !open);
+        return;
+      }
+      if (event.key === 'Escape') {
+        setCommandPaletteOpen(false);
+        return;
+      }
+      if (typing || !event.altKey) return;
+      const tabs: Tab[] = ['dashboard', 'qol', 'history', 'skins', 'loot', 'riot', 'settings'];
+      const index = Number(event.key) - 1;
+      if (index >= 0 && index < tabs.length) {
+        event.preventDefault();
+        setActiveTab(tabs[index]);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -257,11 +301,23 @@ export default function App() {
       {/* Update Dialog */}
       <UpdateDialog release={updateAvailable} onDismiss={() => setUpdateAvailable(null)} />
 
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onSelectTab={setActiveTab}
+      />
+
       {/* Left Sidebar */}
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} phase={snapshot.Phase} />
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} phase={snapshot.Phase} onOpenCommandPalette={() => setCommandPaletteOpen(true)} />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 bg-base/50 relative">
+        <WorkspaceHeader
+          activeTab={activeTab}
+          phase={phaseLabel(snapshot.Phase)}
+          detail={snapshot.Detail === 'Choose a game and launch with presence masking.' ? '' : snapshot.Detail}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        />
         <main className="flex-1 overflow-hidden flex flex-col relative z-10">
           {/* QoL Panel */}
           {activeTab === 'qol' && (
@@ -347,6 +403,8 @@ export default function App() {
 
               {/* Dashboard body */}
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+                <QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
+
                 {/* Game Selector */}
                 <div>
                   <div className="flex items-center gap-2 mb-2">
@@ -401,6 +459,15 @@ export default function App() {
           {activeTab === 'skins' && (
             <div className="flex-1 overflow-y-auto p-4 animate-fadeIn">
               <SkinShowcase />
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════
+             LOOT DASHBOARD TAB
+             ═══════════════════════════════════════════════ */}
+          {activeTab === 'loot' && (
+            <div className="flex-1 overflow-y-auto animate-fadeIn">
+              <LootDashboard />
             </div>
           )}
 

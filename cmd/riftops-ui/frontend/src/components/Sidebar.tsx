@@ -1,10 +1,12 @@
-import { History, Medal, Radar, Settings, Sparkles, Wand2 } from 'lucide-react';
+import { Command, Gem, History, Medal, Radar, Settings, Sparkles, Wand2 } from 'lucide-react';
 import type { Tab } from '../types';
+import HealthIndicator from './HealthIndicator';
 
 const NAV = [
   { key: 'dashboard' as Tab, icon: Radar, label: 'Command Center', hint: 'Launch and presence' },
   { key: 'history' as Tab, icon: History, label: 'Match History', hint: 'Recent performance' },
   { key: 'skins' as Tab, icon: Sparkles, label: 'Skin Collection', hint: 'Browse cosmetics' },
+  { key: 'loot' as Tab, icon: Gem, label: 'Loot & Collection', hint: 'Shards and currencies' },
   { key: 'qol' as Tab, icon: Wand2, label: 'Quality of Life', hint: 'Client controls' },
   { key: 'riot' as Tab, icon: Medal, label: 'Riot Account', hint: 'Profile and rank' },
   { key: 'settings' as Tab, icon: Settings, label: 'Settings', hint: 'App preferences' },
@@ -14,10 +16,12 @@ export default function Sidebar({
   activeTab,
   onTabChange,
   phase,
+  onOpenCommandPalette,
 }: {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
   phase: string;
+  onOpenCommandPalette: () => void;
 }) {
   const isLive = phase !== 'idle' && phase !== 'error';
 
@@ -32,6 +36,11 @@ export default function Sidebar({
       </div>
 
       <div className="app-sidebar__section-label">Workspace</div>
+      <button type="button" className="app-sidebar__command" onClick={onOpenCommandPalette}>
+        <span className="app-sidebar__command-icon"><Command /></span>
+        <span>Search commands</span>
+        <kbd>⌘K</kbd>
+      </button>
       <div className="app-sidebar__nav">
         {NAV.map((item) => {
           const active = activeTab === item.key;
@@ -53,6 +62,10 @@ export default function Sidebar({
             </button>
           );
         })}
+      </div>
+
+      <div style={{ padding: '0 10px 8px' }}>
+        <HealthIndicator />
       </div>
 
       <div className="app-sidebar__status">

@@ -44,6 +44,15 @@ xattr -dr com.apple.quarantine /Applications/RiftOps.app
   select with a clear safety confirmation.
 - Browse profile icons visually, use any champion skin as your background,
   honor players, and claim available event-track rewards.
+- Use the League Client quick-action bar for launch, accept, queue, stop, and
+  Play Again actions with phase-aware disabled states.
+- Watch a live Champion Select workspace with timer, team, opponent, and
+  current-action context.
+- Search and filter a reconnecting League friend list from the Social area.
+- Use the Loot & Collection dashboard for shards, essence, chests, and
+  cosmetics.
+- Open the command palette with `Ctrl+K` (Windows) or `Cmd+K` (macOS), or use
+  `Alt+1` through `Alt+7` to switch workspaces.
 - Use tray controls, diagnostics, update checks, and Windows startup settings.
 
 ## League QoL quick guide
@@ -62,6 +71,10 @@ Open League first, then use RiftOps → **Quality of Life**.
 | Return to the lobby | Post Game → Play Again |
 | Claim event rewards | Post Game → Claim Event Rewards |
 
+| View live Champion Select | Champion Select → Live Client View |
+| Find a friend | Social → Friends → Search friends |
+| Run a common client action | Dashboard → Quick actions |
+
 Controls become available only when League is in the right phase. If the
 Champion dropdown does not load after League opens, choose **Retry loading
 champions**.
@@ -76,7 +89,8 @@ champions**.
 - Versioned local preferences and migration from earlier installations
 - Saved launch, presence, and desktop-startup preferences
 - League Client panels for Riot account data, match history, skin collection, and phase-aware Quality of Life actions
-- Branded multi-page command center with dashboard, settings, system tray, diagnostics, and release update checks
+- League friend list, Champion Select live workspace, client health/server status, and loot/collection dashboard
+- Branded multi-page command center with dashboard, settings, system tray, diagnostics, keyboard command palette, and release update checks
 
 See [FEATURE_PARITY.md](FEATURE_PARITY.md) for verification evidence and release
 gates.

@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -98,8 +100,32 @@ type ProfileIconList struct {
 	Data map[string]ProfileIconData `json:"data"`
 }
 
+// FlexibleInt accepts the mixed ID formats used by Data Dragon. Older
+// profile-icon entries use JSON numbers while newer entries are sometimes
+// serialized as quoted strings.
+type FlexibleInt int
+
+func (id *FlexibleInt) UnmarshalJSON(data []byte) error {
+	var number int
+	if err := json.Unmarshal(data, &number); err == nil {
+		*id = FlexibleInt(number)
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return fmt.Errorf("profile icon id must be a number or string: %w", err)
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil {
+		return fmt.Errorf("parse profile icon id %q: %w", text, err)
+	}
+	*id = FlexibleInt(parsed)
+	return nil
+}
+
 type ProfileIconData struct {
-	ID    int `json:"id"`
+	ID    FlexibleInt `json:"id"`
 	Image struct {
 		Full   string `json:"full"`
 		Sprite string `json:"sprite"`

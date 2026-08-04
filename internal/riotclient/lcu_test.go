@@ -85,6 +85,72 @@ func TestSetProfileBackgroundUsesLCUProfilePayload(t *testing.T) {
 	}
 }
 
+func TestSetProfileIconUsesCurrentSummonerIconRoute(t *testing.T) {
+	var received struct {
+		ProfileIconID  int    `json:"profileIconId"`
+		InventoryToken string `json:"inventoryToken"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/lol-lobby/v1/parties/player" {
+			_, _ = w.Write([]byte(`{"registration":{"simpleInventoryToken":"test-inventory-token"}}`))
+			return
+		}
+		if r.Method != http.MethodPut || r.URL.Path != "/lol-summoner/v1/current-summoner/icon" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatalf("decode JSON: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	if err := testLockfile(server.URL).SetProfileIcon(context.Background(), 1234); err != nil {
+		t.Fatal(err)
+	}
+	if received.ProfileIconID != 1234 {
+		t.Fatalf("profile icon payload = %#v, want 1234", received)
+	}
+	if received.InventoryToken != "test-inventory-token" {
+		t.Fatalf("inventory token = %q, want active inventory token", received.InventoryToken)
+	}
+}
+
+func TestSetProfileIconUsesInventoryTokenArray(t *testing.T) {
+	var received struct {
+		InventoryToken string `json:"inventoryToken"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/lol-lobby/v1/parties/player" {
+			_, _ = w.Write([]byte(`{"registration":{"inventoryTokens":["array-inventory-token"]},"multiProductRegistration":{"inventoryTokens":["multi-inventory-token"]}}`))
+			return
+		}
+		if r.Method != http.MethodPut || r.URL.Path != "/lol-summoner/v1/current-summoner/icon" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatalf("decode JSON: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	if err := testLockfile(server.URL).SetProfileIcon(context.Background(), 7188); err != nil {
+		t.Fatal(err)
+	}
+	if received.InventoryToken != "array-inventory-token" {
+		t.Fatalf("inventory token = %q, want array-inventory-token", received.InventoryToken)
+	}
+}
+
 func TestDodgeUsesGameflowEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/lol-gameflow/v1/session/dodge" {
@@ -122,7 +188,9 @@ func TestLockfileRespondsRequiresLiveGameflowEndpoint(t *testing.T) {
 }
 
 func TestSetRolesUsesCurrentLobbyRoute(t *testing.T) {
-	var received map[string]string
+	var received struct {
+		PositionPreferences map[string]string `json:"positionPreferences"`
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut || r.URL.Path != "/lol-lobby/v1/lobby/members/localMember/position-preferences" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
@@ -141,7 +209,7 @@ func TestSetRolesUsesCurrentLobbyRoute(t *testing.T) {
 	if err := testLockfile(server.URL).AutoSetRoles(context.Background(), "MIDDLE", "TOP"); err != nil {
 		t.Fatal(err)
 	}
-	if received["firstPreference"] != "MIDDLE" || received["secondPreference"] != "TOP" {
+	if received.PositionPreferences["firstPositionPreference"] != "MIDDLE" || received.PositionPreferences["secondPositionPreference"] != "TOP" {
 		t.Fatalf("roles payload = %#v", received)
 	}
 }

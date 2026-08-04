@@ -165,6 +165,7 @@ func launchBrowserApp(url string) error {
 			}
 		}
 		cmd := exec.Command("cmd", "/c", "start", url)
+		riotclient.HideWindow(cmd)
 		return cmd.Start()
 	case "darwin":
 		cmd := exec.Command("open", "-a", "Google Chrome", "--args", fmt.Sprintf("--app=%s", url))
@@ -295,6 +296,7 @@ func main() {
 	// LCU (local client) data routes
 	mux.HandleFunc("/api/lcu/status", originCheck(lcuStatusHandler))
 	mux.HandleFunc("/api/lcu/profile", originCheck(lcuProfileHandler))
+	mux.HandleFunc("/api/lcu/profile-icons", originCheck(lcuProfileIconMetadataHandler))
 	mux.HandleFunc("/api/lcu/launch-league", originCheck(lcuLaunchLeagueHandler))
 	mux.HandleFunc("/api/lcu/match-history", originCheck(lcuMatchHistoryHandler))
 	mux.HandleFunc("/api/lcu/game-detail", originCheck(lcuGameDetailHandler))
@@ -319,6 +321,10 @@ func main() {
 	mux.HandleFunc("/api/lcu/claim-event-rewards", originCheck(lcuClaimEventRewardsHandler))
 	mux.HandleFunc("/api/lcu/gameflow-phase", originCheck(lcuGameflowPhaseHandler))
 	mux.HandleFunc("/api/lcu/champ-select", originCheck(lcuChampSelectHandler))
+	mux.HandleFunc("/api/lcu/friends", originCheck(lcuFriendsHandler))
+	mux.HandleFunc("/api/lcu/health", originCheck(lcuHealthHandler))
+	mux.HandleFunc("/api/lcu/server-status", originCheck(lcuServerStatusHandler))
+	mux.HandleFunc("/api/qol/queue-presets", originCheck(qolQueuePresetsHandler))
 	mux.HandleFunc("/api/qol/preferences", originCheck(qolPreferencesHandler))
 	mux.HandleFunc("/api/qol/state", originCheck(qolStateHandler))
 	mux.HandleFunc("/lol-game-data/", lcuAssetProxyHandler)
@@ -1557,16 +1563,56 @@ func lcuProfileIconHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if body.IconID <= 0 {
+	if body.IconID < 0 {
 		httpError(w, "Choose a valid profile icon", http.StatusBadRequest)
 		return
 	}
 	if err := lf.SetProfileIcon(r.Context(), body.IconID); err != nil {
-		httpError(w, "Failed to set profile icon", http.StatusInternalServerError)
+		slog.Warn("lcuProfileIconHandler", "iconID", body.IconID, "error", err)
+		httpError(w, profileIconActionError(err), http.StatusBadGateway)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func profileIconActionError(err error) string {
+	message := strings.ToLower(err.Error())
+	if detail := lcuErrorDetail(err.Error()); detail != "" {
+		return "League rejected this icon: " + detail
+	}
+	switch {
+	case strings.Contains(message, "401"), strings.Contains(message, "403"), strings.Contains(message, "unauthor"):
+		return "League rejected the profile icon because the client session is not ready. Keep League open and signed in, then retry."
+	case strings.Contains(message, "400"), strings.Contains(message, "not owned"), strings.Contains(message, "unowned"), strings.Contains(message, "inventory"):
+		return "League could not apply this icon. Refresh the library and retry while the League client is signed in."
+	case strings.Contains(message, "404"), strings.Contains(message, "not found"):
+		return "League could not find this profile icon. Refresh the library and try again."
+	default:
+		return "League rejected the profile icon. Keep League open and signed in, then retry."
+	}
+}
+
+func lcuErrorDetail(raw string) string {
+	start := strings.Index(raw, "{")
+	if start < 0 {
+		return ""
+	}
+	var payload struct {
+		Message   string `json:"message"`
+		ErrorCode string `json:"errorCode"`
+	}
+	if err := json.Unmarshal([]byte(raw[start:]), &payload); err != nil {
+		return ""
+	}
+	detail := strings.TrimSpace(payload.Message)
+	if detail == "" {
+		detail = strings.TrimSpace(payload.ErrorCode)
+	}
+	if detail == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Trim(detail, "\\\""))
 }
 
 func lcuHonorBallotHandler(w http.ResponseWriter, r *http.Request) {
@@ -1676,6 +1722,25 @@ func lcuChampSelectHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+func lcuFriendsHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := lf.FetchLCUFriends(r.Context())
+	if err != nil {
+		httpError(w, "Could not load League friends", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
 func qolPreferencesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == http.MethodGet {
@@ -1714,6 +1779,88 @@ func qolStateHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(state)
 }
 
+func lcuHealthHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"connected": false, "latencyMs": 0, "uptime": 0, "memoryMB": 0,
+		})
+		return
+	}
+	// Measure LCU latency
+	start := time.Now()
+	_, err := lf.DoRequest(r.Context(), "GET", "/lol-gameflow/v1/gameflow-phase")
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		latency = 0
+	}
+	// Get LeagueClient process info (uptime + memory)
+	pinfo := riotclient.GetLeagueProcessInfo()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"connected": true,
+		"latencyMs": latency,
+		"uptime":    pinfo.UptimeSec,
+		"memoryMB":  pinfo.MemoryMB,
+	})
+}
+
+func lcuServerStatusHandler(w http.ResponseWriter, r *http.Request) {
+	region := r.URL.Query().Get("region")
+	if region == "" {
+		region = "NA"
+	}
+	statuses, err := riotapi.GetRegionStatus(region)
+	if err != nil {
+		httpError(w, "Failed to fetch server status", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(statuses)
+}
+
+func qolQueuePresetsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodGet {
+		prefs := qolManager.Preferences()
+		if prefs.RolePresets == nil {
+			prefs.RolePresets = make(map[string]qol.RolePreset)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"presets": prefs.RolePresets,
+			"queues":  qol.QueueKeyLabels(),
+		})
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Queue  string         `json:"queue"`
+		Preset qol.RolePreset `json:"preset"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if body.Queue == "" || body.Preset.First == "" || body.Preset.Second == "" {
+		httpError(w, "Queue and both roles are required", http.StatusBadRequest)
+		return
+	}
+	prefs := qolManager.Preferences()
+	if prefs.RolePresets == nil {
+		prefs.RolePresets = make(map[string]qol.RolePreset)
+	}
+	prefs.RolePresets[body.Queue] = body.Preset
+	if err := qolManager.Update(prefs); err != nil {
+		httpError(w, "Failed to save role preset", http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(prefs.RolePresets)
+}
+
 func lcuAssetProxyHandler(w http.ResponseWriter, r *http.Request) {
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
@@ -1739,5 +1886,25 @@ func lcuAssetProxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(body)
+}
+
+// lcuProfileIconMetadataHandler exposes the LCU's current icon catalogue
+// through the same-origin API. Keeping this behind /api avoids frontend dev
+// servers and packaged builds taking different metadata paths.
+func lcuProfileIconMetadataHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		http.Error(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := lf.DoRequest(r.Context(), "GET", "/lol-game-data/assets/v1/summoner-icons.json")
+	if err != nil {
+		slog.Warn("lcuProfileIconMetadataHandler", "error", err)
+		http.Error(w, "Profile icon metadata unavailable", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(body)
 }
