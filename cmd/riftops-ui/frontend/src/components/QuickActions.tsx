@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Activity, Check, CircleStop, ExternalLink, Loader2, Play, RefreshCw, Wand2 } from 'lucide-react';
 import {
-  fetchQoLState,
   launchLCULeague,
   lcuAutoAccept,
   lcuAutoRequeue,
   lcuPlayAgain,
   lcuStopQueue,
-  type QoLState,
 } from '../api';
+import { useLCUConnection } from './lcuConnectionContext';
 
 type Toast = (message: string, type?: 'info' | 'success' | 'error') => void;
 
@@ -18,33 +17,25 @@ function phaseLabel(phase: string): string {
 }
 
 export default function QuickActions({ onOpenQoL, showToast }: { onOpenQoL: () => void; showToast: Toast }) {
-  const [state, setState] = useState<QoLState | null>(null);
   const [loading, setLoading] = useState(false);
   const [action, setAction] = useState('');
+  const { qol: state, connected, stale, lastUpdated, refresh: refreshConnection } = useLCUConnection();
 
-  const refresh = useCallback(async () => {
+  const refresh = async () => {
     setLoading(true);
     try {
-      setState(await fetchQoLState());
-    } catch {
-      setState(null);
+      await refreshConnection();
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+  };
 
   const run = async (key: string, success: string, fn: () => Promise<unknown>) => {
     setAction(key);
     try {
       await fn();
       showToast(success, 'success');
-      await refresh();
+      await refreshConnection();
     } catch (error: any) {
       showToast(error?.message || 'League rejected the action.', 'error');
     } finally {
@@ -63,16 +54,16 @@ export default function QuickActions({ onOpenQoL, showToast }: { onOpenQoL: () =
       <div className="quick-actions__header">
         <div className="quick-actions__title"><span className="quick-actions__icon"><Activity /></span><span><small>LEAGUE CLIENT</small><strong>Quick actions</strong></span></div>
         <div className="quick-actions__connection">
-          <span className={`quick-actions__dot ${state ? 'is-online' : ''}`} />
-          <span>{state ? phaseLabel(phase) : 'Not connected'}</span>
+          <span className={`quick-actions__dot ${connected ? 'is-online' : ''}`} />
+          <span>{connected ? (stale ? 'Connection stale' : phaseLabel(phase)) : 'Not connected'}</span>
           <button type="button" onClick={() => void refresh()} disabled={loading} aria-label="Refresh League status"><RefreshCw className={loading ? 'animate-spin' : ''} /></button>
         </div>
       </div>
 
       <div className="quick-actions__body">
         <div className="quick-actions__summary">
-          <strong>{state ? phaseLabel(phase) : 'Launch League to unlock controls'}</strong>
-          <span>{state?.queueState || 'RiftOps reconnects automatically when the client is ready.'}</span>
+          <strong>{connected ? phaseLabel(phase) : 'Launch League to unlock controls'}</strong>
+          <span>{state?.queueState || (lastUpdated ? `Last checked ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'RiftOps reconnects automatically when the client is ready.')}</span>
         </div>
         <div className="quick-actions__buttons">
           <button type="button" className="quick-action quick-action--primary" onClick={() => void run('launch', 'League launch requested.', launchLCULeague)} disabled={action !== ''}>

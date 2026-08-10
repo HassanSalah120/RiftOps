@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Command, Gem, History, Medal, Radar, Search, Settings, Sparkles, Wand2, X, type LucideIcon } from 'lucide-react';
+import { Bell, Check, CheckCircle2, CircleStop, Command, Gem, History, Medal, Play, Radar, RefreshCw, RotateCcw, Search, Settings, Shield, Sparkles, Wand2, X, type LucideIcon } from 'lucide-react';
 import type { Tab } from '../types';
 
 type PaletteCommand = {
@@ -7,7 +7,8 @@ type PaletteCommand = {
   label: string;
   description: string;
   icon: LucideIcon;
-  tab: Tab;
+  tab?: Tab;
+  action?: string;
 };
 
 const COMMANDS: PaletteCommand[] = [
@@ -18,16 +19,27 @@ const COMMANDS: PaletteCommand[] = [
   { id: 'loot', label: 'Open Loot & Collection', description: 'Review shards, essence, and loot', icon: Gem, tab: 'loot' },
   { id: 'riot', label: 'Open Riot Account', description: 'Profile, ranked, and mastery information', icon: Medal, tab: 'riot' },
   { id: 'settings', label: 'Open Settings', description: 'App preferences and Riot Client location', icon: Settings, tab: 'settings' },
+  { id: 'launch', label: 'Launch selected game', description: 'Run the preflight launch flow', icon: Check, action: 'launch' },
+  { id: 'stop', label: 'Stop RiftOps', description: 'Stop the engine and presence bridge', icon: CircleStop, action: 'stop' },
+  { id: 'accept', label: 'Accept ready check', description: 'Confirm the active League ready check', icon: CheckCircle2, action: 'accept' },
+  { id: 'start-queue', label: 'Start matchmaking', description: 'Start the current lobby queue', icon: Play, action: 'start-queue' },
+  { id: 'stop-queue', label: 'Stop matchmaking', description: 'Stop the active queue search', icon: CircleStop, action: 'stop-queue' },
+  { id: 'play-again', label: 'Play again', description: 'Return to the lobby after a match', icon: RotateCcw, action: 'play-again' },
+  { id: 'toggle-mask', label: 'Toggle presence shield', description: 'Enable or disable presence masking', icon: Shield, action: 'toggle-mask' },
+  { id: 'refresh', label: 'Refresh client state', description: 'Reload Riot Client and RiftOps status', icon: RefreshCw, action: 'refresh' },
+  { id: 'notifications', label: 'Open notifications', description: 'Review recent RiftOps activity', icon: Bell, action: 'notifications' },
 ];
 
 export default function CommandPalette({
   open,
   onClose,
   onSelectTab,
+  onCommand,
 }: {
   open: boolean;
   onClose: () => void;
   onSelectTab: (tab: Tab) => void;
+  onCommand?: (command: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -53,7 +65,8 @@ export default function CommandPalette({
 
   const choose = (command: PaletteCommand | undefined) => {
     if (!command) return;
-    onSelectTab(command.tab);
+    if (command.tab) onSelectTab(command.tab);
+    if (command.action) onCommand?.(command.action);
     onClose();
   };
 

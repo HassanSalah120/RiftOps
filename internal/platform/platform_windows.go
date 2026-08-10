@@ -18,6 +18,12 @@ import (
 
 type windowsAdapter struct{}
 
+const createNoWindow = 0x08000000
+
+func hideWindow(command *exec.Cmd) {
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+}
+
 func New() Adapter { return windowsAdapter{} }
 
 func (windowsAdapter) DiscoverRiotClient() (string, error) {
@@ -45,7 +51,7 @@ func (windowsAdapter) DiscoverRiotClient() (string, error) {
 
 func (windowsAdapter) KnownProcesses(ctx context.Context) ([]ProcessInfo, error) {
 	cmd := exec.CommandContext(ctx, "tasklist.exe", "/FO", "CSV", "/NH")
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideWindow(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -79,7 +85,7 @@ func (adapter windowsAdapter) StopKnownProcesses(ctx context.Context) error {
 	}
 	for _, process := range processes {
 		cmd := exec.CommandContext(ctx, "taskkill.exe", "/PID", strconv.Itoa(process.PID), "/T", "/F")
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		hideWindow(cmd)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			// If the process already died between KnownProcesses and taskkill,
@@ -101,7 +107,7 @@ func (windowsAdapter) Launch(ctx context.Context, request LaunchRequest) (Proces
 		return nil, err
 	}
 	command := exec.CommandContext(ctx, request.Executable, arguments...)
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideWindow(command)
 	if err := command.Start(); err != nil {
 		return nil, fmt.Errorf("launch Riot Client: %w", err)
 	}

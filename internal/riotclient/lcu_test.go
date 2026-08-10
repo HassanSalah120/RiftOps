@@ -304,6 +304,24 @@ func TestFetchQoLStateUsesLiveClientSurfaces(t *testing.T) {
 	}
 }
 
+func TestDecodeQueueStateSupportsObjectPayloads(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "search state", body: `{"searchState":"Searching"}`, want: "Searching"},
+		{name: "queue state", body: `{"queueState":"Found"}`, want: "Found"},
+		{name: "legacy string", body: `"Invalid"`, want: "Invalid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := decodeQueueState([]byte(test.body)); got != test.want {
+				t.Fatalf("decodeQueueState(%s) = %q, want %q", test.body, got, test.want)
+			}
+		})
+	}
+}
+
 func TestClaimEventRewardsOnlyClaimsAvailableRewards(t *testing.T) {
 	var claims []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

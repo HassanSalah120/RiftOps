@@ -15,7 +15,6 @@ import {
   fetchLCUProfileIconMetadata,
   fetchQueuePresets,
   fetchQoLPreferences,
-  fetchQoLState,
   lcuAutoAccept,
   lcuAutoRequeue,
   lcuAutoRoles,
@@ -30,6 +29,7 @@ import ConfirmModal from './ConfirmModal';
 import ChampSelectWorkspace from './ChampSelectWorkspace';
 import FriendsPanel from './FriendsPanel';
 import type { ConfirmAction } from '../types';
+import { useLCUConnection } from './lcuConnectionContext';
 
 const ROLE_OPTIONS = [
   ['TOP', 'Top'],
@@ -218,6 +218,7 @@ export default function QoLPanel() {
   const [failedIconImages, setFailedIconImages] = useState<Set<number>>(() => new Set());
   const [honorBallot, setHonorBallot] = useState<HonorBallot | null>(null);
   const honorType = 'HEART';
+  const { qol: sharedQolState, connected: sharedConnected, refresh: refreshConnection } = useLCUConnection();
 
   const [queuePresets, setQueuePresets] = useState<Record<string, { first: string; second: string }>>({});
   const [queueLabels, setQueueLabels] = useState<Record<string, string>>({});
@@ -233,16 +234,20 @@ export default function QoLPanel() {
   const refreshState = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
     try {
-      const next = await fetchQoLState();
-      setState(next);
-      setConnected(true);
+      await refreshConnection();
+      if (!sharedQolState) {
+        setConnected(sharedConnected);
+        return;
+      }
+      setState(sharedQolState);
+      setConnected(sharedConnected);
       if (!statusHydrated.current) {
-        setStatusMessage(next.statusMessage || '');
+        setStatusMessage(sharedQolState.statusMessage || '');
         statusHydrated.current = true;
       }
-      if (!rolesHydrated.current && next.firstRole) {
-        setFirstRole(next.firstRole);
-        setSecondRole(next.secondRole || 'FILL');
+      if (!rolesHydrated.current && sharedQolState.firstRole) {
+        setFirstRole(sharedQolState.firstRole);
+        setSecondRole(sharedQolState.secondRole || 'FILL');
         rolesHydrated.current = true;
       }
     } catch {
@@ -253,13 +258,21 @@ export default function QoLPanel() {
     } finally {
       if (showSpinner) setRefreshing(false);
     }
-  }, []);
+  }, [refreshConnection, sharedConnected, sharedQolState]);
 
   useEffect(() => {
-    void refreshState();
-    const timer = window.setInterval(() => void refreshState(), 3000);
-    return () => window.clearInterval(timer);
-  }, [refreshState]);
+    setState(sharedQolState);
+    setConnected(sharedConnected);
+    if (sharedQolState && !statusHydrated.current) {
+      setStatusMessage(sharedQolState.statusMessage || '');
+      statusHydrated.current = true;
+    }
+    if (sharedQolState?.firstRole && !rolesHydrated.current) {
+      setFirstRole(sharedQolState.firstRole);
+      setSecondRole(sharedQolState.secondRole || 'FILL');
+      rolesHydrated.current = true;
+    }
+  }, [sharedQolState, sharedConnected]);
 
   useEffect(() => {
     fetchQoLPreferences()

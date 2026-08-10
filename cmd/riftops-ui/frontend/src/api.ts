@@ -1,5 +1,50 @@
 import type { Release, Snapshot } from './types';
 
+type JsonCacheEntry = { expiresAt: number; value: unknown };
+const jsonCache = new Map<string, JsonCacheEntry>();
+const jsonInflight = new Map<string, Promise<unknown>>();
+const JSON_CACHE_PREFIX = 'riftops.apiCache.';
+
+export function clearCachedJSON() {
+  jsonCache.clear();
+  try {
+    Object.keys(localStorage).filter((key) => key.startsWith(JSON_CACHE_PREFIX)).forEach((key) => localStorage.removeItem(key));
+  } catch { /* Optional persistent cache. */ }
+}
+
+async function fetchCachedJSON<T>(path: string, ttlMs: number): Promise<T> {
+  const cached = jsonCache.get(path);
+  if (cached && cached.expiresAt > Date.now()) return cached.value as T;
+  try {
+    const persisted = localStorage.getItem(`${JSON_CACHE_PREFIX}${path}`);
+    if (persisted) {
+      const entry = JSON.parse(persisted) as JsonCacheEntry;
+      if (entry.expiresAt > Date.now()) {
+        jsonCache.set(path, entry);
+        return entry.value as T;
+      }
+      localStorage.removeItem(`${JSON_CACHE_PREFIX}${path}`);
+    }
+  } catch { /* Corrupt or unavailable storage should not block a network read. */ }
+  const pending = jsonInflight.get(path);
+  if (pending) return pending as Promise<T>;
+  const request = (async () => {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error((await res.text()) || `Request failed: ${path}`);
+    const value = await res.json() as T;
+    const entry = { value, expiresAt: Date.now() + ttlMs };
+    jsonCache.set(path, entry);
+    try { localStorage.setItem(`${JSON_CACHE_PREFIX}${path}`, JSON.stringify(entry)); } catch { /* Cache is best-effort. */ }
+    return value;
+  })();
+  jsonInflight.set(path, request);
+  try {
+    return await request;
+  } finally {
+    jsonInflight.delete(path);
+  }
+}
+
 export async function fetchSnapshot(): Promise<Snapshot> {
   const res = await fetch('/api/snapshot');
   if (!res.ok) throw new Error('Failed to fetch current state');
@@ -30,7 +75,7 @@ export async function launchGame(game: string, stopExisting = false): Promise<vo
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ game, stopExisting }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error((await res.text()).trim() || `Launch request failed (${res.status})`);
 }
 
 export async function stopEngine(): Promise<void> {
@@ -220,10 +265,7 @@ export function fetchRiotCurrentGame(region: string, puuid: string): Promise<Rio
 // ---------------------------------------------------------------------------
 
 export function fetchDDragonVersion(): Promise<{ version: string }> {
-  return fetch('/api/ddragon/version').then(async (r) => {
-    if (!r.ok) throw new Error((await r.text()) || 'Data Dragon version is unavailable');
-    return r.json();
-  });
+  return fetchCachedJSON('/api/ddragon/version', 6 * 60 * 60 * 1000);
 }
 
 export interface DDChampion {
@@ -241,7 +283,7 @@ export interface DDChampionList {
 }
 
 export function fetchDDChampions(): Promise<DDChampionList> {
-  return fetch('/api/ddragon/champions').then((r) => r.json());
+  return fetchCachedJSON('/api/ddragon/champions', 24 * 60 * 60 * 1000);
 }
 
 export interface DDProfileIcon {
@@ -256,10 +298,7 @@ export interface DDProfileIconList {
 }
 
 export function fetchDDProfileIcons(): Promise<DDProfileIconList> {
-  return fetch('/api/ddragon/profile-icons').then(async (r) => {
-    if (!r.ok) throw new Error((await r.text()) || 'Profile icon catalogue is unavailable');
-    return r.json();
-  });
+  return fetchCachedJSON('/api/ddragon/profile-icons', 24 * 60 * 60 * 1000);
 }
 
 export interface LCUProfileIconMetadata {
@@ -271,11 +310,7 @@ export interface LCUProfileIconMetadata {
 }
 
 export function fetchLCUProfileIconMetadata(): Promise<LCUProfileIconMetadata[]> {
-  return fetch('/api/lcu/profile-icons').then(async (r) => {
-    if (!r.ok) throw new Error((await r.text()) || 'League profile icon names are unavailable');
-    const data = await r.json();
-    return Array.isArray(data) ? data : [];
-  });
+  return fetchCachedJSON<unknown>('/api/lcu/profile-icons', 6 * 60 * 60 * 1000).then((data) => Array.isArray(data) ? data as LCUProfileIconMetadata[] : []);
 }
 
 export const DDBASE = 'https://ddragon.leagueoflegends.com';
@@ -367,17 +402,11 @@ export function fetchLCUSkins(): Promise<any> {
 }
 
 export function fetchLCUBackgroundChampions(): Promise<any> {
-  return fetch('/api/lcu/background-champions').then((r) => {
-    if (!r.ok) throw new Error('Failed to fetch champion catalogue');
-    return r.json();
-  });
+  return fetchCachedJSON('/api/lcu/background-champions', 24 * 60 * 60 * 1000);
 }
 
 export function fetchLCUBackgroundSkins(championId: number): Promise<any> {
-  return fetch(`/api/lcu/background-skins?championId=${encodeURIComponent(championId)}`).then((r) => {
-    if (!r.ok) throw new Error('Failed to fetch champion skins');
-    return r.json();
-  });
+  return fetchCachedJSON(`/api/lcu/background-skins?championId=${encodeURIComponent(championId)}`, 24 * 60 * 60 * 1000);
 }
 
 export function lcuAutoAccept(): Promise<{ accepted: boolean }> {
@@ -404,6 +433,13 @@ export function lcuStopQueue(): Promise<{ stopped: boolean }> {
 export function lcuPlayAgain(): Promise<{ ok: boolean }> {
   return fetch('/api/lcu/play-again', { method: 'POST' }).then(async (r) => {
     if (!r.ok) throw new Error((await r.text()) || 'Play Again is not available yet');
+    return r.json();
+  });
+}
+
+export function lcuClaimEventRewards(): Promise<{ claimed: number }> {
+  return fetch('/api/lcu/claim-event-rewards', { method: 'POST' }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Event rewards are not available yet');
     return r.json();
   });
 }
@@ -469,6 +505,7 @@ export interface LCUHealth {
   latencyMs: number;
   uptime: number;
   memoryMB: number;
+  cpuPercent: number;
 }
 
 export function fetchLCUHealth(): Promise<LCUHealth> {
@@ -495,6 +532,19 @@ export interface QoLState {
   firstRole: string;
   secondRole: string;
   backgroundSkinId: number;
+}
+
+export interface LCUOverview {
+  status: LCUStatus;
+  health: LCUHealth;
+  qol?: QoLState | null;
+}
+
+export function fetchLCUOverview(signal?: AbortSignal): Promise<LCUOverview> {
+  return fetch('/api/lcu/overview', { signal }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()) || 'League Client overview is unavailable');
+    return response.json();
+  });
 }
 
 export function fetchQoLPreferences(): Promise<QoLPreferences> {

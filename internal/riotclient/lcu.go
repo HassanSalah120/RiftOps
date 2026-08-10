@@ -73,48 +73,93 @@ var (
 	cachedToken    string
 	cachedTokenExp time.Time
 	tokenMu        sync.Mutex
+
+	lockfileBasesOnce sync.Once
+	lockfileBases     []string
+	lockfileCacheMu   sync.Mutex
+	lockfileCached    *Lockfile
+	lockfileCheckedAt time.Time
+	lockfileScanning  bool
 )
 
 // LockfileSearchBases returns the list of base directories searched for lockfiles.
 func LockfileSearchBases() []string {
-	if runtime.GOOS == "darwin" {
-		home, _ := os.UserHomeDir()
-		return []string{
-			"/Applications",
-			filepath.Join(home, "Applications"),
-			filepath.Join(home, "Library", "Application Support"),
-			"/Library/Application Support",
+	lockfileBasesOnce.Do(func() {
+		if runtime.GOOS == "darwin" {
+			home, _ := os.UserHomeDir()
+			lockfileBases = uniquePaths([]string{
+				"/Applications",
+				filepath.Join(home, "Applications"),
+				filepath.Join(home, "Library", "Application Support"),
+				"/Library/Application Support",
+			})
+			return
 		}
-	}
 
-	bases := []string{
-		os.Getenv("LOCALAPPDATA"),
-		os.Getenv("USERPROFILE"),
-	}
-	if os.Getenv("LOCALAPPDATA") == "" {
-		bases = []string{os.Getenv("USERPROFILE") + `\AppData\Local`}
-	}
-	bases = append(bases, extraBases...)
+		localAppData := os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
+			localAppData = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Local")
+		}
+		bases := []string{localAppData, os.Getenv("USERPROFILE")}
+		bases = append(bases, extraBases...)
+		bases = append(bases, riotInstallBases()...)
+		lockfileBases = uniquePaths(bases)
+	})
+	out := make([]string, len(lockfileBases))
+	copy(out, lockfileBases)
+	return out
+}
 
-	// Dynamically scan all Windows drive letters (C: through Z:) for Riot Games folders
-	if runtime.GOOS == "windows" {
-		driveLetters := []string{"C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
-		subDirs := []string{
-			`\Riot Games`,
-			`\Program Files\Riot Games`,
-			`\Program Files (x86)\Riot Games`,
-			`\Games\Riot Games`,
+func riotInstallBases() []string {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	programData := os.Getenv("ProgramData")
+	if programData == "" {
+		programData = `C:\ProgramData`
+	}
+	data, err := os.ReadFile(filepath.Join(programData, "Riot Games", "RiotClientInstalls.json"))
+	if err != nil {
+		return nil
+	}
+	var installs map[string]any
+	if json.Unmarshal(data, &installs) != nil {
+		return nil
+	}
+	var bases []string
+	for _, raw := range installs {
+		path, ok := raw.(string)
+		if !ok || strings.TrimSpace(path) == "" {
+			continue
 		}
-		for _, drive := range driveLetters {
-			for _, sub := range subDirs {
-				path := drive + ":" + sub
-				if info, err := os.Stat(path); err == nil && info.IsDir() {
-					bases = append(bases, path)
-				}
-			}
+		path = filepath.Clean(filepath.FromSlash(path))
+		if strings.EqualFold(filepath.Ext(path), ".exe") {
+			path = filepath.Dir(path)
 		}
+		if strings.EqualFold(filepath.Base(path), "Riot Client") {
+			path = filepath.Dir(path)
+		}
+		bases = append(bases, path)
 	}
 	return bases
+}
+
+func uniquePaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || path == "" {
+			continue
+		}
+		key := strings.ToLower(path)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, path)
+	}
+	return result
 }
 
 // LockfileSearchPaths returns the relative lockfile paths searched under each base.
@@ -194,10 +239,13 @@ func leagueLockfileCandidates(bases []string) []string {
 	}
 	for _, base := range bases {
 		if base != "" {
-			paths = append(paths, filepath.Join(base, `League of Legends\lockfile`))
+			paths = append(paths,
+				filepath.Join(base, "League of Legends", "lockfile"),
+				filepath.Join(base, "Riot Games", "League of Legends", "lockfile"),
+			)
 		}
 	}
-	return paths
+	return uniquePaths(paths)
 }
 
 func riotClientLockfileCandidates(bases []string) []string {
@@ -213,10 +261,13 @@ func riotClientLockfileCandidates(bases []string) []string {
 	}
 	for _, base := range bases {
 		if base != "" {
-			paths = append(paths, filepath.Join(base, `Riot Games\Riot Client\Config\lockfile`))
+			paths = append(paths,
+				filepath.Join(base, "Riot Client", "Config", "lockfile"),
+				filepath.Join(base, "Riot Games", "Riot Client", "Config", "lockfile"),
+			)
 		}
 	}
-	return paths
+	return uniquePaths(paths)
 }
 
 // lockfileResponds distinguishes a live League LCU from a stale lockfile left
@@ -241,15 +292,14 @@ func readLockfileFromProcess() (*Lockfile, error) {
 		// command line also supports non-standard app installation paths.
 		out, err = exec.Command("ps", "-axo", "pid=,command=").Output()
 	case "windows":
-		cmd := exec.Command("wmic", "process", "where", "name='LeagueClientUx.exe' or name='RiotClientServices.exe'", "get", "CommandLine,ProcessId,Name")
-		hideCommandWindow(cmd)
-		out, err = cmd.Output()
-		if err == nil && len(out) > 0 {
-			break
+		if !riotClientProcessRunning() {
+			return nil, errors.New("no running client processes found")
 		}
-		// WMIC was removed from current Windows releases. CIM is the supported
-		// replacement and preserves the command-line data needed for the LCU.
-		ps := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('LeagueClientUx.exe', 'RiotClientServices.exe') } | Select-Object Name,ProcessId,CommandLine | ConvertTo-Json -Compress")
+		// Only use CIM when a native process snapshot proves that a client is
+		// running but its lockfile lives outside the discovered install paths.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		ps := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('LeagueClientUx.exe', 'RiotClientServices.exe') } | Select-Object Name,ProcessId,CommandLine | ConvertTo-Json -Compress")
 		hideCommandWindow(ps)
 		out, err = ps.Output()
 	default:
@@ -331,6 +381,7 @@ func (lf *Lockfile) doRequest(ctx context.Context, method, path string, body io.
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		invalidateLockfile(lf)
 		return nil, fmt.Errorf("lcu %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
@@ -341,6 +392,9 @@ func (lf *Lockfile) doRequest(ctx context.Context, method, path string, body io.
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			invalidateLockfile(lf)
+		}
 		return nil, fmt.Errorf("lcu %d on %s %s: %s", resp.StatusCode, method, path, string(responseBody))
 	}
 
@@ -380,9 +434,9 @@ func GetRSOAccessToken() (string, bool) {
 		return cachedToken, true
 	}
 
-	lf, err := ReadLockfile()
-	if err != nil {
-		slog.Debug("lcu: no lockfile, falling back to env key", "error", err)
+	lf := GetLCULockfile()
+	if lf == nil {
+		slog.Debug("lcu: no lockfile, falling back to env key")
 		return "", false
 	}
 
@@ -418,12 +472,52 @@ func ClearTokenCache() {
 // GetLCULockfile returns the current lockfile if available.
 // Returns nil if the Riot Client / League Client isn't running.
 func GetLCULockfile() *Lockfile {
+	now := time.Now()
+	lockfileCacheMu.Lock()
+	ttl := 8 * time.Second
+	if lockfileCached != nil && lockfileCached.Source == "league" {
+		ttl = 30 * time.Second
+	} else if lockfileCached != nil {
+		ttl = 5 * time.Second
+	}
+	if !lockfileCheckedAt.IsZero() && now.Sub(lockfileCheckedAt) < ttl {
+		cached := lockfileCached
+		lockfileCacheMu.Unlock()
+		return cached
+	}
+	if lockfileScanning {
+		cached := lockfileCached
+		lockfileCacheMu.Unlock()
+		return cached
+	}
+	lockfileScanning = true
+	lockfileCacheMu.Unlock()
+
 	lf, err := ReadLockfile()
+	lockfileCacheMu.Lock()
+	lockfileScanning = false
+	lockfileCheckedAt = now
 	if err != nil {
+		lockfileCached = nil
+		lockfileCacheMu.Unlock()
 		slog.Debug("lcu: no lockfile", "error", err)
 		return nil
 	}
+	lockfileCached = lf
+	lockfileCacheMu.Unlock()
 	return lf
+}
+
+func invalidateLockfile(lockfile *Lockfile) {
+	if lockfile == nil {
+		return
+	}
+	lockfileCacheMu.Lock()
+	defer lockfileCacheMu.Unlock()
+	if lockfileCached != nil && lockfileCached.Port == lockfile.Port && lockfileCached.Password == lockfile.Password {
+		lockfileCached = nil
+		lockfileCheckedAt = time.Time{}
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -607,6 +701,17 @@ func (lf *Lockfile) FetchLCUProfile(ctx context.Context) (*LCUProfile, error) {
 func LaunchLeague(ctx context.Context) error {
 	lf, err := ReadLockfile()
 	if err == nil && lf != nil {
+		// A live League lockfile means the client is already open. Do not
+		// relaunch it, which can create duplicate UX processes and slow startup.
+		if lf.Source == "league" {
+			checkCtx, checkCancel := context.WithTimeout(ctx, 2*time.Second)
+			_, phaseErr := lf.GetGameflowPhase(checkCtx)
+			checkCancel()
+			if phaseErr == nil {
+				slog.Info("lcu: League is already running; reusing existing client")
+				return nil
+			}
+		}
 		// Try the Riot Client product-launcher API first.
 		launchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -668,24 +773,47 @@ func (lf *Lockfile) FetchLCUGameDetail(ctx context.Context, gameID int64) ([]byt
 }
 
 // FetchLCUSkins returns champion and skin inventory JSON for the local player.
+//
+// Do not fall back to /lol-game-data/assets/v1/skins.json here. That endpoint
+// is a public catalogue and has no account ownership state, so returning it as
+// an inventory makes every skin look unowned in the UI. The UI can still use
+// the catalogue separately to enrich the inventory response with metadata.
 func (lf *Lockfile) FetchLCUSkins(ctx context.Context) ([]byte, error) {
+	var failures []string
+	usableJSON := func(body []byte) bool {
+		trimmed := bytes.TrimSpace(body)
+		return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) && json.Valid(trimmed)
+	}
+
 	summoner, err := lf.FetchLCUSummoner(ctx)
 	if err == nil && summoner != nil && summoner.SummonerID > 0 {
 		path := fmt.Sprintf("/lol-champions/v1/inventories/%d/skins-minimal", summoner.SummonerID)
 		body, err := lf.DoRequest(ctx, "GET", path)
-		if err == nil && len(body) > 2 {
+		if err == nil && usableJSON(body) {
 			return body, nil
 		}
+		if err != nil {
+			failures = append(failures, path+": "+err.Error())
+		}
+	} else if err != nil {
+		failures = append(failures, "current-summoner: "+err.Error())
+	} else {
+		failures = append(failures, "current-summoner: missing summonerId")
 	}
 
 	// Fallback 1: Try local-player champions endpoint
 	body, err := lf.DoRequest(ctx, "GET", "/lol-champions/v1/inventories/local-player/champions")
-	if err == nil && len(body) > 2 {
+	if err == nil && usableJSON(body) {
 		return body, nil
 	}
+	if err != nil {
+		failures = append(failures, "/lol-champions/v1/inventories/local-player/champions: "+err.Error())
+	}
 
-	// Fallback 2: Skins database
-	return lf.DoRequest(ctx, "GET", "/lol-game-data/assets/v1/skins.json")
+	if len(failures) == 0 {
+		return nil, errors.New("skin inventory endpoints returned no JSON")
+	}
+	return nil, fmt.Errorf("skin inventory unavailable: %s", strings.Join(failures, "; "))
 }
 
 // FetchLCUChampions returns the local client's champion catalogue. Unlike the
@@ -942,44 +1070,101 @@ func (lf *Lockfile) FetchQoLState(ctx context.Context) (QoLState, error) {
 	if err != nil {
 		return QoLState{}, err
 	}
+	return lf.FetchQoLStateWithPhase(ctx, phase), nil
+}
+
+// FetchQoLStateWithPhase gathers optional state after the caller has already
+// read gameflow. It avoids a duplicate phase request in consolidated status
+// endpoints while preserving FetchQoLState for existing callers.
+func (lf *Lockfile) FetchQoLStateWithPhase(ctx context.Context, phase string) QoLState {
 	state := QoLState{Phase: phase}
 
-	if body, err := lf.DoRequest(ctx, "GET", "/lol-chat/v1/me"); err == nil {
+	// These surfaces are independent. Fetch them together so a slow optional
+	// plugin cannot make the entire dashboard appear frozen.
+	var chatBody, queueBody, lobbyBody, profileBody []byte
+	var requests sync.WaitGroup
+	fetch := func(path string, destination *[]byte) {
+		defer requests.Done()
+		body, requestErr := lf.DoRequest(ctx, "GET", path)
+		if requestErr == nil {
+			*destination = body
+		}
+	}
+	for _, request := range []struct {
+		path        string
+		destination *[]byte
+	}{
+		{"/lol-chat/v1/me", &chatBody},
+		{"/lol-lobby/v2/lobby/matchmaking/search-state", &queueBody},
+		{"/lol-lobby/v2/lobby", &lobbyBody},
+		{"/lol-summoner/v1/current-summoner/summoner-profile", &profileBody},
+	} {
+		requests.Add(1)
+		go fetch(request.path, request.destination)
+	}
+	requests.Wait()
+
+	if len(chatBody) > 0 {
 		var chat struct {
 			Availability  string `json:"availability"`
 			StatusMessage string `json:"statusMessage"`
 			Icon          int    `json:"icon"`
 		}
-		if json.Unmarshal(body, &chat) == nil {
+		if json.Unmarshal(chatBody, &chat) == nil {
 			state.Availability = chat.Availability
 			state.StatusMessage = chat.StatusMessage
 			state.ProfileIconID = chat.Icon
 		}
 	}
-	if body, err := lf.DoRequest(ctx, "GET", "/lol-lobby/v2/lobby/matchmaking/search-state"); err == nil {
-		_ = json.Unmarshal(body, &state.QueueState)
+	if len(queueBody) > 0 {
+		state.QueueState = decodeQueueState(queueBody)
 	}
-	if body, err := lf.DoRequest(ctx, "GET", "/lol-lobby/v2/lobby"); err == nil {
+	if len(lobbyBody) > 0 {
 		var lobby struct {
 			LocalMember struct {
 				FirstPositionPreference  string `json:"firstPositionPreference"`
 				SecondPositionPreference string `json:"secondPositionPreference"`
 			} `json:"localMember"`
 		}
-		if json.Unmarshal(body, &lobby) == nil {
+		if json.Unmarshal(lobbyBody, &lobby) == nil {
 			state.FirstRole = lobby.LocalMember.FirstPositionPreference
 			state.SecondRole = lobby.LocalMember.SecondPositionPreference
 		}
 	}
-	if body, err := lf.DoRequest(ctx, "GET", "/lol-summoner/v1/current-summoner/summoner-profile"); err == nil {
+	if len(profileBody) > 0 {
 		var profile struct {
 			BackgroundSkinID int `json:"backgroundSkinId"`
 		}
-		if json.Unmarshal(body, &profile) == nil {
+		if json.Unmarshal(profileBody, &profile) == nil {
 			state.BackgroundSkin = profile.BackgroundSkinID
 		}
 	}
-	return state, nil
+	return state
+}
+
+// decodeQueueState keeps the UI useful across League client revisions. The
+// search-state endpoint has returned both a JSON string and an object with a
+// searchState/queueState field over time, so do not silently lose the value
+// when the shape changes.
+func decodeQueueState(body []byte) string {
+	var text string
+	if json.Unmarshal(body, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	var payload struct {
+		SearchState string `json:"searchState"`
+		QueueState  string `json:"queueState"`
+		State       string `json:"state"`
+	}
+	if json.Unmarshal(body, &payload) != nil {
+		return ""
+	}
+	for _, value := range []string{payload.SearchState, payload.QueueState, payload.State} {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // findLeagueClient searches known install paths for LeagueClientUx.exe.

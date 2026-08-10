@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, Circle, Loader2, RefreshCw, Search, Users, WifiOff } from 'lucide-react';
+import { ChevronDown, ChevronUp, Circle, Loader2, RefreshCw, Search, Star, Users, WifiOff } from 'lucide-react';
 import { fetchLCUFriends } from '../api';
+import { useLCUConnection } from './lcuConnectionContext';
 
 type Friend = {
   id?: string;
@@ -11,6 +12,8 @@ type Friend = {
   productName?: string;
   product?: string;
   puuid?: string;
+  profileIconId?: number;
+  iconId?: number;
 };
 
 function displayName(friend: Friend): string {
@@ -46,13 +49,17 @@ function readCollapsed(): boolean {
 export default function FriendsPanel({ connected }: { connected: boolean }) {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'online'>('all');
+  const [filter, setFilter] = useState<'all' | 'online' | 'favorites'>('all');
+  const [favorites, setFavorites] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('riftops.friends.favorites') || '[]')); } catch { return new Set(); }
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [collapsed, setCollapsed] = useState(readCollapsed);
+  const { pageVisible, pollInterval } = useLCUConnection();
 
   const refresh = useCallback(async () => {
-    if (!connected) return;
+    if (!connected || !pageVisible || collapsed) return;
     setLoading(true);
     try {
       const body = await fetchLCUFriends();
@@ -65,19 +72,31 @@ export default function FriendsPanel({ connected }: { connected: boolean }) {
     } finally {
       setLoading(false);
     }
-  }, [connected]);
+  }, [collapsed, connected, pageVisible]);
 
   useEffect(() => {
+    if (!connected || !pageVisible || collapsed) return undefined;
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 10000);
+    const timer = window.setInterval(() => void refresh(), Math.max(10000, pollInterval * 2));
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [collapsed, connected, pageVisible, pollInterval, refresh]);
 
   const onlineCount = useMemo(() => friends.filter((friend) => ['chat', 'online', 'away', 'mobile'].includes((friend.availability || '').toLowerCase())).length, [friends]);
   const visibleFriends = useMemo(() => friends
-    .filter((friend) => filter === 'all' || ['chat', 'online', 'away', 'mobile'].includes((friend.availability || '').toLowerCase()))
+    .filter((friend) => filter === 'all' || filter === 'favorites' || ['chat', 'online', 'away', 'mobile'].includes((friend.availability || '').toLowerCase()))
+    .filter((friend) => filter !== 'favorites' || favorites.has(friend.puuid || friend.id || displayName(friend)))
     .filter((friend) => !query.trim() || displayName(friend).toLowerCase().includes(query.trim().toLowerCase()))
-    .sort((a, b) => Number(statusTone(b.availability) === 'is-online') - Number(statusTone(a.availability) === 'is-online') || displayName(a).localeCompare(displayName(b))), [filter, friends, query]);
+    .sort((a, b) => Number(statusTone(b.availability) === 'is-online') - Number(statusTone(a.availability) === 'is-online') || displayName(a).localeCompare(displayName(b))), [filter, friends, query, favorites]);
+
+  const toggleFavorite = (friend: Friend) => {
+    const id = friend.puuid || friend.id || displayName(friend);
+    setFavorites((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      try { localStorage.setItem('riftops.friends.favorites', JSON.stringify([...next])); } catch { /* Optional preference. */ }
+      return next;
+    });
+  };
 
   const toggleCollapsed = () => {
     setCollapsed((current) => {
@@ -96,7 +115,7 @@ export default function FriendsPanel({ connected }: { connected: boolean }) {
           <span className="friends-panel__summary">{connected ? `${onlineCount} online · ${friends.length} total` : 'League Client offline'}</span>
           {collapsed ? <ChevronDown className="friends-panel__chevron" /> : <ChevronUp className="friends-panel__chevron" />}
         </button>
-        <button type="button" className="friends-panel__refresh" onClick={() => void refresh()} disabled={loading || !connected} aria-label="Refresh friends">
+        <button type="button" className="friends-panel__refresh" onClick={() => void refresh()} disabled={loading || !connected || collapsed} aria-label="Refresh friends">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
@@ -108,11 +127,22 @@ export default function FriendsPanel({ connected }: { connected: boolean }) {
           <div className="friends-panel__filters">
             <button type="button" className={filter === 'all' ? 'is-selected' : ''} onClick={() => setFilter('all')}>All <span>{friends.length}</span></button>
             <button type="button" className={filter === 'online' ? 'is-selected' : ''} onClick={() => setFilter('online')}>Online <span>{onlineCount}</span></button>
+            <button type="button" className={filter === 'favorites' ? 'is-selected' : ''} onClick={() => setFilter('favorites')}>Favorites <span>{favorites.size}</span></button>
           </div>
         </div>
         {loading && friends.length === 0 && <div className="friends-panel__empty"><Loader2 className="animate-spin" /><span>Loading friends…</span></div>}
         {!loading && visibleFriends.length === 0 && <div className="friends-panel__empty"><Users /><span>{error || (query ? 'No friends match your search.' : 'No friends are available.')}</span></div>}
-        {visibleFriends.length > 0 && <div className="friends-panel__list">{visibleFriends.map((friend, index) => <div className="friends-panel__friend" key={friend.puuid || friend.id || `${displayName(friend)}-${index}`}><span className={`friends-panel__status ${statusTone(friend.availability)}`}><Circle /></span><span className="friends-panel__copy"><strong>{displayName(friend)}</strong><small>{friend.productName || friend.product || statusLabel(friend.availability)}</small></span><span className={`friends-panel__availability ${statusTone(friend.availability)}`}>{statusLabel(friend.availability)}</span></div>)}</div>}
+        {visibleFriends.length > 0 && <div className="friends-panel__list">{visibleFriends.map((friend, index) => {
+          const friendId = friend.puuid || friend.id || displayName(friend);
+          const favorite = favorites.has(friendId);
+          const iconId = friend.profileIconId || friend.iconId;
+          return <div className="friends-panel__friend" key={friendId || `${displayName(friend)}-${index}`}>
+            {iconId ? <img className="friends-panel__avatar" src={`/lol-game-data/assets/v1/profile-icons/${iconId}.jpg`} alt="" loading="lazy" /> : <span className={`friends-panel__status ${statusTone(friend.availability)}`}><Circle /></span>}
+            <span className="friends-panel__copy"><strong>{displayName(friend)}</strong><small>{friend.productName || friend.product || statusLabel(friend.availability)}</small></span>
+            <span className={`friends-panel__availability ${statusTone(friend.availability)}`}>{statusLabel(friend.availability)}</span>
+            <button type="button" className={`friends-panel__favorite ${favorite ? 'is-favorite' : ''}`} onClick={() => toggleFavorite(friend)} aria-label={favorite ? `Remove ${displayName(friend)} from favorites` : `Favorite ${displayName(friend)}`}><Star /></button>
+          </div>;
+        })}</div>}
       </>}
     </section>
   );

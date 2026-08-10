@@ -1,4 +1,5 @@
-import { Command, Gem, History, Medal, Radar, Settings, Sparkles, Wand2 } from 'lucide-react';
+import { Command, Gem, History, Medal, PanelLeftClose, PanelLeftOpen, Radar, Settings, Sparkles, Wand2 } from 'lucide-react';
+import { useState } from 'react';
 import type { Tab } from '../types';
 import HealthIndicator from './HealthIndicator';
 
@@ -23,10 +24,19 @@ export default function Sidebar({
   phase: string;
   onOpenCommandPalette: () => void;
 }) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('riftops.sidebarCollapsed') === 'true'; } catch { return false; }
+  });
   const isLive = phase !== 'idle' && phase !== 'error';
 
+  const toggleCollapsed = () => setCollapsed((value) => {
+    const next = !value;
+    try { localStorage.setItem('riftops.sidebarCollapsed', String(next)); } catch { /* Optional preference. */ }
+    return next;
+  });
+
   return (
-    <nav className="app-sidebar">
+    <nav className={`app-sidebar ${collapsed ? 'is-collapsed' : ''}`}>
       <div className="app-sidebar__brand">
         <div className="app-sidebar__mark">R</div>
         <div>
@@ -34,6 +44,10 @@ export default function Sidebar({
           <span>League companion</span>
         </div>
       </div>
+
+      <button type="button" className="app-sidebar__collapse" onClick={toggleCollapsed} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+        {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}<span>{collapsed ? 'Expand' : 'Collapse'}</span>
+      </button>
 
       <div className="app-sidebar__section-label">Workspace</div>
       <button type="button" className="app-sidebar__command" onClick={onOpenCommandPalette}>

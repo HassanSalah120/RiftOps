@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   getLCUStatus, fetchLCUProfile, fetchDDragonVersion, ddProfileIcon, launchLCULeague,
   type LCUProfile, type LCULeagueEntry
 } from '../api';
 import { Medal, Loader2, AlertTriangle, Gamepad2, Rocket, RefreshCw } from 'lucide-react';
+import { useLCUConnection } from './lcuConnectionContext';
 
 export default function RiotPanel() {
   const [loading, setLoading] = useState(true);
@@ -13,9 +14,13 @@ export default function RiotPanel() {
   const [profile, setProfile] = useState<LCUProfile | null>(null);
   const [ddVer, setDdVer] = useState<string>('');
   const [launching, setLaunching] = useState(false);
+  const [launchStep, setLaunchStep] = useState('');
+  const { pageVisible, performanceMode } = useLCUConnection();
+  const initialized = useRef(false);
 
   const checkStatus = useCallback(async () => {
-    setLoading(true);
+    if (!pageVisible) return;
+    if (!initialized.current) setLoading(true);
     setError(null);
     try {
       const status = await getLCUStatus();
@@ -46,26 +51,34 @@ export default function RiotPanel() {
         return;
       }
 
-      setLoading(false);
     } catch (e: any) {
       setError(e.message || 'Failed to connect to local client');
+    } finally {
+      initialized.current = true;
       setLoading(false);
     }
-  }, []);
+  }, [pageVisible]);
 
   useEffect(() => {
     void checkStatus();
-  }, [checkStatus]);
+    if (!pageVisible) return undefined;
+    const interval = performanceMode === 'fast' ? 10000 : performanceMode === 'quiet' ? 45000 : 15000;
+    const timer = window.setInterval(() => void checkStatus(), interval);
+    return () => window.clearInterval(timer);
+  }, [checkStatus, pageVisible, performanceMode]);
 
   const handleLaunch = async () => {
     setLaunching(true);
     setError(null);
     try {
+      setLaunchStep('Starting Riot Client');
       await launchLCULeague();
-      for (let i = 0; i < 5; i++) {
-        await new Promise(r => setTimeout(r, 2000));
+      for (let i = 0; i < 15; i++) {
+        setLaunchStep(i < 5 ? 'Waiting for Riot Client' : i < 10 ? 'Waiting for League Client' : 'Checking League API');
+        await new Promise(r => setTimeout(r, 1200));
         const status = await getLCUStatus();
         if (status.connected && status.leagueReady) {
+          setLaunchStep('League is ready');
           await checkStatus();
           setLaunching(false);
           return;
@@ -76,6 +89,7 @@ export default function RiotPanel() {
       setError(err.message || 'Failed to launch League of Legends');
     } finally {
       setLaunching(false);
+      window.setTimeout(() => setLaunchStep(''), 1800);
     }
   };
 
@@ -117,7 +131,7 @@ export default function RiotPanel() {
             className="btn-primary flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs"
           >
             {launching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
-            <span>{launching ? 'Launching League of Legends...' : 'Launch League of Legends'}</span>
+            <span>{launching ? (launchStep || 'Launching League of Legends...') : 'Launch League of Legends'}</span>
           </button>
           <button
             onClick={() => void checkStatus()}
@@ -183,7 +197,7 @@ export default function RiotPanel() {
             className="btn-primary flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs"
           >
             {launching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
-            <span>{launching ? 'Launching League of Legends...' : 'Launch League of Legends'}</span>
+            <span>{launching ? (launchStep || 'Launching League of Legends...') : 'Launch League of Legends'}</span>
           </button>
           <button
             onClick={() => void checkStatus()}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Play, Square, Shield, Server, Sparkles, Settings, Power, FolderOpen, Search, RotateCcw } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
@@ -18,6 +18,11 @@ import WorkspaceHeader from './components/WorkspaceHeader';
 import * as api from './api';
 import ConfirmModal from './components/ConfirmModal';
 import UpdateDialog from './components/UpdateDialog';
+import NotificationCenter from './components/NotificationCenter';
+import type { NotificationEntry } from './components/NotificationCenter';
+import { useLCUConnection } from './components/lcuConnectionContext';
+import { PERFORMANCE_MODES } from './components/lcuConnectionContext';
+import ClientControlRoom from './components/ClientControlRoom';
 import { GAMES, gameLabel } from './types';
 
 function phaseLabel(phase: string): string {
@@ -52,7 +57,14 @@ const GAME_IMGS: Record<string, string> = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    try {
+      const saved = localStorage.getItem('riftops.activeTab');
+      return (saved as Tab) || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  });
   const [snapshot, setSnapshot] = useState<Snapshot>({
     Version: '', Platform: '', Phase: 'idle', Detail: 'Choose a game and launch with presence masking.',
     Game: '', Status: 'offline', Enabled: false, ChatPort: 0, StartedAt: '',
@@ -75,28 +87,99 @@ export default function App() {
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [gameImgError, setGameImgError] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
+  const [notificationHistory, setNotificationHistory] = useState<NotificationEntry[]>([]);
+  const [launchStage, setLaunchStage] = useState<'idle' | 'checking' | 'starting' | 'waiting' | 'ready'>('idle');
+  const [compactMode, setCompactMode] = useState(() => {
+    try { return localStorage.getItem('riftops.compactMode') === 'true'; } catch { return false; }
+  });
+  const [reducedMotion, setReducedMotion] = useState(() => {
+    try { return localStorage.getItem('riftops.reducedMotion') === 'true'; } catch { return false; }
+  });
+  const { connected: lcuConnected, performanceMode, setPerformanceMode, pageVisible } = useLCUConnection();
+  const previousLcuConnection = useRef<boolean | null>(null);
+  const toastTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    try { localStorage.setItem('riftops.activeTab', activeTab); } catch { /* Preferences are optional. */ }
+  }, [activeTab]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('riftops.compactMode', String(compactMode));
+      localStorage.setItem('riftops.reducedMotion', String(reducedMotion));
+    } catch { /* Preferences are optional. */ }
+    document.documentElement.classList.toggle('riftops-compact', compactMode);
+    document.documentElement.classList.toggle('riftops-reduced-motion', reducedMotion);
+  }, [compactMode, reducedMotion]);
+
+  useEffect(() => {
+    document.documentElement.dataset.performance = performanceMode;
+    return () => { delete document.documentElement.dataset.performance; };
+  }, [performanceMode]);
 
   const showToast = useCallback((title: string, message: string, type: 'info' | 'success' | 'error' = 'info') => {
-    setNotification({ title, message, type });
-    setTimeout(() => setNotification(null), 4000);
+    const next = { title, message, type };
+    setNotification(next);
+    setNotificationHistory((current) => [{ ...next, id: Date.now(), createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), read: false }, ...current].slice(0, 80));
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => {
+      setNotification(null);
+      toastTimer.current = null;
+    }, 4000);
   }, []);
+
+  useEffect(() => () => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (previousLcuConnection.current === null) {
+      previousLcuConnection.current = lcuConnected;
+      return;
+    }
+    if (previousLcuConnection.current !== lcuConnected) {
+      showToast(
+        lcuConnected ? 'League Client connected' : 'League Client disconnected',
+        lcuConnected ? 'Live LCU controls are available again.' : 'RiftOps will keep retrying in the background.',
+        lcuConnected ? 'success' : 'error',
+      );
+      previousLcuConnection.current = lcuConnected;
+    }
+  }, [lcuConnected, showToast]);
 
   // Prefer the backend event stream and keep a slow polling fallback for
   // clients that temporarily lose the stream during a restart.
   useEffect(() => {
+    let polling = false;
+    let lastErrorLog = 0;
     const poll = async () => {
+      if (polling) return;
+      polling = true;
       try {
         const snap = await api.fetchSnapshot();
         setSnapshot(snap);
       } catch (err: any) {
-        setLogs((prev) => [
-          ...prev.slice(-100),
-          { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Poll error: ${err.message}` },
-        ]);
+        if (Date.now() - lastErrorLog > 30000) {
+          lastErrorLog = Date.now();
+          setLogs((prev) => [
+            ...prev.slice(-100),
+            { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `State refresh paused: ${err.message}` },
+          ]);
+        }
+      } finally {
+        polling = false;
       }
     };
-    void poll();
-    const interval = setInterval(poll, 5000);
+    if (!pageVisible) return undefined;
+    let timer: number | undefined;
+    let cancelled = false;
+    const interval = performanceMode === 'fast' ? 15000 : performanceMode === 'quiet' ? 60000 : 30000;
+    const schedule = async () => {
+      await poll();
+      if (!cancelled) timer = window.setTimeout(() => void schedule(), interval);
+    };
+    void schedule();
     const source = new EventSource('/api/events');
     source.onmessage = (event) => {
       try {
@@ -107,10 +190,11 @@ export default function App() {
     };
     source.onerror = () => { void poll(); };
     return () => {
-      clearInterval(interval);
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
       source.close();
     };
-  }, []);
+  }, [pageVisible, performanceMode]);
 
   // Load preferences & update check
   useEffect(() => {
@@ -202,22 +286,51 @@ export default function App() {
     }
   };
 
-  const handleLaunch = async () => {
+  const handleLaunch = async (stopExisting = false) => {
+    setLaunchStage('checking');
     setLogs((prev) => [
       ...prev.slice(-100),
-      { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Launching ${selectedGame}...` },
+      { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `${stopExisting ? 'Restarting' : 'Launching'} ${selectedGame}...` },
     ]);
     try {
-      await api.launchGame(selectedGame);
-      const res = await api.fetchSnapshot();
+      showToast('Launch preflight', 'Checking the Riot Client and RiftOps engine.', 'info');
+      await api.fetchSnapshot();
+      setLaunchStage('starting');
+      await api.launchGame(selectedGame, stopExisting);
+      setLaunchStage('waiting');
+      let res = await api.fetchSnapshot();
+      for (let attempt = 0; attempt < 15 && (res.Phase === 'idle' || res.Phase === 'error'); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 700));
+        res = await api.fetchSnapshot();
+      }
       setSnapshot(res);
+      setLaunchStage('ready');
       showToast('Engine Launched', `Presence set to ${res.Status}`, 'success');
     } catch (err: any) {
-      showToast('Launch Error', err.message, 'error');
+      const message = (err?.message || '').trim() || 'RiftOps could not start the selected game.';
+      setLaunchStage('idle');
+      if (/Riot Client is already running/i.test(message)) {
+        showToast('Launch paused', 'Riot Client is already running. Choose Restart & launch to continue.', 'info');
+        setConfirmModal({
+          open: true,
+          title: 'Restart Riot Client?',
+          message: 'RiftOps must close the running Riot Client before it can apply the selected launch profile. Unsaved client screens will be closed.',
+          actionLabel: 'Restart & launch',
+          danger: false,
+          onConfirm: () => {
+            setConfirmModal(null);
+            void handleLaunch(true);
+          },
+        });
+      } else {
+        showToast('Launch Error', message, 'error');
+      }
       setLogs((prev) => [
         ...prev.slice(-100),
-        { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Launch failed: ${err.message}` },
+        { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Launch failed: ${message}` },
       ]);
+    } finally {
+      window.setTimeout(() => setLaunchStage('idle'), 1800);
     }
   };
 
@@ -285,15 +398,68 @@ export default function App() {
     }
   };
 
+  const handleCommand = (command: string) => {
+    if (command === 'launch') void handleLaunch();
+    if (command === 'stop') void handleStop();
+    if (command === 'accept') void runClientCommand('Ready check accepted.', api.lcuAutoAccept);
+    if (command === 'start-queue') void runClientCommand('Matchmaking started.', api.lcuAutoRequeue);
+    if (command === 'stop-queue') void runClientCommand('Matchmaking stopped.', api.lcuStopQueue);
+    if (command === 'play-again') void runClientCommand('Returning to the lobby.', api.lcuPlayAgain);
+    if (command === 'refresh') {
+      void api.fetchSnapshot().then(setSnapshot).catch((err: any) => showToast('Refresh failed', err.message, 'error'));
+    }
+    if (command === 'toggle-mask') void handleToggleMasking(!snapshot.Enabled);
+    if (command === 'notifications') setNotificationCenterOpen(true);
+  };
+
+  const runClientCommand = async (successMessage: string, action: () => Promise<unknown>) => {
+    try {
+      await action();
+      setSnapshot(await api.fetchSnapshot());
+      showToast('League Client', successMessage, 'success');
+    } catch (err: any) {
+      showToast('League Client', err?.message || 'League rejected the action.', 'error');
+    }
+  };
+
+  const resetWorkspacePreferences = () => {
+    ['riftops.activeTab', 'riftops.compactMode', 'riftops.reducedMotion', 'riftops.performanceMode', 'riftops.friends.collapsed', 'riftops.friends.favorites', 'riftops.history.queue', 'riftops.history.period', 'riftops.history.count'].forEach((key) => {
+      try { localStorage.removeItem(key); } catch { /* Optional preference. */ }
+    });
+    try {
+      Object.keys(localStorage).filter((key) => key.startsWith('riftops-skin-')).forEach((key) => localStorage.removeItem(key));
+    } catch { /* Optional preference. */ }
+    setActiveTab('dashboard');
+    setCompactMode(false);
+    setReducedMotion(false);
+    setPerformanceMode('balanced');
+    showToast('Workspace reset', 'Layout and local view preferences were restored to defaults.', 'success');
+  };
+
+  const clearAssetCache = () => {
+    api.clearCachedJSON();
+    try {
+      ['riftops-skin-cache', 'riftops-skin-cache-updated', 'riftops-skin-cache-v2', 'riftops-skin-cache-v2-updated'].forEach((key) => localStorage.removeItem(key));
+    } catch { /* Optional local cache. */ }
+    showToast('Asset cache cleared', 'RiftOps will reload catalogues only when you open them.', 'success');
+  };
+
   const isIdle = snapshot.Phase === 'idle' || snapshot.Phase === 'error';
   const isLive = snapshot.Phase !== 'idle' && snapshot.Phase !== 'error';
   const gameInfo = GAMES.find((g) => g.value === selectedGame);
   const gameImg = GAME_IMGS[selectedGame];
 
   return (
-    <div className="flex h-screen bg-base text-text overflow-hidden">
+    <div className={`flex h-screen bg-base text-text overflow-hidden ${compactMode ? 'is-compact' : ''}`}>
       {/* Toast Notification */}
       <Toast notification={notification} onClose={() => setNotification(null)} />
+      <NotificationCenter
+        open={notificationCenterOpen}
+        entries={notificationHistory}
+        onClose={() => setNotificationCenterOpen(false)}
+        onRead={(id) => setNotificationHistory((items) => items.map((item) => item.id === id ? { ...item, read: true } : item))}
+        onClear={() => setNotificationHistory([])}
+      />
 
       {/* Confirmation Modal */}
       {confirmModal && <ConfirmModal action={confirmModal} onClose={() => setConfirmModal(null)} />}
@@ -305,6 +471,7 @@ export default function App() {
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
         onSelectTab={setActiveTab}
+        onCommand={handleCommand}
       />
 
       {/* Left Sidebar */}
@@ -317,6 +484,8 @@ export default function App() {
           phase={phaseLabel(snapshot.Phase)}
           detail={snapshot.Detail === 'Choose a game and launch with presence masking.' ? '' : snapshot.Detail}
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          onOpenNotifications={() => setNotificationCenterOpen(true)}
+          unreadNotifications={notificationHistory.filter((item) => !item.read).length}
         />
         <main className="flex-1 overflow-hidden flex flex-col relative z-10">
           {/* QoL Panel */}
@@ -346,12 +515,12 @@ export default function App() {
                   {/* Phase badge */}
                   <div className="flex items-center justify-between mb-auto">
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-base/80 backdrop-blur-md border border-white/[0.08]">
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-base/90 border border-white/[0.08]">
                         <span className={`w-2 h-2 rounded-full ${isLive ? 'bg-primary animate-pulse shadow-sm shadow-primary' : 'bg-text-dim'}`} />
                         <span className="text-xs font-bold text-text-muted">{phaseLabel(snapshot.Phase)}</span>
                       </div>
                       {snapshot.Detail && snapshot.Detail !== 'Choose a game and launch with presence masking.' && (
-                        <div className="px-2.5 py-1 rounded-lg bg-base/80 backdrop-blur-md border border-white/[0.08]">
+                        <div className="px-2.5 py-1 rounded-lg bg-base/90 border border-white/[0.08]">
                           <span className="text-xs text-text-muted">{snapshot.Detail}</span>
                         </div>
                       )}
@@ -382,11 +551,11 @@ export default function App() {
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleLaunch()}
-                        disabled={!isIdle}
+                        disabled={!isIdle || launchStage !== 'idle'}
                         className="btn-primary flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm"
                       >
-                        <Play className="w-4 h-4 fill-current" />
-                        <span>Launch</span>
+                        {launchStage !== 'idle' ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
+                        <span>{launchStage === 'checking' ? 'Checking…' : launchStage === 'starting' ? 'Starting…' : launchStage === 'waiting' ? 'Connecting…' : launchStage === 'ready' ? 'Ready' : 'Launch'}</span>
                       </button>
                       <button
                         onClick={handleStop}
@@ -398,11 +567,18 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+                  {launchStage !== 'idle' && (
+                    <div className="launch-progress" role="status" aria-live="polite">
+                      <div className="launch-progress__track"><span style={{ width: launchStage === 'checking' ? '25%' : launchStage === 'starting' ? '50%' : launchStage === 'waiting' ? '78%' : '100%' }} /></div>
+                      <span>{launchStage === 'checking' ? 'Preflight checks in progress' : launchStage === 'starting' ? 'Starting the selected Riot game' : launchStage === 'waiting' ? 'Waiting for the local client to become ready' : 'RiftOps is connected'}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Dashboard body */}
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+                <ClientControlRoom onOpenQoL={() => setActiveTab('qol')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
                 <QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
 
                 {/* Game Selector */}
@@ -557,6 +733,34 @@ export default function App() {
                       <span className="slider" />
                     </label>
                   </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-text">Compact workspace density</span>
+                    <label className="toggle">
+                      <input type="checkbox" checked={compactMode} onChange={(e) => setCompactMode(e.target.checked)} />
+                      <span className="slider" />
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-text">Reduce interface motion</span>
+                    <label className="toggle">
+                      <input type="checkbox" checked={reducedMotion} onChange={(e) => setReducedMotion(e.target.checked)} />
+                      <span className="slider" />
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="text-xs text-text block">Client performance mode</span>
+                      <span className="text-[10px] text-text-dim block mt-0.5">Controls background polling and refresh work.</span>
+                    </div>
+                    <select
+                      value={performanceMode}
+                      onChange={(event) => setPerformanceMode(event.target.value as keyof typeof PERFORMANCE_MODES)}
+                      className="w-32 text-xs shrink-0"
+                      aria-label="Client performance mode"
+                    >
+                      {Object.entries(PERFORMANCE_MODES).map(([key, mode]) => <option key={key} value={key}>{mode.label}</option>)}
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -664,6 +868,12 @@ export default function App() {
                   <span>Version: {snapshot.Version ? `v${snapshot.Version}` : 'loading...'}</span>
                   <span>Build: {snapshot.Platform === 'darwin' ? 'macOS' : snapshot.Platform === 'windows' ? 'Windows x64' : snapshot.Platform || 'detecting...'}</span>
                 </div>
+                <button type="button" onClick={resetWorkspacePreferences} className="text-[10px] text-text-dim hover:text-primary transition cursor-pointer">
+                  Reset workspace layout and local filters
+                </button>
+                <button type="button" onClick={clearAssetCache} className="text-[10px] text-text-dim hover:text-primary transition cursor-pointer">
+                  Clear RiftOps asset cache
+                </button>
               </div>
             </div>
           )}

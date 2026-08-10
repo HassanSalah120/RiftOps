@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.4.3",
+    [string]$Version = "2.5.0",
     [int]$Build = 1,
     [switch]$SkipTests
 )
@@ -89,8 +89,18 @@ try {
         Copy-Item -Force -LiteralPath cmd/riftops-ui/RiftOps.exe -Destination $OutputPath -ErrorAction Stop
         Write-Warning "The standard output executable is in use. Created $OutputPath instead."
     }
+
+    # PE subsystem 2 is Windows GUI. A console-subsystem binary opens a command
+    # window on startup even though the application itself is a WebView host.
+    $ExecutableBytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $OutputPath))
+    $PeOffset = [System.BitConverter]::ToInt32($ExecutableBytes, 0x3c)
+    $OptionalHeaderOffset = $PeOffset + 24
+    $Subsystem = [System.BitConverter]::ToUInt16($ExecutableBytes, $OptionalHeaderOffset + 68)
+    if ($Subsystem -ne 2) {
+        throw "Packaged executable uses PE subsystem $Subsystem instead of Windows GUI (2)."
+    }
     Remove-Item -Force -LiteralPath cmd/riftops-ui/RiftOps.exe
-    Write-Host "Created $OutputPath"
+    Write-Host "Created $OutputPath (Windows GUI subsystem; no startup console)"
 }
 finally {
     foreach ($GeneratedFile in @(

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Activity, Clock, Cpu, RefreshCw, Server, Wifi, WifiOff } from 'lucide-react';
-import { fetchLCUHealth, fetchServerStatus, type LCUHealth, type ServerStatusItem } from '../api';
+import { fetchServerStatus, type ServerStatusItem } from '../api';
+import { useLCUConnection } from './lcuConnectionContext';
 
 function formatUptime(seconds: number): string {
   if (seconds <= 0) return '—';
@@ -25,30 +26,48 @@ function statusColor(status: string): string {
   return '#6a6a88';
 }
 
+function performanceLabel(health: { connected: boolean; latencyMs: number; memoryMB: number; cpuPercent: number } | null): { label: string; color: string } {
+  if (!health?.connected) return { label: 'Unavailable', color: '#6a6a88' };
+  const underPressure = health.latencyMs > 150 || health.cpuPercent > 85 || health.memoryMB > 1800;
+  const watch = health.latencyMs > 50 || health.cpuPercent > 55 || health.memoryMB > 1200;
+  if (underPressure) return { label: 'Needs attention', color: '#ef4444' };
+  if (watch) return { label: 'Watch', color: '#e8956a' };
+  return { label: 'Healthy', color: '#10b981' };
+}
+
 export default function HealthIndicator() {
-  const [health, setHealth] = useState<LCUHealth | null>(null);
   const [serverStatus, setServerStatus] = useState<ServerStatusItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [latencyHistory, setLatencyHistory] = useState<number[]>([]);
+  const { health, refresh: refreshConnection, pageVisible, performanceMode } = useLCUConnection();
+  const performance = performanceLabel(health);
 
-  const refresh = useCallback(async () => {
+  useEffect(() => {
+    if (!health?.connected || health.latencyMs <= 0) return;
+    setLatencyHistory((current) => [...current, health.latencyMs].slice(-18));
+  }, [health?.connected, health?.latencyMs]);
+
+  const refresh = useCallback(async (includeClient = false) => {
+    if (!pageVisible) return;
     setLoading(true);
     try {
-      const [h, s] = await Promise.all([
-        fetchLCUHealth().catch(() => ({ connected: false, latencyMs: 0, uptime: 0, memoryMB: 0 })),
+      const [, s] = await Promise.all([
+        includeClient ? refreshConnection() : Promise.resolve(),
         fetchServerStatus('NA').catch(() => []),
       ]);
-      setHealth(h);
       setServerStatus(Array.isArray(s) ? s : []);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [pageVisible, refreshConnection]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(false); }, [refresh]);
   useEffect(() => {
-    const timer = window.setInterval(() => void refresh(), 15000);
+    if (!pageVisible) return undefined;
+    const interval = performanceMode === 'fast' ? 45000 : performanceMode === 'quiet' ? 120000 : 90000;
+    const timer = window.setInterval(() => void refresh(false), interval);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [pageVisible, performanceMode, refresh]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -71,24 +90,38 @@ export default function HealthIndicator() {
                   {formatUptime(health.uptime)}
                 </span>
               )}
-              {health.memoryMB > 0 && (
+              {health.cpuPercent > 0 && (
                 <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                   <Cpu size={9} />
-                  {health.memoryMB}MB
+                  {health.cpuPercent.toFixed(1)}% CPU
                 </span>
               )}
+              {health.memoryMB > 0 && <span>{health.memoryMB}MB RAM</span>}
             </div>
           )}
         </div>
+        {health?.connected && <span style={{ color: performance.color, fontSize: 8, fontWeight: 700 }}>{performance.label}</span>}
         <button
           type="button"
-          onClick={() => void refresh()}
+          onClick={() => void refresh(true)}
           disabled={loading}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6a6a88', padding: 4 }}
         >
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
+
+      {latencyHistory.length > 1 && (
+        <div style={{ padding: '6px 12px 7px', borderRadius: 8, background: 'rgba(255,255,255,0.025)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <span style={{ fontSize: 8, color: '#6a6a88', fontWeight: 700 }}>LCU latency history</span>
+            <span style={{ fontSize: 8, color: latencyColor(latencyHistory[latencyHistory.length - 1]) }}>{latencyHistory[latencyHistory.length - 1]}ms</span>
+          </div>
+          <div style={{ height: 18, display: 'flex', alignItems: 'end', gap: 2 }} aria-label="LCU latency history">
+            {latencyHistory.map((value, index) => <span key={`${value}-${index}`} style={{ flex: 1, minWidth: 2, height: `${Math.max(15, Math.min(100, value / 2))}%`, borderRadius: 2, background: latencyColor(value), opacity: index === latencyHistory.length - 1 ? 1 : .55 }} />)}
+          </div>
+        </div>
+      )}
 
       {/* Server status */}
       {serverStatus.length > 0 && (

@@ -182,6 +182,7 @@ func launchBrowserApp(url string) error {
 
 func logFatalStartup(title, message string) {
 	slog.Error("Startup Error", "title", title, "message", message)
+	showStartupError(title, message)
 }
 
 func shutdownHTTPServer() {
@@ -189,6 +190,19 @@ func shutdownHTTPServer() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(ctx)
+	}
+}
+
+func notifyExistingInstance() {
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, clientURL+"/api/show", nil)
+	if err != nil {
+		return
+	}
+	response, err := (&http.Client{Timeout: 1200 * time.Millisecond}).Do(request)
+	if err == nil {
+		_ = response.Body.Close()
 	}
 }
 
@@ -215,6 +229,10 @@ func main() {
 	}
 	instance, err := singleinstance.Acquire(filepath.Join(path, "lock"))
 	if err != nil {
+		if errors.Is(err, singleinstance.ErrAlreadyRunning) {
+			notifyExistingInstance()
+			return
+		}
 		logFatalStartup("RiftOps could not start", err.Error())
 		return
 	}
@@ -277,6 +295,7 @@ func main() {
 	mux.HandleFunc("/api/set-autostart", originCheck(setAutostart))
 	mux.HandleFunc("/api/autostart", originCheck(getAutostart))
 	mux.HandleFunc("/api/check-update", originCheck(checkUpdate))
+	mux.HandleFunc("/api/show", originCheck(showApp))
 	mux.HandleFunc("/api/quit", originCheck(quitApp))
 
 	// Riot Dev API routes
@@ -295,6 +314,7 @@ func main() {
 
 	// LCU (local client) data routes
 	mux.HandleFunc("/api/lcu/status", originCheck(lcuStatusHandler))
+	mux.HandleFunc("/api/lcu/overview", originCheck(lcuOverviewHandler))
 	mux.HandleFunc("/api/lcu/profile", originCheck(lcuProfileHandler))
 	mux.HandleFunc("/api/lcu/profile-icons", originCheck(lcuProfileIconMetadataHandler))
 	mux.HandleFunc("/api/lcu/launch-league", originCheck(lcuLaunchLeagueHandler))
@@ -859,7 +879,7 @@ func startEngine(w http.ResponseWriter, r *http.Request) {
 		adapter := platform.New()
 		processes, err := adapter.KnownProcesses(r.Context())
 		if err == nil && len(processes) > 0 {
-			w.WriteHeader(http.StatusConflict)
+			httpError(w, "Riot Client is already running. Restart it with RiftOps to apply the launch profile.", http.StatusConflict)
 			return
 		}
 	}
@@ -964,11 +984,24 @@ func checkUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func showApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	showWebViewWindow()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func quitApp(w http.ResponseWriter, r *http.Request) {
-	backendEngine.Stop()
-	shutdownHTTPServer()
-	systray.Quit()
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusAccepted)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		backendEngine.Stop()
+		destroyWebView()
+		shutdownHTTPServer()
+		systray.Quit()
+	}()
 }
 
 func setAutostart(w http.ResponseWriter, r *http.Request) {
@@ -1139,6 +1172,68 @@ func ddragonProfileIconsHandler(w http.ResponseWriter, r *http.Request) {
 // ─────────────────────────────────────────────────────────────────────────────
 // LCU (local client) Handlers
 // ─────────────────────────────────────────────────────────────────────────────
+
+type lcuOverviewResponse struct {
+	Status struct {
+		Connected   bool   `json:"connected"`
+		LeagueReady bool   `json:"leagueReady"`
+		AuthSource  string `json:"authSource"`
+		Detail      string `json:"detail,omitempty"`
+	} `json:"status"`
+	Health struct {
+		Connected  bool    `json:"connected"`
+		LatencyMS  int64   `json:"latencyMs"`
+		Uptime     int64   `json:"uptime"`
+		MemoryMB   int64   `json:"memoryMB"`
+		CPUPercent float64 `json:"cpuPercent"`
+	} `json:"health"`
+	QoL *riotclient.QoLState `json:"qol,omitempty"`
+}
+
+// lcuOverviewHandler serves the frequently refreshed client state in one
+// request. This replaces three overlapping frontend polls and reuses the same
+// lockfile/phase read for status, health, and QoL.
+func lcuOverviewHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	response := lcuOverviewResponse{}
+	response.Status.AuthSource = "none"
+
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		response.Status.Detail = "Open Riot Client and sign in to connect RiftOps."
+		_ = json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response.Status.Connected = true
+	if lf.Source == "league" {
+		response.Status.AuthSource = "lcu"
+	} else {
+		response.Status.AuthSource = "riot-client"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	started := time.Now()
+	phase, err := lf.GetGameflowPhase(ctx)
+	response.Health.LatencyMS = time.Since(started).Milliseconds()
+	if err != nil {
+		response.Health.LatencyMS = 0
+		response.Status.Detail = "Riot Client is open; waiting for the League home screen."
+		_ = json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response.Status.LeagueReady = true
+	response.Health.Connected = true
+	state := lf.FetchQoLStateWithPhase(ctx, phase)
+	response.QoL = &state
+	process := riotclient.GetLeagueProcessInfo()
+	response.Health.Uptime = process.UptimeSec
+	response.Health.MemoryMB = process.MemoryMB
+	response.Health.CPUPercent = process.CPUPercent
+	_ = json.NewEncoder(w).Encode(response)
+}
 
 func lcuStatusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1784,7 +1879,7 @@ func lcuHealthHandler(w http.ResponseWriter, r *http.Request) {
 	if lf == nil {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"connected": false, "latencyMs": 0, "uptime": 0, "memoryMB": 0,
+			"connected": false, "latencyMs": 0, "uptime": 0, "memoryMB": 0, "cpuPercent": 0,
 		})
 		return
 	}
@@ -1799,10 +1894,11 @@ func lcuHealthHandler(w http.ResponseWriter, r *http.Request) {
 	pinfo := riotclient.GetLeagueProcessInfo()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"connected": true,
-		"latencyMs": latency,
-		"uptime":    pinfo.UptimeSec,
-		"memoryMB":  pinfo.MemoryMB,
+		"connected":  true,
+		"latencyMs":  latency,
+		"uptime":     pinfo.UptimeSec,
+		"memoryMB":   pinfo.MemoryMB,
+		"cpuPercent": pinfo.CPUPercent,
 	})
 }
 

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clock3, Eye, RefreshCw, Shield, Swords, Users, WifiOff } from 'lucide-react';
 import { fetchLCUChampSelect } from '../api';
+import { useLCUConnection } from './lcuConnectionContext';
 
 type TeamMember = { cellId?: number; championId?: number; championName?: string; summonerId?: string; summonerName?: string; selectedSkinIndex?: number };
 type SelectAction = { actorCellId?: number; championId?: number; completed?: boolean; isAllyAction?: boolean; type?: string; pickTurn?: number };
@@ -20,10 +21,12 @@ export default function ChampSelectWorkspace({ connected, active }: { connected:
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const loadedOnce = useRef(false);
+  const { pageVisible, realtimeInterval } = useLCUConnection();
 
   const refresh = useCallback(async () => {
-    if (!connected || !active) return;
-    setLoading(true);
+    if (!connected || !active || !pageVisible) return;
+    if (!loadedOnce.current) setLoading(true);
     try {
       setSession((await fetchLCUChampSelect()) as Session);
       setError('');
@@ -31,16 +34,17 @@ export default function ChampSelectWorkspace({ connected, active }: { connected:
       setSession(null);
       setError(reason?.message || 'Champion Select session is unavailable.');
     } finally {
+      loadedOnce.current = true;
       setLoading(false);
     }
-  }, [active, connected]);
+  }, [active, connected, pageVisible]);
 
   useEffect(() => {
     void refresh();
-    if (!active) return undefined;
-    const timer = window.setInterval(() => void refresh(), 1200);
+    if (!active || !pageVisible) return undefined;
+    const timer = window.setInterval(() => void refresh(), realtimeInterval);
     return () => window.clearInterval(timer);
-  }, [active, refresh]);
+  }, [active, pageVisible, realtimeInterval, refresh]);
 
   const actions = useMemo(() => flattenActions(session?.actions), [session?.actions]);
   const pending = actions.find((action) => !action.completed && action.actorCellId === session?.localPlayerCellId);

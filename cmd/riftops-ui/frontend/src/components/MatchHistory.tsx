@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchLCUMatchHistory, fetchDDragonVersion, fetchLCUGameDetail } from '../api';
-import { History, Loader2, RefreshCw, Trophy, Skull, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame } from 'lucide-react';
+import { History, Loader2, RefreshCw, Trophy, Skull, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download } from 'lucide-react';
 
 const QUEUE_MAP: Record<number, string> = {
   420: 'Ranked Solo',
@@ -66,9 +66,11 @@ export default function MatchHistory() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [gameDetails, setGameDetails] = useState<Record<number, any>>({});
   const [loadingDetail, setLoadingDetail] = useState<number | null>(null);
-  const [queueFilter, setQueueFilter] = useState<number | 'all'>('all');
-  const [periodFilter, setPeriodFilter] = useState<string>('all');
-  const [gameCount, setGameCount] = useState<number>(50);
+  const [queueFilter, setQueueFilter] = useState<number | 'all'>(() => {
+    try { return JSON.parse(localStorage.getItem('riftops.history.queue') || '"all"'); } catch { return 'all'; }
+  });
+  const [periodFilter, setPeriodFilter] = useState<string>(() => localStorage.getItem('riftops.history.period') || 'all');
+  const [gameCount, setGameCount] = useState<number>(() => Number(localStorage.getItem('riftops.history.count') || 50));
   const [ddVer, setDdVer] = useState('15.1.1');
 
   const loadData = useCallback(async () => {
@@ -97,6 +99,14 @@ export default function MatchHistory() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('riftops.history.queue', JSON.stringify(queueFilter));
+      localStorage.setItem('riftops.history.period', periodFilter);
+      localStorage.setItem('riftops.history.count', String(gameCount));
+    } catch { /* Optional preference. */ }
+  }, [queueFilter, periodFilter, gameCount]);
 
   const handleExpand = useCallback(async (gameId: number) => {
     if (expandedId === gameId) {
@@ -195,6 +205,25 @@ export default function MatchHistory() {
   const avgGold = totalGames > 0 ? Math.round(totalGold / totalGames) : 0;
   const avgVis = totalGames > 0 ? (totalVis / totalGames).toFixed(1) : '0';
   const streakText = streakDirection > 0 ? `W${streak}` : streakDirection < 0 ? `L${streak}` : '-';
+  const trend = filteredMatches.slice(0, 12).reverse().map((match) => {
+    const participant = match.participants?.[0] || match.participantIdentities?.[0] || {};
+    const stats = participant.stats || match.stats || {};
+    return Boolean(stats.win || stats.winner);
+  });
+  const exportMatches = () => {
+    const rows = filteredMatches.map((match) => {
+      const participant = match.participants?.[0] || match.participantIdentities?.[0] || {};
+      const stats = participant.stats || match.stats || {};
+      return [match.gameId || '', QUEUE_MAP[match.queueId] || match.gameMode || '', stats.win || stats.winner ? 'Victory' : 'Defeat', stats.kills || 0, stats.deaths || 0, stats.assists || 0, match.gameDuration || 0].join(',');
+    });
+    const csv = ['game_id,queue,result,kills,deaths,assists,duration_seconds', ...rows].join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `riftops-match-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="space-y-4">
@@ -209,6 +238,15 @@ export default function MatchHistory() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={exportMatches}
+            disabled={loading || filteredMatches.length === 0}
+            className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-text-muted hover:text-white transition cursor-pointer border border-white/[0.06] disabled:opacity-30"
+            title="Export filtered matches"
+          >
+            <Download className="w-4 h-4" />
+          </button>
           {/* Game count dropdown */}
           <select
             value={gameCount}
@@ -259,6 +297,13 @@ export default function MatchHistory() {
               <p className="text-[10px] text-text-dim font-bold uppercase">Avg Vision</p>
               <p className="text-base font-black text-cyan-400">{avgVis}</p>
             </div>
+          </div>
+          <div className="flex items-center gap-3 pt-2 border-t border-white/[0.05]">
+            <span className="text-[10px] text-text-dim font-bold uppercase shrink-0">Recent trend</span>
+            <div className="flex items-end gap-1 h-5 flex-1">
+              {trend.map((win, index) => <span key={index} title={win ? 'Victory' : 'Defeat'} className={`flex-1 max-w-5 rounded-sm ${win ? 'bg-emerald-400' : 'bg-rose-400'}`} style={{ height: win ? '100%' : '58%' }} />)}
+            </div>
+            <span className="text-[9px] text-text-dim">oldest → newest</span>
           </div>
         </div>
       )}
@@ -395,6 +440,7 @@ export default function MatchHistory() {
                         <img
                           src={`/lol-game-data/assets/v1/champion-icons/${champId}.png`}
                           alt=""
+                          loading="lazy"
                           className="w-10 h-10 rounded-xl border border-white/10 bg-surface shrink-0 object-cover"
                           onError={(e: any) => { e.target.style.display = 'none'; }}
                         />
@@ -408,6 +454,7 @@ export default function MatchHistory() {
                               src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/spell/${spell1.icon}.png`}
                               alt={spell1.name}
                               title={spell1.name}
+                              loading="lazy"
                               className="w-4 h-4 rounded-md border border-white/10"
                             />
                           )}
@@ -416,6 +463,7 @@ export default function MatchHistory() {
                               src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/spell/${spell2.icon}.png`}
                               alt={spell2.name}
                               title={spell2.name}
+                              loading="lazy"
                               className="w-4 h-4 rounded-md border border-white/10"
                             />
                           )}
@@ -426,6 +474,7 @@ export default function MatchHistory() {
                               src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/perk-images/Styles/${RUNE_TREES[primaryStyle].img}.png`}
                               alt={RUNE_TREES[primaryStyle].name}
                               title={`Primary: ${RUNE_TREES[primaryStyle].name}`}
+                              loading="lazy"
                               className="w-4 h-4 rounded-md bg-black/40"
                               onError={(e: any) => { e.target.style.display = 'none'; }}
                             />
@@ -435,6 +484,7 @@ export default function MatchHistory() {
                               src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/perk-images/Styles/${RUNE_TREES[subStyle].img}.png`}
                               alt={RUNE_TREES[subStyle].name}
                               title={`Secondary: ${RUNE_TREES[subStyle].name}`}
+                              loading="lazy"
                               className="w-3.5 h-3.5 rounded-md bg-black/40 opacity-75"
                               onError={(e: any) => { e.target.style.display = 'none'; }}
                             />
@@ -630,6 +680,7 @@ export default function MatchHistory() {
                                             <img
                                               src={`/lol-game-data/assets/v1/champion-icons/${pChampId}.png`}
                                               alt=""
+                                              loading="lazy"
                                               className="w-8 h-8 rounded-lg border border-white/10 object-cover shrink-0"
                                               onError={(e: any) => { e.target.style.display = 'none'; }}
                                             />
@@ -675,6 +726,7 @@ export default function MatchHistory() {
                                                     key={i}
                                                     src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/item/${itemId}.png`}
                                                     alt=""
+                                                    loading="lazy"
                                                     className={`w-5 h-5 rounded object-cover border ${TRINKET_IDS.has(itemId) ? 'border-amber-400/60' : 'border-white/10'}`}
                                                     onError={(e: any) => { e.target.style.display = 'none'; }}
                                                   />

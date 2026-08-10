@@ -24,13 +24,13 @@ type RolePreset struct {
 
 // Preferences holds all opt-in QoL automations and presets.
 type Preferences struct {
-	AutoAccept      bool                   `json:"autoAccept"`
-	AutoPlayAgain   bool                   `json:"autoPlayAgain"`
-	AutoHonor       bool                   `json:"autoHonor"`
-	AutoStartQueue  bool                   `json:"autoStartQueue"`
+	AutoAccept       bool                  `json:"autoAccept"`
+	AutoPlayAgain    bool                  `json:"autoPlayAgain"`
+	AutoHonor        bool                  `json:"autoHonor"`
+	AutoStartQueue   bool                  `json:"autoStartQueue"`
 	AutoClaimRewards bool                  `json:"autoClaimRewards"`
-	GrindMode       bool                   `json:"grindMode"`
-	RolePresets     map[string]RolePreset  `json:"rolePresets,omitempty"`
+	GrindMode        bool                  `json:"grindMode"`
+	RolePresets      map[string]RolePreset `json:"rolePresets,omitempty"`
 }
 
 type Manager struct {
@@ -109,6 +109,14 @@ func (m *Manager) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			prefs := m.Preferences()
+			if !prefs.AutoAccept && !prefs.AutoPlayAgain && !prefs.AutoHonor &&
+				!prefs.AutoStartQueue && !prefs.AutoClaimRewards && !prefs.GrindMode {
+				lastPhase = ""
+				handled = make(map[string]bool)
+				cooldowns = make(map[string]time.Time)
+				continue
+			}
 			lockfile := riotclient.GetLCULockfile()
 			if lockfile == nil {
 				lastPhase = ""
@@ -129,7 +137,6 @@ func (m *Manager) Run(ctx context.Context) {
 				handled = make(map[string]bool)
 			}
 
-			prefs := m.Preferences()
 			grind := prefs.GrindMode
 
 			// ── Auto-accept ready check ──
@@ -223,7 +230,7 @@ func (m *Manager) autoHonorFirstTeammate(ctx context.Context, lf *riotclient.Loc
 		return err
 	}
 	var ballot struct {
-		GameID uint64 `json:"gameId"`
+		GameID         uint64 `json:"gameId"`
 		EligibleAllies []struct {
 			SummonerID uint64 `json:"summonerId"`
 			PUUID      string `json:"puuid"`

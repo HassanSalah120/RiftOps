@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Gift, Gem, Sparkles, Swords, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Gift, Gem, Sparkles, Swords, RefreshCw, ChevronDown, ChevronUp, Search, CheckCircle2 } from 'lucide-react';
 import { fetchLCULoot } from '../api';
 
 interface SkinShard {
@@ -51,6 +51,7 @@ export default function LootDashboard() {
   const [showAllSkins, setShowAllSkins] = useState(false);
   const [showAllChamps, setShowAllChamps] = useState(false);
   const [rarityFilter, setRarityFilter] = useState<string>('all');
+  const [skinQuery, setSkinQuery] = useState('');
   const [rawLoot, setRawLoot] = useState<any[]>([]);
   const [rawSkinsDb, setRawSkinsDb] = useState<any>(null);
   const [rawChampsSummary, setRawChampsSummary] = useState<any>(null);
@@ -178,12 +179,16 @@ export default function LootDashboard() {
   useEffect(() => { void loadLoot(); }, [loadLoot]);
 
   const rarities = [...new Set(skinShards.map((s) => s.rarity))].sort();
-  const filteredSkins = rarityFilter === 'all' ? skinShards : skinShards.filter((s) => s.rarity === rarityFilter);
+  const filteredSkins = skinShards.filter((skin) =>
+    (rarityFilter === 'all' || skin.rarity === rarityFilter) &&
+    (!skinQuery.trim() || skin.name.toLowerCase().includes(skinQuery.trim().toLowerCase())),
+  );
   const visibleSkins = showAllSkins ? filteredSkins : filteredSkins.slice(0, 12);
   const visibleChamps = showAllChamps ? champShards : champShards.slice(0, 12);
 
   const totalOEValue = skinShards.reduce((sum, s) => sum + s.oeDisenchant * s.count, 0);
   const canUpgrade = skinShards.filter((s) => s.oeUpgrade > 0 && s.oeUpgrade <= currencies.orangeEssence);
+  const upgradeRecommendations = [...canUpgrade].sort((a, b) => a.oeUpgrade - b.oeUpgrade || b.skinPrice - a.skinPrice).slice(0, 5);
   const totalSkinShards = skinShards.reduce((sum, s) => sum + s.count, 0);
   const totalChampShards = champShards.reduce((sum, s) => sum + s.count, 0);
 
@@ -240,10 +245,22 @@ export default function LootDashboard() {
             <span>{totalOEValue.toLocaleString()} OE disenchant total</span>
           </div>
 
+          {upgradeRecommendations.length > 0 && (
+            <div style={{ marginBottom: 20, padding: 14, borderRadius: 10, background: 'linear-gradient(120deg, rgba(16,185,129,.09), rgba(200,170,110,.05))', border: '1px solid rgba(16,185,129,.18)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8, color: '#8de0bf', fontSize: 12, fontWeight: 700 }}><CheckCircle2 size={14} /> Best affordable upgrades</div>
+              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                {upgradeRecommendations.map((skin) => <span key={skin.lootId} style={{ padding: '6px 9px', borderRadius: 7, color: '#d7efe6', fontSize: 10, background: 'rgba(16,185,129,.11)' }}>{skin.name} · {skin.oeUpgrade} OE</span>)}
+              </div>
+            </div>
+          )}
+
           {/* Skin shards */}
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#d4d4d0' }}>Skin shards</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 'auto', minWidth: 150, padding: '4px 7px', borderRadius: 6, background: 'rgba(0,0,0,.18)', border: '1px solid rgba(255,255,255,.06)' }}>
+                <Search size={11} color="#6a6a88" /><input value={skinQuery} onChange={(event) => setSkinQuery(event.target.value)} placeholder="Search shards" style={{ minWidth: 0, width: '100%', color: '#d4d4d0', border: 0, outline: 0, background: 'none', fontSize: 10 }} />
+              </div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 <button
                   type="button"
