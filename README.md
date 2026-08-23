@@ -37,8 +37,10 @@ xattr -dr com.apple.quarantine /Applications/RiftOps.app
 
 - Launch League, VALORANT, Runeterra, 2XKO, or Riot Client from one app.
 - Set your League presence to online, offline, or mobile-style masking.
-- View League account data, match history, and skin collection.
-- Customize your League profile background with any champion skin.
+- View your live summoner identity and rank in Command Center, plus match
+  history and skin collection.
+- Customize your League profile background with any champion skin and browse
+  your owned profile icons from Collection → Profile Studio.
 - Automatically accept ready checks or return to the lobby after a match.
 - Start or stop matchmaking, save lane preferences, and dodge during champion
   select with a clear safety confirmation.
@@ -46,23 +48,74 @@ xattr -dr com.apple.quarantine /Applications/RiftOps.app
   honor players, and claim available event-track rewards.
 - Use the League Client quick-action bar for launch, accept, queue, stop, and
   Play Again actions with phase-aware disabled states.
-- Watch a live Champion Select workspace with timer, team, opponent, and
-  current-action context.
+- Control a live Champion Select workspace: inspect timer, team, opponent,
+  pick/ban actions, lock-in state, and the full ban board.
+- Search the LCU's pickable and bannable champions, hover a choice, lock it in,
+  choose owned skins and summoner spells, switch rune pages, and use ARAM
+  rerolls or bench swaps when League exposes them.
+- Configure Play Flow draft policies: act immediately, after a delay, or in the
+  last seconds; apply a selected rune page before picking; and automatically
+  fall back when a pick or ban is already occupied by the draft.
+- Follow one canonical **Live Session** page from queue and ready check through
+  Champion Select, loading, active game, reconnecting, and immediate post-game.
 - Search and filter a reconnecting League friend list from the Social area.
-- Use the Loot & Collection dashboard for shards, essence, chests, and
-  cosmetics.
+- Use Loot Workshop for live resource balances, League-backed crafting
+  recipes, and recent inventory changes.
 - Open the command palette with `Ctrl+K` (Windows) or `Cmd+K` (macOS), or use
-  `Alt+1` through `Alt+7` to switch workspaces.
+  `Alt+1` through `Alt+9` to switch desktop workspaces.
 - Use tray controls, diagnostics, update checks, and Windows startup settings.
+- Scan the Phone control QR code to open a paired, mobile-friendly RiftOps
+  dashboard from any phone on the same Wi-Fi network (opt-in, see below).
+
+## Phone control (Mimic-style)
+
+RiftOps includes a LAN-first phone mode inspired by Mimic. It does not send
+League data through a RiftOps relay server: the desktop keeps the LCU connection
+and the phone talks directly to the desktop over the local network.
+
+1. Start RiftOps and open **Remote Access** under System.
+2. Turn on phone control with the **Turn on** button in the Phone control card
+   (it stays off until you enable it, including after restarting RiftOps).
+3. Make sure the phone and computer are on the same Wi-Fi network.
+4. Scan the **Phone control** QR code with the phone camera.
+5. Keep the resulting page open for the phone-safe League workflow: current
+   client state, lobby and queue controls, ready check, friends, reversible LCU
+   presence, Champion Select, existing rune-page selection, match history, and
+   a read-only skin catalogue. Phone permissions are enforced by the server,
+   not only hidden in the interface.
+
+Desktop settings, saved-login/profile data, Riot Client paths, update checks,
+autostart, automation-policy editing, loot and crafting, rune-page editing,
+profile cosmetics, diagnostics, RiftOps engine start/stop, and app quit are not
+available to paired phones. Launching the League Client itself remains a named
+phone capability so an authenticated device can reconnect the local client;
+it does not expose a process command or filesystem path.
+
+Each pairing QR expires after five minutes and is invalid immediately after one
+phone uses it. The phone receives a separate in-memory session that lasts up to
+eight hours. The desktop card lists active devices and can disconnect one or all
+of them without replacing every QR. Sessions are also revoked when RiftOps
+exits. The mobile listener uses a separate LAN port; if Windows Firewall asks,
+allow RiftOps on private networks only. Pairing traffic is plain HTTP on your
+local network, so use only your own devices on trusted private Wi-Fi and never
+expose the listener to the internet.
+
+The mobile dashboard loads League artwork from Riot Data Dragon and the local
+CommunityDragon fallback catalogue. The phone therefore needs normal internet
+access for those external images; the RiftOps API itself remains on the local
+LAN listener.
 
 ## League QoL quick guide
 
-Open League first, then use RiftOps → **Quality of Life**.
+Open League first, then use RiftOps → **Quality of Life** for client utilities,
+**Collection** for skins and profile identity, or **Loot Workshop** for
+inventory and crafting.
 
 | You want to… | In RiftOps |
 |---|---|
-| Change your profile background | Profile Studio → Champion → Skin → Apply |
-| Browse profile icons | Profile Studio → search an icon → select it |
+| Change your profile background | Collection → Profile Studio → Champion → Skin → Apply |
+| Browse profile icons | Collection → Profile Studio → search an owned icon → select → Apply |
+| Inspect or run a loot recipe | Loot Workshop → choose a material → Recipe Inspector |
 | Change presence or bio | Social → choose presence or update status message |
 | Save lane preferences | Queue Command → choose roles → Save Roles |
 | Automatically accept queue pops | Automation → Auto-accept ready checks |
@@ -71,7 +124,10 @@ Open League first, then use RiftOps → **Quality of Life**.
 | Return to the lobby | Post Game → Play Again |
 | Claim event rewards | Post Game → Claim Event Rewards |
 
-| View live Champion Select | Champion Select → Live Client View |
+| View and control Champion Select | Champion Select → Live Client Control |
+| Pick or ban a champion | Champion Select → search → choose → Lock in |
+| Change spells, skin, or runes | Champion Select → Loadout |
+| Use ARAM reroll/bench | Champion Select → ARAM Bench |
 | Find a friend | Social → Friends → Search friends |
 | Run a common client action | Dashboard → Quick actions |
 
@@ -88,9 +144,12 @@ champions**.
 - Game selection for League, VALORANT, Runeterra, 2XKO, and Riot Client
 - Versioned local preferences and migration from earlier installations
 - Saved launch, presence, and desktop-startup preferences
-- League Client panels for Riot account data, match history, skin collection, and phase-aware Quality of Life actions
-- League friend list, Champion Select live workspace, client health/server status, and loot/collection dashboard
-- Branded multi-page command center with dashboard, settings, system tray, diagnostics, keyboard command palette, and release update checks
+- Purpose-based workspaces grouped as **Operate**, **Review**, and **System**,
+  with one primary action and nearby feedback for each workflow
+- Command Center summoner/rank overview, phase-aware Play Flow, canonical Live
+  Session, match history, Collection, and action-first Loot Workshop
+- League friend list, client health/server status, dedicated Remote Access,
+  settings, diagnostics, keyboard command palette, and release update checks
 
 See [FEATURE_PARITY.md](FEATURE_PARITY.md) for verification evidence and release
 gates.
@@ -115,20 +174,22 @@ go install fyne.io/tools/cmd/fyne@v1.7.2
 Build a native package:
 
 ```powershell
-./scripts/build-windows.ps1 -Version 2.5.0 -Build 1
+./scripts/build-windows.ps1 -Version 2.6.0 -Build 1
 ```
 
 ```sh
-bash ./scripts/build-macos.sh 2.5.0 1
+bash ./scripts/build-macos.sh 2.6.0 1
 ```
 
 Outputs are `dist/RiftOps-windows-amd64.exe` and
-`dist/RiftOps-macOS.zip`. Public releases still require platform signing and
-macOS notarization.
+`dist/RiftOps-macOS.zip`, each with a matching `.sha256` checksum. The Windows
+and macOS release workflows run the same locked frontend install, lint, tests,
+production build, race-enabled desktop Go tests, and vet gates. Public releases
+still require platform signing and macOS Developer ID notarization.
 
 If Windows reports that the standard executable is in use, close RiftOps and
 build again. The script safely writes a versioned fallback such as
-`dist/RiftOps-windows-amd64-v2.5.0.exe` instead of replacing a running file.
+`dist/RiftOps-windows-amd64-v2.6.0.exe` instead of replacing a running file.
 
 ## League Quality of Life controls
 
@@ -140,11 +201,14 @@ League session.
   while RiftOps is running, even if the QoL page is closed.
 - **Social:** use live Online, Away, Mobile, or Offline presence and update the
   chat status message.
-- **Profile:** select a champion, choose any of its skins as a profile
-  background, and search a visual profile-icon library.
+- **Profile cosmetics:** use Collection → Profile Studio to select any champion
+  skin as a background and search the owned visual profile-icon library.
 - **Queue & Lobby:** accept a ready check, start or stop matchmaking, and save
   validated primary/secondary role preferences from a lobby.
-- **Champion Select:** dodge only during champion select.
+- **Champion Select:** pick, ban, and lock champions through the LCU action
+  queue; change spells, owned skin, and rune page; use ARAM rerolls/bench
+  swaps; configure timing and safe fallback picks/bans; and dodge only during
+  champion select.
 - **End of Game:** return to the lobby, submit an honor vote, and claim
   available event-track rewards using current League Client routes.
 
@@ -170,9 +234,30 @@ League-only panels use the locally running League Client API. They require the
 League Client to be open, and actions such as dodge, play again, reward claims,
 or profile customization are sent only when the local client confirms success.
 
+## Crash and hang reports
+
+On Windows, RiftOps keeps its diagnostic files here:
+
+- `%LOCALAPPDATA%\riftops\debug.log` — the current bounded application log;
+  the previous segment is retained as `debug.log.1`.
+- `%LOCALAPPDATA%\riftops\reports\` — timestamped panic, hang, unexpected-exit,
+  and unclean-exit reports.
+
+An `unclean-exit` report is created on the next launch when the previous process
+ended before RiftOps could run its normal shutdown path. Reports contain runtime
+state and goroutine stacks. They are scrubbed for authorization values, pairing
+and session tokens, query secrets, and local home paths; stored with private
+permissions where the platform supports Unix modes; and limited to the newest
+20 reports with a 30-day maximum age.
+
 ## Safety boundary
 
-Both local servers bind only to loopback. The config proxy forwards only Riot's
-required headers, the outgoing chat connection verifies Riot's TLS hostname,
-downloaded certificates are hostname/validity checked, and diagnostics exclude
-tokens and chat content.
+The main dashboard and Riot proxies bind only to loopback. Optional Phone
+control binds a separate private-LAN listener, consumes a short-lived one-time
+pairing token, creates expiring/revocable in-memory device sessions, and exposes
+only an explicit, named mobile capability manifest. A route inventory test
+ensures phone permissions cannot reference an unregistered endpoint, and new
+desktop APIs remain remote-denied by default. The config proxy forwards only
+Riot's required headers, the outgoing chat connection verifies Riot's TLS
+hostname, downloaded certificates are hostname/validity checked, and
+diagnostics exclude tokens and chat content.

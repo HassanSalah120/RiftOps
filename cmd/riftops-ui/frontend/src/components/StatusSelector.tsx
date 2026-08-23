@@ -22,7 +22,7 @@ export default function StatusSelector({
           <button
             key={s.key}
             onClick={() => onChange(s.key)}
-            className={`relative flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all duration-200 cursor-pointer border ${
+            className={`relative flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition duration-200 cursor-pointer border ${
               active
                 ? 'text-white border-primary/40 shadow-lg'
                 : 'text-text-dim border-white/[0.06] hover:text-white hover:bg-white/[0.04]'

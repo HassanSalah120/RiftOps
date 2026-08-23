@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Activity, Clock, Cpu, RefreshCw, Server, Wifi, WifiOff } from 'lucide-react';
+import { RefreshCw, Server, Wifi, WifiOff } from 'lucide-react';
 import { fetchServerStatus, type ServerStatusItem } from '../api';
 import { useLCUConnection } from './lcuConnectionContext';
 
@@ -70,62 +70,47 @@ export default function HealthIndicator() {
   }, [pageVisible, performanceMode, refresh]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className="app-sidebar__health-stack">
       {/* LCU Health */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.035)' }}>
-        {health?.connected ? <Wifi size={14} color="#10b981" /> : <WifiOff size={14} color="#6a6a88" />}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#d4d4d0' }}>
-            {health?.connected ? 'League connected' : 'Client unavailable'}
+      <div className="app-sidebar__health-card">
+        <div className="app-sidebar__health-head">
+          <span className={`app-sidebar__health-icon ${health?.connected ? 'is-live' : ''}`}>
+            {health?.connected ? <Wifi /> : <WifiOff />}
+          </span>
+          <div className="app-sidebar__health-copy">
+            <strong>{health?.connected ? 'League connected' : 'Client unavailable'}</strong>
+            <small>{health?.connected ? 'Local client link' : 'Launch League to reconnect'}</small>
           </div>
-          {health?.connected && (
-            <div style={{ display: 'flex', gap: 12, marginTop: 2, fontSize: 9, color: '#6a6a88' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                <Activity size={9} color={latencyColor(health.latencyMs)} />
-                <span style={{ color: latencyColor(health.latencyMs) }}>{health.latencyMs}ms</span>
-              </span>
-              {health.uptime > 0 && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <Clock size={9} />
-                  {formatUptime(health.uptime)}
-                </span>
-              )}
-              {health.cpuPercent > 0 && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <Cpu size={9} />
-                  {health.cpuPercent.toFixed(1)}% CPU
-                </span>
-              )}
-              {health.memoryMB > 0 && <span>{health.memoryMB}MB RAM</span>}
-            </div>
-          )}
+          {health?.connected && <span className="app-sidebar__health-state" style={{ color: performance.color }}>{performance.label}</span>}
+          <button type="button" onClick={() => void refresh(true)} disabled={loading} className="app-sidebar__health-refresh" aria-label="Refresh League connection" title="Refresh League connection">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </button>
         </div>
-        {health?.connected && <span style={{ color: performance.color, fontSize: 8, fontWeight: 700 }}>{performance.label}</span>}
-        <button
-          type="button"
-          onClick={() => void refresh(true)}
-          disabled={loading}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6a6a88', padding: 4 }}
-        >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-        </button>
+        {health?.connected && (
+          <div className="app-sidebar__health-metrics">
+            <span><small>Latency</small><strong style={{ color: latencyColor(health.latencyMs) }}>{health.latencyMs > 0 ? `${health.latencyMs}ms` : '—'}</strong></span>
+            <span><small>Uptime</small><strong>{health.uptime > 0 ? formatUptime(health.uptime) : '—'}</strong></span>
+            <span><small>CPU</small><strong>{health.cpuPercent > 0 ? `${health.cpuPercent.toFixed(1)}%` : '—'}</strong></span>
+            <span><small>Memory</small><strong>{health.memoryMB > 0 ? `${health.memoryMB}MB` : '—'}</strong></span>
+          </div>
+        )}
       </div>
 
       {latencyHistory.length > 1 && (
-        <div style={{ padding: '6px 12px 7px', borderRadius: 8, background: 'rgba(255,255,255,0.025)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <span style={{ fontSize: 8, color: '#6a6a88', fontWeight: 700 }}>LCU latency history</span>
-            <span style={{ fontSize: 8, color: latencyColor(latencyHistory[latencyHistory.length - 1]) }}>{latencyHistory[latencyHistory.length - 1]}ms</span>
+        <div className="app-sidebar__latency-card">
+          <div className="app-sidebar__latency-head">
+            <span>LCU latency history</span>
+            <strong style={{ color: latencyColor(latencyHistory[latencyHistory.length - 1]) }}>{latencyHistory[latencyHistory.length - 1]}ms</strong>
           </div>
-          <div style={{ height: 18, display: 'flex', alignItems: 'end', gap: 2 }} aria-label="LCU latency history">
-            {latencyHistory.map((value, index) => <span key={`${value}-${index}`} style={{ flex: 1, minWidth: 2, height: `${Math.max(15, Math.min(100, value / 2))}%`, borderRadius: 2, background: latencyColor(value), opacity: index === latencyHistory.length - 1 ? 1 : .55 }} />)}
+          <div className="app-sidebar__latency-bars" aria-label="LCU latency history">
+            {latencyHistory.map((value, index) => <span key={`${value}-${index}`} style={{ height: `${Math.max(15, Math.min(100, value / 2))}%`, background: latencyColor(value), opacity: index === latencyHistory.length - 1 ? 1 : .55 }} />)}
           </div>
         </div>
       )}
 
       {/* Server status */}
       {serverStatus.length > 0 && (
-        <div style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.025)' }}>
+        <div className="app-sidebar__server-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
             <Server size={11} color="#6a6a88" />
             <span style={{ fontSize: 10, fontWeight: 600, color: '#a0a0b8' }}>Server status</span>

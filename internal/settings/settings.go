@@ -30,8 +30,30 @@ type Settings struct {
 	RiotClientPath    string          `json:"riotClientPath,omitempty"`
 	PromptedUpdate    string          `json:"promptedUpdate,omitempty"`
 	IntroductionShown bool            `json:"introductionShown"`
+	PhoneAccess       bool            `json:"phoneAccess"`
 	ActiveProfileID   string          `json:"activeProfileId"`
 	Profiles          []LaunchProfile `json:"profiles"`
+}
+
+// Clone returns a fully independent settings snapshot. Settings is otherwise
+// cheap to copy, but launch profiles contain slices and maps whose backing
+// storage must not be shared with a concurrent persistence operation.
+func (s Settings) Clone() Settings {
+	cloned := s
+	cloned.Profiles = make([]LaunchProfile, len(s.Profiles))
+	for index, profile := range s.Profiles {
+		clonedProfile := profile
+		clonedProfile.RiotClientArgs = append([]string(nil), profile.RiotClientArgs...)
+		clonedProfile.GameArgs = append([]string(nil), profile.GameArgs...)
+		if profile.GameStatuses != nil {
+			clonedProfile.GameStatuses = make(map[model.Game]model.Status, len(profile.GameStatuses))
+			for game, status := range profile.GameStatuses {
+				clonedProfile.GameStatuses[game] = status
+			}
+		}
+		cloned.Profiles[index] = clonedProfile
+	}
+	return cloned
 }
 
 func Default() Settings {
@@ -171,6 +193,7 @@ func isDefaultStorePath(path string) bool {
 }
 
 func (s Store) Save(value Settings) error {
+	value = value.Clone()
 	value.syncActiveProfile()
 	if err := value.Validate(); err != nil {
 		return err

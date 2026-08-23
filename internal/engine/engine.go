@@ -113,7 +113,7 @@ func (e *Engine) Snapshot() Snapshot {
 func (e *Engine) Settings() settings.Settings {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.config
+	return e.config.Clone()
 }
 
 // ResolveRiotClientExecutable validates a configured location or falls back to
@@ -139,20 +139,18 @@ func resolveRiotClientExecutable(adapter platform.Adapter, configured string) (s
 func (e *Engine) LaunchProfiles() []settings.LaunchProfile {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	profiles := make([]settings.LaunchProfile, len(e.config.Profiles))
-	copy(profiles, e.config.Profiles)
-	return profiles
+	return e.config.Clone().Profiles
 }
 
 func (e *Engine) ActiveLaunchProfile() settings.LaunchProfile {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.config.ActiveProfile()
+	return e.config.Clone().ActiveProfile()
 }
 
 func (e *Engine) SelectLaunchProfile(id string) error {
 	e.mu.Lock()
-	updated := e.config
+	updated := e.config.Clone()
 	if err := updated.SelectProfile(id); err != nil {
 		e.mu.Unlock()
 		return err
@@ -170,7 +168,7 @@ func (e *Engine) SelectLaunchProfile(id string) error {
 
 func (e *Engine) SaveLaunchProfile(profile settings.LaunchProfile) error {
 	e.mu.Lock()
-	updated := e.config
+	updated := e.config.Clone()
 	if err := updated.UpsertProfile(profile); err != nil {
 		e.mu.Unlock()
 		return err
@@ -182,7 +180,7 @@ func (e *Engine) SaveLaunchProfile(profile settings.LaunchProfile) error {
 
 func (e *Engine) DeleteLaunchProfile(id string) error {
 	e.mu.Lock()
-	updated := e.config
+	updated := e.config.Clone()
 	if err := updated.DeleteProfile(id); err != nil {
 		e.mu.Unlock()
 		return err
@@ -212,7 +210,7 @@ func (e *Engine) ExportProfiles() []settings.LaunchProfile {
 // Profiles with matching IDs are updated; new profiles are appended.
 func (e *Engine) ImportProfiles(imported []settings.LaunchProfile) error {
 	e.mu.Lock()
-	updated := e.config
+	updated := e.config.Clone()
 	byID := make(map[string]int, len(updated.Profiles))
 	for i, p := range updated.Profiles {
 		byID[p.ID] = i
@@ -287,7 +285,7 @@ func (e *Engine) ForgetSavedLogin() error {
 // profile selected. Run restores the target session immediately afterwards.
 func (e *Engine) SwitchLaunchProfile(ctx context.Context, id string, lifetime time.Duration) (ProfileSwitchResult, error) {
 	e.mu.RLock()
-	updated := e.config
+	updated := e.config.Clone()
 	current := updated.ActiveProfile()
 	vault := e.vault
 	e.mu.RUnlock()
@@ -352,7 +350,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		e.mu.Unlock()
 		return errors.New("RiftOps is already running")
 	}
-	config := e.config
+	config := e.config.Clone()
 	game := options.Game
 	if game == "" || game == model.GameAuto {
 		game = config.DefaultGame
@@ -623,7 +621,7 @@ func (e *Engine) SetEnabled(ctx context.Context, enabled bool) error {
 
 func (e *Engine) SavePreferences(game model.Game, startup settings.StartupStatus, connectToMUC, checkUpdates bool) error {
 	e.mu.Lock()
-	updated := e.config
+	updated := e.config.Clone()
 	updated.UpdateActivePreferences(game, startup, connectToMUC)
 	updated.CheckUpdates = checkUpdates
 	if err := updated.Validate(); err != nil {
@@ -652,7 +650,7 @@ func (e *Engine) SaveRiotClientPath(path string) (string, error) {
 		}
 	}
 	e.mu.Lock()
-	updated := e.config
+	updated := e.config.Clone()
 	updated.RiotClientPath = resolved
 	if err := updated.Validate(); err != nil {
 		e.mu.Unlock()
@@ -680,11 +678,25 @@ func (e *Engine) MarkIntroductionShown() error {
 	return e.saveSettings()
 }
 
+// SavePhoneAccess persists whether the optional LAN phone listener may run.
+func (e *Engine) SavePhoneAccess(enabled bool) error {
+	e.mu.Lock()
+	updated := e.config.Clone()
+	updated.PhoneAccess = enabled
+	if err := updated.Validate(); err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	e.config = updated
+	e.mu.Unlock()
+	return e.saveSettings()
+}
+
 func (e *Engine) saveSettings() error {
 	e.saveMu.Lock()
 	defer e.saveMu.Unlock()
 	e.mu.RLock()
-	config := e.config
+	config := e.config.Clone()
 	e.mu.RUnlock()
 	return e.store.Save(config)
 }

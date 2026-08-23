@@ -11,6 +11,8 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
   const [status, setStatus] = useState<LCUStatus | null>(null);
   const [health, setHealth] = useState<LCUHealth | null>(null);
   const [qol, setQol] = useState<QoLState | null>(null);
+  const [gameflowSession, setGameflowSession] = useState<import('../api').LCUGameflowSession | null>(null);
+  const [gameflowSessionAvailable, setGameflowSessionAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,14 +42,15 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, []);
 
-  const pollInterval = useMemo(() => {
-    const activePhase = ['Matchmaking', 'ReadyCheck', 'ChampSelect', 'InProgress', 'EndOfGame'].includes(qol?.phase || '');
-    const base = performanceMode === 'fast' && !activePhase
-      ? 10000
-      : PERFORMANCE_MODES[performanceMode].pollMs;
-    return status?.connected ? base : Math.min(base * 2, 30000);
-  }, [performanceMode, qol?.phase, status?.connected]);
   const realtimeInterval = performanceMode === 'fast' ? 900 : performanceMode === 'quiet' ? 3000 : 1500;
+  const pollInterval = useMemo(() => {
+    const activePhase = ['Lobby', 'Matchmaking', 'ReadyCheck', 'ChampSelect', 'GameStart', 'Loading', 'InProgress', 'Reconnect', 'EndOfGame'].includes(qol?.phase || '');
+    let base = PERFORMANCE_MODES[performanceMode].pollMs;
+    if (activePhase) base = realtimeInterval;
+    else if (status?.connected) base = Math.min(base, 2000);
+    else if (performanceMode === 'fast') base = 10000;
+    return status?.connected ? base : Math.min(base * 2, 30000);
+  }, [performanceMode, qol?.phase, realtimeInterval, status?.connected]);
 
   const refresh = useCallback(async () => {
     if (!pageVisible || inFlight.current) return;
@@ -64,6 +67,8 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
         setStatus(overview.status);
         setHealth(overview.health);
         setQol(overview.qol || null);
+        setGameflowSession(overview.gameflowSession || null);
+        setGameflowSessionAvailable(typeof overview.gameflowSessionAvailable === 'boolean' ? overview.gameflowSessionAvailable : null);
         setLastUpdated(new Date(now));
         lastPublishedAt.current = now;
       } else if (now - lastPublishedAt.current >= 30000) {
@@ -82,6 +87,22 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
       setLoading(false);
     }
   }, [pageVisible]);
+
+  // A League launch or a newly entered custom/practice lobby often happens
+  // while RiftOps is already visible, so visibility changes alone are not
+  // enough to trigger an immediate state transition. Refresh on focus/pageshow
+  // as well, while the normal timer remains the fallback.
+  useEffect(() => {
+    const refreshWhenActive = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    window.addEventListener('focus', refreshWhenActive);
+    window.addEventListener('pageshow', refreshWhenActive);
+    return () => {
+      window.removeEventListener('focus', refreshWhenActive);
+      window.removeEventListener('pageshow', refreshWhenActive);
+    };
+  }, [refresh]);
 
   useEffect(() => () => requestController.current?.abort(), []);
 
@@ -104,6 +125,8 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
     status,
     health,
     qol,
+    gameflowSession,
+    gameflowSessionAvailable,
     connected: Boolean(status?.leagueReady),
     leagueReady: Boolean(status?.leagueReady),
     loading,
@@ -116,7 +139,7 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
     pollInterval,
     realtimeInterval,
     refresh,
-  }), [status, health, qol, loading, stale, error, lastUpdated, performanceMode, setPerformanceMode, pageVisible, pollInterval, realtimeInterval, refresh]);
+  }), [status, health, qol, gameflowSession, gameflowSessionAvailable, loading, stale, error, lastUpdated, performanceMode, setPerformanceMode, pageVisible, pollInterval, realtimeInterval, refresh]);
 
   return <LCUConnectionContext.Provider value={value}>{children}</LCUConnectionContext.Provider>;
 }

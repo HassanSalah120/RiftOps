@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing GitHub release tag to receive the macOS ZIP (for example v2.5.0)
+        description: Existing GitHub release tag to receive the macOS ZIP (for example v2.6.0)
         required: true
         type: string
 
@@ -30,13 +30,12 @@ jobs:
       - name: Check out release source
         uses: actions/checkout@v4
         with:
-          # Manual runs use the current main commit; release events use the tag.
-          ref: ${{ github.event.release.tag_name || github.sha }}
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.6'
           cache: true
 
       - name: Set up Node
@@ -56,10 +55,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RiftOps-macOS-${{ steps.release.outputs.tag }}
-          path: dist/RiftOps-macOS.zip
+          path: |
+            dist/RiftOps-macOS.zip
+            dist/RiftOps-macOS.zip.sha256
           if-no-files-found: error
 
       - name: Attach macOS ZIP to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ steps.release.outputs.tag }}" dist/RiftOps-macOS.zip --clobber --repo "${{ github.repository }}"
+        run: gh release upload "${{ steps.release.outputs.tag }}" dist/RiftOps-macOS.zip dist/RiftOps-macOS.zip.sha256 --clobber --repo "${{ github.repository }}"

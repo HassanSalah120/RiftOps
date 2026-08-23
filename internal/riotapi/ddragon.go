@@ -17,9 +17,28 @@ var (
 	ddVersions     []string
 	ddVersionsMu   sync.Mutex
 	ddVersionsTime time.Time
+	ddragonClient  = &http.Client{Timeout: 15 * time.Second}
 )
 
-const ddragonCDN = "https://ddragon.leagueoflegends.com"
+const (
+	ddragonCDN              = "https://ddragon.leagueoflegends.com"
+	maxDDragonResponseBytes = 32 << 20
+)
+
+func decodeDDragonResponse(response *http.Response, destination any) error {
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("data dragon returned %s", response.Status)
+	}
+	limited := io.LimitReader(response.Body, maxDDragonResponseBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return err
+	}
+	if len(body) > maxDDragonResponseBytes {
+		return fmt.Errorf("data dragon response exceeded %d bytes", maxDDragonResponseBytes)
+	}
+	return json.Unmarshal(body, destination)
+}
 
 // GetLatestDDragonVersion fetches the latest Data Dragon version (cached for 1 hour).
 func GetLatestDDragonVersion() (string, error) {
@@ -31,18 +50,13 @@ func GetLatestDDragonVersion() (string, error) {
 	}
 
 	url := ddragonCDN + "/api/versions.json"
-	resp, err := http.Get(url)
+	resp, err := ddragonClient.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("ddragon versions: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if err := json.Unmarshal(body, &ddVersions); err != nil {
+	if err := decodeDDragonResponse(resp, &ddVersions); err != nil {
 		return "", err
 	}
 
@@ -82,14 +96,14 @@ func GetChampions() (*ChampionList, error) {
 		return nil, err
 	}
 	url := fmt.Sprintf("%s/cdn/%s/data/en_US/champion.json", ddragonCDN, ver)
-	resp, err := http.Get(url)
+	resp, err := ddragonClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var cl ChampionList
-	if err := json.NewDecoder(resp.Body).Decode(&cl); err != nil {
+	if err := decodeDDragonResponse(resp, &cl); err != nil {
 		return nil, err
 	}
 	return &cl, nil
@@ -141,14 +155,14 @@ func GetProfileIcons() (*ProfileIconList, error) {
 		return nil, err
 	}
 	url := fmt.Sprintf("%s/cdn/%s/data/en_US/profileicon.json", ddragonCDN, ver)
-	resp, err := http.Get(url)
+	resp, err := ddragonClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var pil ProfileIconList
-	if err := json.NewDecoder(resp.Body).Decode(&pil); err != nil {
+	if err := decodeDDragonResponse(resp, &pil); err != nil {
 		return nil, err
 	}
 	return &pil, nil

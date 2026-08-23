@@ -17,3 +17,6 @@ func showWebViewWindow() {
 }
 
 func destroyWebView() {}
+
+// pumpUIThread has no native window to probe outside Windows.
+func pumpUIThread(func()) bool { return false }

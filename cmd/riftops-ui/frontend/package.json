@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test tests/champSelectFlow.test.ts tests/liveSession.test.ts tests/clientCapabilities.test.ts tests/externalURL.test.ts tests/playFlowQueue.test.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
@@ -26,5 +27,9 @@
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
+  },
+  "overrides": {
+    "nanoid": "3.3.18",
+    "postcss": "8.5.26"
   }
 }

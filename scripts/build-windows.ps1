@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.5.0",
+    [string]$Version = "2.6.0",
     [int]$Build = 1,
     [switch]$SkipTests
 )
@@ -48,9 +48,19 @@ try {
 	if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 		throw "Node.js/npm is required to build the RiftOps frontend."
 	}
-	Write-Host "[1/5] Building the embedded frontend..."
+	Write-Host "[1/8] Installing the locked frontend dependencies..."
 	Push-Location "cmd/riftops-ui/frontend"
 	try {
+		npm ci --ignore-scripts
+		if ($LASTEXITCODE -ne 0) { throw "Frontend dependency install failed." }
+		if (-not $SkipTests) {
+			Write-Host "[2/8] Linting and testing the frontend..."
+			npm run lint
+			if ($LASTEXITCODE -ne 0) { throw "Frontend lint failed." }
+			npm test
+			if ($LASTEXITCODE -ne 0) { throw "Frontend tests failed." }
+		}
+		Write-Host "[3/8] Building the embedded frontend..."
 		npm run build
 		if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
 	}
@@ -59,10 +69,10 @@ try {
 	}
 
     if (-not $SkipTests) {
-		Write-Host "[2/5] Running tests..."
-		go test -tags desktop ./...
+		Write-Host "[4/8] Running race-enabled desktop tests..."
+		go test -race -tags desktop ./...
         if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
-		Write-Host "[3/5] Running go vet..."
+		Write-Host "[5/8] Running go vet..."
 		go vet -tags desktop ./...
         if ($LASTEXITCODE -ne 0) { throw "Vet failed." }
     }
@@ -70,13 +80,13 @@ try {
     $Icon = (Resolve-Path -LiteralPath "cmd/riftops-ui/app.png").Path
     $Manifest = "cmd/riftops-ui/riftops-ui.exe.manifest"
     Copy-Item -Force -LiteralPath "packaging/windows/app.manifest" -Destination $Manifest
-	Write-Host "[4/5] Compiling and packaging the desktop host..."
+	Write-Host "[6/8] Compiling and packaging the desktop host..."
     & $Fyne package --os windows --src cmd/riftops-ui --release --tags desktop `
         --name RiftOps --app-id io.github.hassansalah120.riftops --app-version $Version `
         --app-build $Build --icon $Icon
     if ($LASTEXITCODE -ne 0) { throw "Windows packaging failed." }
 
-	Write-Host "[5/5] Moving the packaged executable..."
+	Write-Host "[7/8] Moving and validating the packaged executable..."
     New-Item -ItemType Directory -Force dist | Out-Null
     if (-not (Test-Path -LiteralPath "cmd/riftops-ui/RiftOps.exe")) {
         throw "Fyne completed without producing cmd/riftops-ui/RiftOps.exe."
@@ -100,7 +110,12 @@ try {
         throw "Packaged executable uses PE subsystem $Subsystem instead of Windows GUI (2)."
     }
     Remove-Item -Force -LiteralPath cmd/riftops-ui/RiftOps.exe
-    Write-Host "Created $OutputPath (Windows GUI subsystem; no startup console)"
+    Write-Host "[8/8] Writing SHA-256 checksum..."
+    $ResolvedOutput = (Resolve-Path -LiteralPath $OutputPath).Path
+    $ChecksumPath = "$ResolvedOutput.sha256"
+    $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ResolvedOutput).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath $ChecksumPath -Encoding ascii -NoNewline -Value "$Hash  $([System.IO.Path]::GetFileName($ResolvedOutput))`n"
+    Write-Host "Created $OutputPath and $OutputPath.sha256 (Windows GUI subsystem; no startup console)"
 }
 finally {
     foreach ($GeneratedFile in @(

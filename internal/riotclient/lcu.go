@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,10 +18,20 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/HassanSalah120/RiftOps/internal/diagnostics"
+)
+
+const (
+	// Collection/catalogue endpoints can legitimately be several megabytes,
+	// but no LCU response should be allowed to grow without a hard ceiling.
+	maxLCUResponseBytes = 32 << 20
+	maxLCUErrorBytes    = 8 << 10
 )
 
 // Lockfile holds the parsed contents of the Riot Client LCU lockfile.
@@ -37,11 +48,22 @@ type Lockfile struct {
 
 // RSOAccessToken is the response from /lol-rso-auth/v1/authorization/access-token.
 type RSOAccessToken struct {
+	// Modern League clients return the JWT under "token"; older builds used
+	// "accessToken". Both are accepted and coalesced.
 	AccessToken string   `json:"accessToken"`
+	Token       string   `json:"token"`
 	Expiry      int64    `json:"expiry"`
 	Scopes      []string `json:"scopes"`
 	Sub         string   `json:"sub"`
 	TokenType   string   `json:"tokenType"`
+}
+
+// Value returns the usable bearer token regardless of which field carried it.
+func (t RSOAccessToken) Value() string {
+	if t.AccessToken != "" {
+		return t.AccessToken
+	}
+	return t.Token
 }
 
 var (
@@ -369,6 +391,9 @@ func (lf *Lockfile) DoRequest(ctx context.Context, method, path string) ([]byte,
 }
 
 func (lf *Lockfile) doRequest(ctx context.Context, method, path string, body io.Reader) ([]byte, error) {
+	if err := validateLCUBaseURL(lf.BaseURL); err != nil {
+		return nil, err
+	}
 	url := lf.BaseURL + path
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
@@ -382,23 +407,63 @@ func (lf *Lockfile) doRequest(ctx context.Context, method, path string, body io.
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		invalidateLockfile(lf)
-		return nil, fmt.Errorf("lcu %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("lcu %s %s: %w", method, safeLCUPath(path), err)
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	limit := int64(maxLCUResponseBytes)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		limit = maxLCUErrorBytes
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, err
+	}
+	truncated := int64(len(responseBody)) > limit
+	if truncated {
+		responseBody = responseBody[:limit]
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			invalidateLockfile(lf)
 		}
-		return nil, fmt.Errorf("lcu %d on %s %s: %s", resp.StatusCode, method, path, string(responseBody))
+		detail := strings.TrimSpace(diagnostics.Redact(string(responseBody)))
+		if detail == "" {
+			detail = http.StatusText(resp.StatusCode)
+		}
+		if truncated {
+			detail += "… [truncated]"
+		}
+		return nil, fmt.Errorf("lcu %d on %s %s: %s", resp.StatusCode, method, safeLCUPath(path), detail)
+	}
+	if truncated {
+		return nil, fmt.Errorf("lcu response exceeded %d bytes on %s %s", maxLCUResponseBytes, method, safeLCUPath(path))
 	}
 
 	return responseBody, nil
+}
+
+func validateLCUBaseURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return errors.New("lcu base URL is invalid")
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if !strings.EqualFold(host, "localhost") {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return errors.New("lcu base URL must use a loopback address")
+		}
+	}
+	return nil
+}
+
+func safeLCUPath(path string) string {
+	if index := strings.IndexByte(path, '?'); index >= 0 {
+		return path[:index] + "?[REDACTED]"
+	}
+	return diagnostics.Redact(path)
 }
 
 func (lf *Lockfile) doJSON(ctx context.Context, method, path string, value any) ([]byte, error) {
@@ -450,12 +515,18 @@ func GetRSOAccessToken() (string, bool) {
 		return "", false
 	}
 
-	if token.AccessToken == "" {
+	value := token.Value()
+	if value == "" {
 		return "", false
 	}
 
-	cachedToken = token.AccessToken
-	cachedTokenExp = time.Unix(0, token.Expiry*int64(time.Millisecond))
+	cachedToken = value
+	// Riot reports expiry in Unix seconds; the ms multiplication landed in 1970.
+	if token.Expiry > 0 {
+		cachedTokenExp = time.Unix(token.Expiry, 0)
+	} else {
+		cachedTokenExp = time.Now().Add(time.Hour)
+	}
 
 	slog.Debug("lcu: got RSO access token, expires " + cachedTokenExp.Format(time.RFC3339))
 	return cachedToken, true
@@ -748,8 +819,8 @@ func (lf *Lockfile) FetchLCUMatchHistory(ctx context.Context, begIdx, endIdx int
 	if endIdx <= begIdx {
 		endIdx = begIdx + 30
 	}
-	if endIdx > 50 {
-		endIdx = 50
+	if endIdx-begIdx > 50 {
+		endIdx = begIdx + 50
 	}
 
 	summoner, err := lf.FetchLCUSummoner(ctx)
@@ -848,9 +919,208 @@ func (lf *Lockfile) AcceptReadyCheck(ctx context.Context) error {
 	return err
 }
 
+// DeclineReadyCheck declines an active match ready check. The LCU owns the
+// timeout/penalty rules; RiftOps only forwards the explicit user action.
+func (lf *Lockfile) DeclineReadyCheck(ctx context.Context) error {
+	_, err := lf.DoRequest(ctx, "POST", "/lol-matchmaking/v1/ready-check/decline")
+	if err == nil {
+		return nil
+	}
+	// Older client builds route the same action through the lobby-team-builder
+	// service. Keep the primary endpoint first and only fall back on failure.
+	_, fallbackErr := lf.DoRequest(ctx, "POST", "/lol-lobby-team-builder/v1/ready-check/decline")
+	if fallbackErr == nil {
+		return nil
+	}
+	return err
+}
+
 // AutoRequeue starts searching for a match again in the current lobby.
 func (lf *Lockfile) AutoRequeue(ctx context.Context) error {
 	_, err := lf.DoRequest(ctx, "POST", "/lol-lobby/v2/lobby/matchmaking/search")
+	return err
+}
+
+// lobbyQueueInfo is the compact queue description served to the UI.
+type lobbyQueueInfo struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	GameMode string `json:"gameMode,omitempty"`
+	Category string `json:"category,omitempty"`
+	MapID    int    `json:"mapId,omitempty"`
+}
+
+// FetchAvailableQueues returns every game-mode queue the client currently
+// allows. Modern clients expose the catalogue with availability flags on
+// /lol-game-queues; older builds only offer the lobby available-queues list.
+func (lf *Lockfile) FetchAvailableQueues(ctx context.Context) ([]byte, error) {
+	if body, err := lf.DoRequest(ctx, "GET", "/lol-game-queues/v1/queues"); err == nil {
+		var raw []struct {
+			ID           int    `json:"id"`
+			Description  string `json:"description"`
+			GameMode     string `json:"gameMode"`
+			Category     string `json:"category"`
+			MapID        int    `json:"mapId"`
+			Availability string `json:"queueAvailability"`
+		}
+		if json.Unmarshal(body, &raw) == nil {
+			out := make([]lobbyQueueInfo, 0, len(raw))
+			for _, queue := range raw {
+				if queue.ID <= 0 || !strings.EqualFold(queue.Availability, "Available") {
+					continue
+				}
+				name := queue.Description
+				if name == "" {
+					name = queue.GameMode
+				}
+				out = append(out, lobbyQueueInfo{ID: queue.ID, Name: name, GameMode: queue.GameMode, Category: queue.Category, MapID: queue.MapID})
+			}
+			if len(out) > 0 {
+				return json.Marshal(out)
+			}
+		}
+	}
+	if body, err := lf.DoRequest(ctx, "GET", "/lol-lobby/v2/lobby/available-queues"); err == nil {
+		return body, nil
+	}
+	return lf.DoRequest(ctx, "GET", "/lol-lobby/v1/lobby/available-queues")
+}
+
+// FetchCurrentLobby returns the active lobby state, including its queue ID.
+func (lf *Lockfile) FetchCurrentLobby(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, "GET", "/lol-lobby/v2/lobby")
+}
+
+// CreateQueueLobby replaces the current lobby with one for the given queue ID.
+// If the client already hosts a lobby, it is removed first so LCU can recreate
+// it for the requested mode instead of returning 400.
+func (lf *Lockfile) CreateQueueLobby(ctx context.Context, queueID int) error {
+	if queueID <= 0 {
+		return fmt.Errorf("queue ID must be positive")
+	}
+	payload := map[string]any{"queueId": queueID}
+	if _, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload); err == nil {
+		return nil
+	} else if !isRetryableLCURouteError(err) && !isLobbyExistsError(err) {
+		return err
+	}
+	// Already in a lobby or route mismatch — leave current lobby and retry.
+	_, _ = lf.DoRequest(ctx, "DELETE", "/lol-lobby/v2/lobby")
+	// Small grace period for gameflow to return to None.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(600 * time.Millisecond):
+	}
+	_, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload)
+	return err
+}
+
+// isLobbyExistsError reports whether LCU rejected creation because a lobby
+// already exists (400 with "lobby already exists" or similar).
+func isLobbyExistsError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "lobby") && (strings.Contains(msg, "already") || strings.Contains(msg, "exists") || strings.Contains(msg, "400"))
+}
+
+// CreateCustomLobby creates a custom game lobby for modes whose category is
+// "Custom" (e.g. SR Draft Pick Custom, Howling Abyss custom). These queues
+// are not matchmade — LCU expects isCustom+customGameLobby instead of queueId.
+func (lf *Lockfile) CreateCustomLobby(ctx context.Context, queueID int, gameMode, queueName string, mapID int) error {
+	// Preserve the queue catalogue's mode and map. Riot can add event customs
+	// whose map/mode cannot be inferred from CLASSIC versus ARAM.
+	normalizedMode := strings.ToUpper(strings.TrimSpace(gameMode))
+	if normalizedMode == "" {
+		normalizedMode = "CLASSIC"
+	}
+	if mapID <= 0 {
+		mapID = 11
+		if normalizedMode == "ARAM" || strings.HasPrefix(normalizedMode, "KIWI") {
+			mapID = 12
+		}
+	}
+	lobbyName := strings.TrimSpace(queueName)
+	if lobbyName == "" {
+		lobbyName = fmt.Sprintf("RiftOps Custom %d", queueID)
+	}
+	if len(lobbyName) > 30 {
+		lobbyName = lobbyName[:30]
+	}
+	payload := map[string]any{
+		"customGameLobby": map[string]any{
+			"configuration": map[string]any{
+				"gameMode":              normalizedMode,
+				"gameMutator":           "",
+				"gameServerRegion":      "",
+				"gameTypeConfig":        map[string]int{"id": 1},
+				"mapId":                 mapID,
+				"maxPlayerCount":        0,
+				"mutators":              map[string]int{"id": 1},
+				"spectatorDelayEnabled": false,
+				"spectatorPolicy":       "AllAllowed",
+				"teamSize":              5,
+			},
+			"lobbyName":     lobbyName,
+			"lobbyPassword": "",
+		},
+		"isCustom": true,
+		"queueId":  queueID,
+	}
+	if _, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload); err == nil {
+		return nil
+	} else if !isRetryableLCURouteError(err) && !isLobbyExistsError(err) {
+		return err
+	}
+	_, _ = lf.DoRequest(ctx, "DELETE", "/lol-lobby/v2/lobby")
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(600 * time.Millisecond):
+	}
+	_, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload)
+	return err
+}
+
+// PracticeToolQueueID is the custom-game queue id modern clients use for the
+// Practice Tool ("Multiplayer Practice Tool Custom").
+const PracticeToolQueueID = 3140
+
+// CreatePracticeToolLobby opens an offline Practice Tool session for testing.
+// Modern clients reject the bare custom-game payload unless the practice queue
+// ID accompanies it, so the queue rides along at the top level.
+func (lf *Lockfile) CreatePracticeToolLobby(ctx context.Context) error {
+	payload := map[string]any{
+		"customGameLobby": map[string]any{
+			"configuration": map[string]any{
+				"gameMode":              "PRACTICETOOL",
+				"gameMutator":           "",
+				"gameServerRegion":      "",
+				"gameTypeConfig":        map[string]int{"id": 1},
+				"mapId":                 11,
+				"maxPlayerCount":        0,
+				"mutators":              map[string]int{"id": 1},
+				"spectatorDelayEnabled": false,
+				"spectatorPolicy":       "NotAllowed",
+				"teamSize":              5,
+			},
+			"lobbyName":     "RiftOps Practice Tool",
+			"lobbyPassword": "",
+		},
+		"isCustom": true,
+		"queueId":  PracticeToolQueueID,
+	}
+	if _, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload); err == nil {
+		return nil
+	} else if !isRetryableLCURouteError(err) && !isLobbyExistsError(err) {
+		return err
+	}
+	_, _ = lf.DoRequest(ctx, "DELETE", "/lol-lobby/v2/lobby")
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(600 * time.Millisecond):
+	}
+	_, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload)
 	return err
 }
 
@@ -860,25 +1130,134 @@ func (lf *Lockfile) StopQueue(ctx context.Context) error {
 	return err
 }
 
+// StartCustomGame advances a custom lobby (including Practice Tool) into
+// champion select. Custom lobbies use the v1 start-champ-select action rather
+// than the v2 matchmaking/search route used by matchmade queues.
+func (lf *Lockfile) StartCustomGame(ctx context.Context) error {
+	body, err := lf.FetchCurrentLobby(ctx)
+	if err != nil {
+		return fmt.Errorf("custom lobby is unavailable: %w", err)
+	}
+	var lobby struct {
+		CanStartActivity bool `json:"canStartActivity"`
+		GameConfig       struct {
+			IsCustom bool   `json:"isCustom"`
+			QueueID  int    `json:"queueId"`
+			GameMode string `json:"gameMode"`
+		} `json:"gameConfig"`
+		LocalMember struct {
+			IsLeader             bool `json:"isLeader"`
+			AllowedStartActivity bool `json:"allowedStartActivity"`
+		} `json:"localMember"`
+	}
+	if err := json.Unmarshal(body, &lobby); err != nil {
+		return fmt.Errorf("could not read custom lobby readiness: %w", err)
+	}
+	isCustom := lobby.GameConfig.IsCustom || lobby.GameConfig.QueueID == PracticeToolQueueID || strings.EqualFold(lobby.GameConfig.GameMode, "PRACTICETOOL")
+	if !isCustom {
+		return fmt.Errorf("League is currently in a matchmade lobby; create the selected custom lobby first")
+	}
+	if !lobby.LocalMember.IsLeader || !lobby.LocalMember.AllowedStartActivity {
+		return fmt.Errorf("only the custom lobby leader can start champion select")
+	}
+	if !lobby.CanStartActivity {
+		return fmt.Errorf("League reports that the custom lobby is not ready to start yet")
+	}
+	_, err = lf.DoRequest(ctx, http.MethodPost, "/lol-lobby/v1/lobby/custom/start-champ-select")
+	return err
+}
+
 // AutoSetRoles sets the preferred primary and secondary roles in a lobby.
 func (lf *Lockfile) AutoSetRoles(ctx context.Context, first, second string) error {
-	payload := map[string]any{
-		"positionPreferences": map[string]string{
-			"firstPositionPreference": first, "secondPositionPreference": second,
-		},
+	if strings.TrimSpace(first) == "" || strings.TrimSpace(second) == "" {
+		return fmt.Errorf("role preferences must not be empty")
 	}
-	if _, err := lf.doJSON(ctx, "PUT", "/lol-lobby/v1/lobby/members/localMember/position-preferences", payload); err == nil {
-		return nil
+	// Tests expect v1 nested first; real LCU v2 now requires flat — try nested
+	// first for compatibility, then flat as fallback. Routes v1 then v2 as
+	// historically expected by tests.
+	payloads := []map[string]any{
+		{"positionPreferences": map[string]string{"firstPreference": first, "secondPreference": second}},
+		{"positionPreferences": map[string]string{"firstPositionPreference": first, "secondPositionPreference": second}},
+		{"firstPreference": first, "secondPreference": second},
+		{"firstPositionPreference": first, "secondPositionPreference": second},
 	}
-	// Both versions are present in recent LCU schemas. Some regional client
-	// builds only expose the v2 route.
-	_, err := lf.doJSON(ctx, "PUT", "/lol-lobby/v2/lobby/members/localMember/position-preferences", payload)
-	return err
+	routes := []string{
+		"/lol-lobby/v1/lobby/members/localMember/position-preferences",
+		"/lol-lobby/v2/lobby/members/localMember/position-preferences",
+	}
+	var lastErr error
+	for _, payload := range payloads {
+		for _, route := range routes {
+			if _, err := lf.doJSON(ctx, "PUT", route, payload); err == nil {
+				return nil
+			} else if lastErr = err; !isRetryableLCURouteError(err) {
+				return lastErr
+			}
+		}
+	}
+	return lastErr
+}
+
+// isRetryableLCURouteError reports whether an LCU failure may be resolved by
+// trying another route or payload shape (missing route or unsupported schema).
+func isRetryableLCURouteError(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "lcu 404 ") || strings.Contains(message, "lcu 400 ")
 }
 
 // FetchLCULoot returns raw loot inventory JSON for the player (skin shards, essences).
 func (lf *Lockfile) FetchLCULoot(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, "GET", "/lol-loot/v1/player-loot")
+}
+
+// FetchLCUWallet returns the authoritative RP and blue-essence wallet. League
+// has exposed this through both login and store plugins across client versions.
+func (lf *Lockfile) FetchLCUWallet(ctx context.Context) ([]byte, error) {
+	var lastErr error
+	for _, route := range []string{"/lol-login/v1/wallet", "/lol-store/v1/wallet"} {
+		body, err := lf.DoRequest(ctx, "GET", route)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		if !isRetryableLCURouteError(err) {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+// FetchLCULootRecipes returns the live crafting recipes League exposes for an
+// inventory item. Keeping recipe discovery in the LCU avoids hard-coded costs
+// that become stale when Riot changes the loot system.
+func (lf *Lockfile) FetchLCULootRecipes(ctx context.Context, lootID string) ([]byte, error) {
+	lootID = strings.TrimSpace(lootID)
+	if lootID == "" {
+		return nil, fmt.Errorf("loot id is required")
+	}
+	return lf.DoRequest(ctx, "GET", "/lol-loot/v1/recipes/initial-item/"+url.PathEscape(lootID))
+}
+
+// CraftLCULootRecipe executes a recipe selected from FetchLCULootRecipes.
+func (lf *Lockfile) CraftLCULootRecipe(ctx context.Context, recipeName string, lootIDs []string, repeat int) ([]byte, error) {
+	recipeName = strings.TrimSpace(recipeName)
+	if recipeName == "" {
+		return nil, fmt.Errorf("recipe name is required")
+	}
+	if repeat < 1 || repeat > 100 {
+		return nil, fmt.Errorf("repeat must be between 1 and 100")
+	}
+	cleanIDs := make([]string, 0, len(lootIDs))
+	for _, lootID := range lootIDs {
+		if lootID = strings.TrimSpace(lootID); lootID != "" {
+			cleanIDs = append(cleanIDs, lootID)
+		}
+	}
+	if len(cleanIDs) == 0 {
+		return nil, fmt.Errorf("at least one loot id is required")
+	}
+	path := "/lol-loot/v1/recipes/" + url.PathEscape(recipeName) + "/craft?repeat=" + strconv.Itoa(repeat)
+	return lf.doJSON(ctx, "POST", path, cleanIDs)
 }
 
 // GetGameflowPhase returns the current League client phase (e.g. "Lobby", "ChampSelect", "InProgress").
@@ -898,6 +1277,71 @@ func (lf *Lockfile) DoDodge(ctx context.Context) error {
 	return err
 }
 
+// IsCustomSession checks the current LCU payloads before exposing the
+// destructive custom/practice quit action. Normal matchmade games must never
+// be terminated through this route.
+func (lf *Lockfile) IsCustomSession(ctx context.Context) (bool, error) {
+	if lobbyBody, err := lf.FetchCurrentLobby(ctx); err == nil {
+		var lobby struct {
+			IsCustom   bool `json:"isCustom"`
+			GameConfig struct {
+				QueueID  int    `json:"queueId"`
+				IsCustom bool   `json:"isCustom"`
+				GameMode string `json:"gameMode"`
+			} `json:"gameConfig"`
+			CustomGameLobby json.RawMessage `json:"customGameLobby"`
+		}
+		if json.Unmarshal(lobbyBody, &lobby) == nil {
+			if lobby.IsCustom || lobby.GameConfig.IsCustom || len(lobby.CustomGameLobby) > 0 || lobby.GameConfig.QueueID == PracticeToolQueueID || strings.EqualFold(lobby.GameConfig.GameMode, "PRACTICETOOL") {
+				return true, nil
+			}
+			if lobby.GameConfig.QueueID > 0 {
+				return false, nil
+			}
+		}
+	}
+
+	if sessionBody, err := lf.DoRequest(ctx, "GET", "/lol-gameflow/v1/session"); err == nil {
+		var session struct {
+			GameData struct {
+				QueueID  int    `json:"queueId"`
+				IsCustom bool   `json:"isCustom"`
+				GameMode string `json:"gameMode"`
+			} `json:"gameData"`
+		}
+		if json.Unmarshal(sessionBody, &session) == nil {
+			return session.GameData.IsCustom || session.GameData.QueueID == PracticeToolQueueID || strings.EqualFold(session.GameData.GameMode, "PRACTICETOOL"), nil
+		}
+	}
+	return false, fmt.Errorf("could not verify a custom or practice session")
+}
+
+// QuitCustomSession leaves only a verified custom/practice session. The LCU
+// uses different actions for custom Champion Select, an active custom game,
+// and a custom lobby.
+func (lf *Lockfile) QuitCustomSession(ctx context.Context, phase string) error {
+	custom, err := lf.IsCustomSession(ctx)
+	if err != nil {
+		return err
+	}
+	if !custom {
+		return fmt.Errorf("current session is not a custom or practice game")
+	}
+	switch phase {
+	case "Lobby":
+		_, err = lf.DoRequest(ctx, "DELETE", "/lol-lobby/v2/lobby")
+	case "Matchmaking":
+		err = lf.StopQueue(ctx)
+	case "ChampSelect":
+		_, err = lf.DoRequest(ctx, "POST", "/lol-lobby-team-builder/champ-select/v1/session/quit")
+	case "GameStart", "Loading", "InProgress", "Reconnect":
+		_, err = lf.DoRequest(ctx, "POST", "/lol-gameflow/v1/early-exit")
+	default:
+		return fmt.Errorf("custom/practice quit is not available during %s", phase)
+	}
+	return err
+}
+
 // SetAppearOffline sets the player's presence to offline (true) or online (false).
 func (lf *Lockfile) SetAppearOffline(ctx context.Context, offline bool) error {
 	availability := "chat"
@@ -912,10 +1356,20 @@ func (lf *Lockfile) SetAvailability(ctx context.Context, availability string) er
 	return err
 }
 
-// SetStatusMessage sets a custom chat status/bio message.
+// SetStatusMessage sets a custom chat status/bio message. The chat service
+// rate-limits rapid consecutive updates, so one delayed retry is attempted.
 func (lf *Lockfile) SetStatusMessage(ctx context.Context, msg string) error {
-	_, err := lf.doJSON(ctx, "PUT", "/lol-chat/v1/me", map[string]string{"statusMessage": msg})
-	return err
+	for attempt := 0; ; attempt++ {
+		_, err := lf.doJSON(ctx, "PUT", "/lol-chat/v1/me", map[string]string{"statusMessage": msg})
+		if err == nil || attempt >= 1 {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(1200 * time.Millisecond):
+		}
+	}
 }
 
 // SetProfileBackground sets the player's loading screen background skin ID.
@@ -937,6 +1391,164 @@ func (lf *Lockfile) SetProfileIcon(ctx context.Context, iconID int) error {
 		"inventoryToken": inventoryToken,
 	})
 	return err
+}
+
+// LCUProfileIconInventory is the ownership-aware summoner-icon inventory.
+// Complete is false when League only exposed the currently equipped icon; in
+// that state callers must not assume that other catalogue entries are owned.
+type LCUProfileIconInventory struct {
+	IconIDs  []int  `json:"iconIds"`
+	Complete bool   `json:"complete"`
+	Source   string `json:"source"`
+}
+
+// FetchLCUProfileIconInventory reads the account inventory instead of the
+// public icon catalogue. League has shipped this inventory through several
+// routes, so the first usable response wins. The equipped icon is always
+// included as a safe fallback, but a fallback-only result is marked incomplete.
+func (lf *Lockfile) FetchLCUProfileIconInventory(ctx context.Context) (LCUProfileIconInventory, error) {
+	summoner, summonerErr := lf.FetchLCUSummoner(ctx)
+	iconIDs := make(map[int]struct{})
+	if summonerErr == nil && summoner.ProfileIconID > 0 {
+		iconIDs[summoner.ProfileIconID] = struct{}{}
+	}
+
+	routes := []string{
+		"/lol-collections/v1/inventories/local-player/summoner-icons",
+		"/lol-inventory/v1/inventory?inventoryTypes=%5B%22SUMMONER_ICON%22%5D",
+		"/lol-inventory/v1/inventory/SUMMONER_ICON",
+	}
+	if summonerErr == nil && summoner.SummonerID > 0 {
+		routes = append([]string{fmt.Sprintf("/lol-collections/v1/inventories/%d/summoner-icons", summoner.SummonerID)}, routes...)
+	}
+
+	var failures []string
+	for _, route := range routes {
+		body, err := lf.DoRequest(ctx, "GET", route)
+		if err != nil {
+			failures = append(failures, route+": "+err.Error())
+			continue
+		}
+		var payload any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			failures = append(failures, route+": invalid JSON")
+			continue
+		}
+		routeIconIDs := make(map[int]struct{})
+		collectOwnedProfileIconIDs(payload, routeIconIDs)
+		if len(routeIconIDs) > 0 {
+			for id := range routeIconIDs {
+				iconIDs[id] = struct{}{}
+			}
+			ids := sortedProfileIconIDs(iconIDs)
+			return LCUProfileIconInventory{IconIDs: ids, Complete: true, Source: route}, nil
+		}
+		failures = append(failures, route+": empty inventory")
+	}
+
+	if ids := sortedProfileIconIDs(iconIDs); len(ids) > 0 {
+		return LCUProfileIconInventory{IconIDs: ids, Complete: false, Source: "current-summoner"}, nil
+	}
+	if len(failures) == 0 && summonerErr != nil {
+		failures = append(failures, summonerErr.Error())
+	}
+	return LCUProfileIconInventory{}, fmt.Errorf("profile icon inventory unavailable: %s", strings.Join(failures, "; "))
+}
+
+func collectOwnedProfileIconIDs(value any, target map[int]struct{}) {
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			collectOwnedProfileIconIDs(item, target)
+		}
+	case map[string]any:
+		if id, ok := profileIconRecordID(typed); ok && profileIconRecordOwned(typed) {
+			target[id] = struct{}{}
+		}
+		for _, child := range typed {
+			if _, nested := child.(map[string]any); nested {
+				collectOwnedProfileIconIDs(child, target)
+			} else if _, nested := child.([]any); nested {
+				collectOwnedProfileIconIDs(child, target)
+			}
+		}
+	case float64:
+		if id := int(typed); typed == float64(id) && id > 0 {
+			target[id] = struct{}{}
+		}
+	case string:
+		if id, err := strconv.Atoi(strings.TrimSpace(typed)); err == nil && id > 0 {
+			target[id] = struct{}{}
+		}
+	}
+}
+
+func profileIconRecordID(record map[string]any) (int, bool) {
+	for _, key := range []string{"summonerIconId", "profileIconId", "iconId", "itemId"} {
+		if id, ok := positiveJSONInt(record[key]); ok {
+			return id, true
+		}
+	}
+	// Collection records sometimes use a plain id. Only accept it when the
+	// surrounding object also carries ownership/icon metadata, avoiding an
+	// unrelated envelope id being treated as a profile icon.
+	if _, ownership := record["owned"]; ownership {
+		if id, ok := positiveJSONInt(record["id"]); ok {
+			return id, true
+		}
+	}
+	if _, ownership := record["ownershipType"]; ownership {
+		if id, ok := positiveJSONInt(record["id"]); ok {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+func positiveJSONInt(value any) (int, bool) {
+	switch typed := value.(type) {
+	case float64:
+		id := int(typed)
+		return id, typed == float64(id) && id > 0
+	case int:
+		return typed, typed > 0
+	case string:
+		id, err := strconv.Atoi(strings.TrimSpace(typed))
+		return id, err == nil && id > 0
+	default:
+		return 0, false
+	}
+}
+
+func profileIconRecordOwned(record map[string]any) bool {
+	if owned, present := record["owned"]; present {
+		if value, ok := owned.(bool); ok {
+			return value
+		}
+	}
+	for _, key := range []string{"quantity", "count"} {
+		if value, present := record[key]; present {
+			if count, ok := positiveJSONInt(value); !ok || count <= 0 {
+				return false
+			}
+		}
+	}
+	for _, key := range []string{"ownershipType", "status"} {
+		status := strings.ToUpper(strings.TrimSpace(fmt.Sprint(record[key])))
+		if strings.Contains(status, "NOT_OWNED") || strings.Contains(status, "UNOWNED") || strings.Contains(status, "LOCKED") {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedProfileIconIDs(values map[int]struct{}) []int {
+	ids := make([]int, 0, len(values))
+	for id := range values {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
 }
 
 // FetchInventoryToken returns the current LCU simple-inventory token used by
@@ -1008,6 +1620,153 @@ func (lf *Lockfile) GetChampSelectSession(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/session")
 }
 
+// FetchChampSelectPickable returns the champion ids that the current player
+// may pick in the active champion-select session.
+func (lf *Lockfile) FetchChampSelectPickable(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/pickable-champion-ids")
+}
+
+// FetchChampSelectBannable returns the champion ids that may be banned in the
+// active champion-select session.
+func (lf *Lockfile) FetchChampSelectBannable(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/bannable-champion-ids")
+}
+
+// UpdateChampSelectAction selects or locks a champion-select action. League's
+// LCU uses the same PATCH route for hover/selection and lock-in; omitting
+// completed leaves the action unlocked, while completed=true submits it.
+func (lf *Lockfile) UpdateChampSelectAction(ctx context.Context, actionID, championID int, completed bool) error {
+	// Action IDs start at 0 — the very first pick of a draft is a valid,
+	// common target, so only reject clearly impossible negatives.
+	if actionID < 0 {
+		return fmt.Errorf("champion-select action ID must not be negative")
+	}
+	if championID <= 0 {
+		return fmt.Errorf("champion ID must be positive")
+	}
+	payload := map[string]any{"championId": championID}
+	if completed {
+		payload["completed"] = true
+	}
+	_, err := lf.doJSON(ctx, "PATCH", fmt.Sprintf("/lol-champ-select/v1/session/actions/%d", actionID), payload)
+	return err
+}
+
+// UpdateChampSelectSelection changes the local player's loadout during the
+// finalization phase. Zero values are ignored so callers can update one field
+// without accidentally clearing another.
+func (lf *Lockfile) UpdateChampSelectSelection(ctx context.Context, spell1ID, spell2ID, skinID int) error {
+	payload := make(map[string]any, 3)
+	if spell1ID > 0 {
+		payload["spell1Id"] = spell1ID
+	}
+	if spell2ID > 0 {
+		payload["spell2Id"] = spell2ID
+	}
+	if skinID > 0 {
+		payload["selectedSkinId"] = skinID
+	}
+	if len(payload) == 0 {
+		return fmt.Errorf("champion-select selection is empty")
+	}
+	_, err := lf.doJSON(ctx, "PATCH", "/lol-champ-select/v1/session/my-selection", payload)
+	return err
+}
+
+// FetchChampSelectSkins returns the local player's skin list used by the
+// champion-select skin picker. The summoner id is read from the active session
+// instead of trusting a client-provided path parameter.
+func (lf *Lockfile) FetchChampSelectSkins(ctx context.Context) ([]byte, error) {
+	body, err := lf.GetChampSelectSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var session struct {
+		MyTeam []struct {
+			CellID     int `json:"cellId"`
+			SummonerID int `json:"summonerId"`
+		} `json:"myTeam"`
+		LocalPlayerCellID int `json:"localPlayerCellId"`
+	}
+	if err := json.Unmarshal(body, &session); err != nil {
+		return nil, fmt.Errorf("parse champion-select session: %w", err)
+	}
+	for _, member := range session.MyTeam {
+		if member.CellID == session.LocalPlayerCellID && member.SummonerID > 0 {
+			return lf.DoRequest(ctx, "GET", fmt.Sprintf("/lol-champions/v1/inventories/%d/skins-minimal", member.SummonerID))
+		}
+	}
+	return nil, fmt.Errorf("local champion-select summoner is not ready")
+}
+
+// RerollChampSelect consumes an ARAM reroll when the queue supports it.
+func (lf *Lockfile) RerollChampSelect(ctx context.Context) error {
+	_, err := lf.DoRequest(ctx, "POST", "/lol-champ-select/v1/session/my-selection/reroll")
+	return err
+}
+
+// SwapBenchChampion swaps an ARAM bench champion into the local selection.
+func (lf *Lockfile) SwapBenchChampion(ctx context.Context, championID int) error {
+	if championID <= 0 {
+		return fmt.Errorf("champion ID must be positive")
+	}
+	_, err := lf.DoRequest(ctx, "POST", fmt.Sprintf("/lol-champ-select/v1/session/bench/swap/%d", championID))
+	return err
+}
+
+// FetchRunePages returns the player's editable rune pages.
+func (lf *Lockfile) FetchRunePages(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, "GET", "/lol-perks/v1/pages")
+}
+
+// FetchRunePerks returns the live perk catalogue, including display metadata
+// and slot types used to build a valid editable rune page.
+func (lf *Lockfile) FetchRunePerks(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, "GET", "/lol-perks/v1/perks")
+}
+
+// FetchRuneStyles returns the live style and slot layout. Keeping this sourced
+// from LCU means the editor follows the installed League patch automatically.
+func (lf *Lockfile) FetchRuneStyles(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, "GET", "/lol-game-data/assets/v1/perkstyles.json")
+}
+
+// CreateRunePage creates a new editable rune page.
+func (lf *Lockfile) CreateRunePage(ctx context.Context, payload map[string]any) ([]byte, error) {
+	return lf.doJSON(ctx, "POST", "/lol-perks/v1/pages", payload)
+}
+
+// UpdateRunePage replaces an editable rune page.
+func (lf *Lockfile) UpdateRunePage(ctx context.Context, pageID int, payload map[string]any) error {
+	if pageID <= 0 {
+		return fmt.Errorf("rune page ID must be positive")
+	}
+	_, err := lf.doJSON(ctx, "PUT", fmt.Sprintf("/lol-perks/v1/pages/%d", pageID), payload)
+	return err
+}
+
+// DeleteRunePage removes an editable rune page.
+func (lf *Lockfile) DeleteRunePage(ctx context.Context, pageID int) error {
+	if pageID <= 0 {
+		return fmt.Errorf("rune page ID must be positive")
+	}
+	_, err := lf.DoRequest(ctx, "DELETE", fmt.Sprintf("/lol-perks/v1/pages/%d", pageID))
+	return err
+}
+
+// SetCurrentRunePage activates a rune page for the next game.
+func (lf *Lockfile) SetCurrentRunePage(ctx context.Context, pageID int) error {
+	if pageID <= 0 {
+		return fmt.Errorf("rune page ID must be positive")
+	}
+	payload, err := json.Marshal(pageID)
+	if err != nil {
+		return err
+	}
+	_, err = lf.doRequest(ctx, "PUT", "/lol-perks/v1/currentpage", bytes.NewReader(payload))
+	return err
+}
+
 // FetchLCUFriends returns the League chat friend list. The payload is kept raw
 // because Riot adds fields to friend records between client releases.
 func (lf *Lockfile) FetchLCUFriends(ctx context.Context) ([]byte, error) {
@@ -1052,14 +1811,17 @@ func (lf *Lockfile) ClaimEventRewards(ctx context.Context) (int, error) {
 }
 
 type QoLState struct {
-	Phase          string `json:"phase"`
-	Availability   string `json:"availability"`
-	StatusMessage  string `json:"statusMessage"`
-	ProfileIconID  int    `json:"profileIconId"`
-	QueueState     string `json:"queueState"`
-	FirstRole      string `json:"firstRole"`
-	SecondRole     string `json:"secondRole"`
-	BackgroundSkin int    `json:"backgroundSkinId"`
+	Phase          string          `json:"phase"`
+	Availability   string          `json:"availability"`
+	StatusMessage  string          `json:"statusMessage"`
+	ProfileIconID  int             `json:"profileIconId"`
+	QueueState     string          `json:"queueState"`
+	FirstRole      string          `json:"firstRole"`
+	SecondRole     string          `json:"secondRole"`
+	BackgroundSkin int             `json:"backgroundSkinId"`
+	ReadyCheck     json.RawMessage `json:"readyCheck,omitempty"`
+	QueueID        int             `json:"queueId,omitempty"`
+	IsCustom       bool            `json:"isCustom,omitempty"`
 }
 
 // FetchQoLState gathers the small pieces of client state needed to render the
@@ -1078,6 +1840,11 @@ func (lf *Lockfile) FetchQoLState(ctx context.Context) (QoLState, error) {
 // endpoints while preserving FetchQoLState for existing callers.
 func (lf *Lockfile) FetchQoLStateWithPhase(ctx context.Context, phase string) QoLState {
 	state := QoLState{Phase: phase}
+	if phase == "ReadyCheck" {
+		if readyBody, readyErr := lf.DoRequest(ctx, "GET", "/lol-matchmaking/v1/ready-check"); readyErr == nil && json.Valid(readyBody) {
+			state.ReadyCheck = json.RawMessage(readyBody)
+		}
+	}
 
 	// These surfaces are independent. Fetch them together so a slow optional
 	// plugin cannot make the entire dashboard appear frozen.
@@ -1121,12 +1888,21 @@ func (lf *Lockfile) FetchQoLStateWithPhase(ctx context.Context, phase string) Qo
 	}
 	if len(lobbyBody) > 0 {
 		var lobby struct {
-			LocalMember struct {
+			IsCustom   bool `json:"isCustom"`
+			GameConfig struct {
+				QueueID  int    `json:"queueId"`
+				IsCustom bool   `json:"isCustom"`
+				GameMode string `json:"gameMode"`
+			} `json:"gameConfig"`
+			CustomGameLobby json.RawMessage `json:"customGameLobby"`
+			LocalMember     struct {
 				FirstPositionPreference  string `json:"firstPositionPreference"`
 				SecondPositionPreference string `json:"secondPositionPreference"`
 			} `json:"localMember"`
 		}
 		if json.Unmarshal(lobbyBody, &lobby) == nil {
+			state.QueueID = lobby.GameConfig.QueueID
+			state.IsCustom = lobby.IsCustom || lobby.GameConfig.IsCustom || len(lobby.CustomGameLobby) > 0 || state.QueueID == PracticeToolQueueID || strings.EqualFold(lobby.GameConfig.GameMode, "PRACTICETOOL")
 			state.FirstRole = lobby.LocalMember.FirstPositionPreference
 			state.SecondRole = lobby.LocalMember.SecondPositionPreference
 		}

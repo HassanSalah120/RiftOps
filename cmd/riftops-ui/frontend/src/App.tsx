@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Shield, Server, Sparkles, Settings, Power, FolderOpen, Search, RotateCcw } from 'lucide-react';
+import { ChevronDown, Play, Square, Shield, Server, Sparkles, Settings, Power, FolderOpen, Search, RotateCcw, Wrench } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
 import GameSelector from './components/GameSelector';
@@ -7,9 +7,10 @@ import StatusSelector from './components/StatusSelector';
 import LogViewer from './components/LogViewer';
 import Toast from './components/Toast';
 import Sidebar from './components/Sidebar';
-import RiotPanel from './components/RiotPanel';
 import MatchHistory from './components/MatchHistory';
-import SkinShowcase from './components/SkinShowcase';
+import PlayFlowPage from './components/PlayFlowPage';
+import LiveSessionPage from './components/LiveSessionPage';
+import CollectionWorkspace from './components/CollectionWorkspace';
 import QoLPanel from './components/QoLPanel';
 import LootDashboard from './components/LootDashboard';
 import QuickActions from './components/QuickActions';
@@ -23,7 +24,12 @@ import type { NotificationEntry } from './components/NotificationCenter';
 import { useLCUConnection } from './components/lcuConnectionContext';
 import { PERFORMANCE_MODES } from './components/lcuConnectionContext';
 import ClientControlRoom from './components/ClientControlRoom';
+import RemoteAccessPage from './components/RemoteAccessPage';
+import AccountSummary from './components/AccountSummary';
 import { GAMES, gameLabel } from './types';
+import { ActionFeedback, type FeedbackState } from './components/DesignPrimitives';
+import { ALL_TABS, availableTabs, tabAvailable } from './clientCapabilities';
+import PhoneCompanionPanel from './components/PhoneCompanionPanel';
 
 function phaseLabel(phase: string): string {
   switch (phase) {
@@ -60,7 +66,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     try {
       const saved = localStorage.getItem('riftops.activeTab');
-      return (saved as Tab) || 'dashboard';
+      return ALL_TABS.includes(saved as Tab) ? saved as Tab : 'dashboard';
     } catch {
       return 'dashboard';
     }
@@ -84,9 +90,12 @@ export default function App() {
   const [prefUpdates, setPrefUpdates] = useState(true);
   const [riotClientPath, setRiotClientPath] = useState('');
   const [riotLocationBusy, setRiotLocationBusy] = useState(false);
+  const [settingsFeedback, setSettingsFeedback] = useState<FeedbackState>(null);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [gameImgError, setGameImgError] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [clientMode, setClientMode] = useState<'loading' | 'desktop' | 'phone'>('loading');
+  const remoteClient = clientMode === 'phone';
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [notificationHistory, setNotificationHistory] = useState<NotificationEntry[]>([]);
   const [launchStage, setLaunchStage] = useState<'idle' | 'checking' | 'starting' | 'waiting' | 'ready'>('idle');
@@ -128,6 +137,26 @@ export default function App() {
       toastTimer.current = null;
     }, 4000);
   }, []);
+
+  const showPhoneToast = useCallback((message: string, type: 'info' | 'success' | 'error' = 'info') => {
+    showToast('Phone control', message, type);
+  }, [showToast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.fetchRemoteAccessStatus().then((status) => {
+      if (!cancelled) setClientMode(status.remote || status.client === 'phone' ? 'phone' : 'desktop');
+    }).catch(() => {
+      // The loopback desktop remains usable if phone access is disabled or
+      // unavailable; an authenticated phone will always receive this status.
+      if (!cancelled) setClientMode('desktop');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!tabAvailable(activeTab, remoteClient)) setActiveTab('dashboard');
+  }, [activeTab, remoteClient]);
 
   useEffect(() => () => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -198,10 +227,11 @@ export default function App() {
 
   // Load preferences & update check
   useEffect(() => {
+    if (clientMode !== 'desktop') return;
     api.checkUpdate().then((res) => {
       if (res.available && res.release) setUpdateAvailable(res.release);
     }).catch(() => {});
-  }, []);
+  }, [clientMode]);
 
   // Keep navigation discoverable for keyboard users without hijacking text inputs.
   useEffect(() => {
@@ -218,7 +248,7 @@ export default function App() {
         return;
       }
       if (typing || !event.altKey) return;
-      const tabs: Tab[] = ['dashboard', 'qol', 'history', 'skins', 'loot', 'riot', 'settings'];
+      const tabs = availableTabs(remoteClient);
       const index = Number(event.key) - 1;
       if (index >= 0 && index < tabs.length) {
         event.preventDefault();
@@ -227,9 +257,10 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [remoteClient]);
 
   useEffect(() => {
+    if (clientMode !== 'desktop') return;
     const loadPreferences = async () => {
       try {
         const [preferences, autostart, location] = await Promise.all([
@@ -252,7 +283,7 @@ export default function App() {
       }
     };
     void loadPreferences();
-  }, [showToast]);
+  }, [clientMode, showToast]);
 
   const persistPreferences = async (next: Partial<api.Preferences>) => {
     const preferences: api.Preferences = {
@@ -262,12 +293,19 @@ export default function App() {
       checkUpdates: next.checkUpdates ?? prefUpdates,
       riotClientPath: next.riotClientPath ?? riotClientPath,
     };
-    await api.savePreferences(preferences);
-    setPrefGame(preferences.game);
-    setPrefStartup(preferences.startupStatus);
-    setPrefMUC(preferences.connectToMUC);
-    setPrefUpdates(preferences.checkUpdates);
-    setRiotClientPath(preferences.riotClientPath);
+    setSettingsFeedback({ tone: 'working', message: 'Saving this preference…' });
+    try {
+      await api.savePreferences(preferences);
+      setPrefGame(preferences.game);
+      setPrefStartup(preferences.startupStatus);
+      setPrefMUC(preferences.connectToMUC);
+      setPrefUpdates(preferences.checkUpdates);
+      setRiotClientPath(preferences.riotClientPath);
+      setSettingsFeedback({ tone: 'success', message: 'Preference saved.' });
+    } catch (error: any) {
+      setSettingsFeedback({ tone: 'error', message: error?.message || 'The preference could not be saved.' });
+      throw error;
+    }
   };
 
   const updateRiotLocation = async (
@@ -275,12 +313,15 @@ export default function App() {
     successMessage: string,
   ) => {
     setRiotLocationBusy(true);
+    setSettingsFeedback({ tone: 'working', message: 'Validating the Riot Client location…' });
     try {
       const location = await action();
       setRiotClientPath(location.path);
       showToast('Riot Client location', successMessage, 'success');
+      setSettingsFeedback({ tone: 'success', message: successMessage });
     } catch (err: any) {
       showToast('Location failed', err.message, 'error');
+      setSettingsFeedback({ tone: 'error', message: err?.message || 'The Riot Client location could not be saved.' });
     } finally {
       setRiotLocationBusy(false);
     }
@@ -356,12 +397,15 @@ export default function App() {
   };
 
   const handleAutostart = async (enabled: boolean) => {
+    setSettingsFeedback({ tone: 'working', message: 'Updating Windows startup…' });
     try {
       await api.setAutostart(enabled);
       setAutostartEnabled(enabled);
       showToast('Windows startup updated', enabled ? 'RiftOps will start with Windows.' : 'RiftOps will not start with Windows.', 'success');
+      setSettingsFeedback({ tone: 'success', message: enabled ? 'RiftOps will start with Windows.' : 'Windows startup is disabled.' });
     } catch (err: any) {
       showToast('Autostart failed', err.message, 'error');
+      setSettingsFeedback({ tone: 'error', message: err?.message || 'Windows startup could not be changed.' });
     }
   };
 
@@ -449,8 +493,19 @@ export default function App() {
   const gameInfo = GAMES.find((g) => g.value === selectedGame);
   const gameImg = GAME_IMGS[selectedGame];
 
+  if (clientMode === 'loading') {
+    return (
+      <main className="riftops-bootstrap" aria-busy="true" aria-live="polite">
+        <Shield />
+        <strong>Securing RiftOps…</strong>
+        <span>Loading the permissions for this device.</span>
+      </main>
+    );
+  }
+
   return (
-    <div className={`flex h-screen bg-base text-text overflow-hidden ${compactMode ? 'is-compact' : ''}`}>
+    <div className={`riftops-shell flex h-screen bg-base text-text overflow-hidden ${compactMode ? 'is-compact' : ''}`} data-live={isLive ? 'true' : 'false'} data-phase={snapshot.Phase || 'idle'} data-remote={remoteClient ? 'true' : 'false'}>
+      <a className="ro-skip-link" href="#riftops-main">Skip to workspace</a>
       {/* Toast Notification */}
       <Toast notification={notification} onClose={() => setNotification(null)} />
       <NotificationCenter
@@ -472,13 +527,14 @@ export default function App() {
         onClose={() => setCommandPaletteOpen(false)}
         onSelectTab={setActiveTab}
         onCommand={handleCommand}
+        remoteClient={remoteClient}
       />
 
       {/* Left Sidebar */}
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} phase={snapshot.Phase} onOpenCommandPalette={() => setCommandPaletteOpen(true)} />
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} phase={snapshot.Phase} onOpenCommandPalette={() => setCommandPaletteOpen(true)} remoteClient={remoteClient} />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 bg-base/50 relative">
+      <div className="flex-1 min-h-0 flex flex-col min-w-0 bg-base/50 relative">
         <WorkspaceHeader
           activeTab={activeTab}
           phase={phaseLabel(snapshot.Phase)}
@@ -487,10 +543,10 @@ export default function App() {
           onOpenNotifications={() => setNotificationCenterOpen(true)}
           unreadNotifications={notificationHistory.filter((item) => !item.read).length}
         />
-        <main className="flex-1 overflow-hidden flex flex-col relative z-10">
+        <main id="riftops-main" className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col relative z-10" tabIndex={-1}>
           {/* QoL Panel */}
           {activeTab === 'qol' && (
-            <div className="flex-1 min-h-0 overflow-hidden animate-fadeIn">
+            <div className="workspace-stage workspace-stage--qol flex-1 min-h-0 overflow-hidden animate-fadeIn">
               <QoLPanel />
             </div>
           )}
@@ -499,19 +555,19 @@ export default function App() {
              COMMAND CENTER (DASHBOARD)
              ═══════════════════════════════════════════════ */}
           {activeTab === 'dashboard' && (
-            <div className="flex-1 flex flex-col min-h-0 animate-fadeIn">
+            <div className="workspace-stage workspace-stage--dashboard dashboard-page flex-1 flex flex-col min-h-0 animate-fadeIn">
               {/* Hero Banner */}
-              <div className="relative h-44 shrink-0 overflow-hidden border-b border-[#c8aa6e]/15">
+              <div className="dashboard-page__hero relative h-44 shrink-0 overflow-hidden border-b border-[#c8aa6e]/15">
                 {gameImgError ? (
                   <div className="absolute inset-0 bg-gradient-to-br from-base via-[#091428] to-base" />
                 ) : (
-                  <img src={gameImg} alt="" className="absolute inset-0 w-full h-full object-cover" onError={() => setGameImgError(true)} />
+                  <img src={gameImg} alt="" width="1600" height="900" fetchPriority="high" className="absolute inset-0 w-full h-full object-cover" onError={() => setGameImgError(true)} />
                 )}
                 {/* Gradient overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-base via-base/60 to-black/40" />
                 <div className="absolute inset-0 bg-gradient-to-r from-base/60 to-transparent" />
 
-                <div className="relative h-full flex flex-col justify-end p-5 pb-4">
+                <div className="dashboard-page__hero-copy relative h-full flex flex-col justify-end p-5 pb-4">
                   {/* Phase badge */}
                   <div className="flex items-center justify-between mb-auto">
                     <div className="flex items-center gap-2">
@@ -528,7 +584,7 @@ export default function App() {
                   </div>
 
                   {/* Game name + launch */}
-                  <div className="flex items-end justify-between mt-1">
+                  <div className="dashboard-page__launch-row flex items-end justify-between mt-1">
                     <div>
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: gameInfo?.color || '#c8aa6e' }} />
@@ -548,7 +604,9 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="flex gap-2">
+                    <AccountSummary />
+
+                    {!remoteClient && <div className="dashboard-page__launch-actions flex gap-2">
                       <button
                         onClick={() => handleLaunch()}
                         disabled={!isIdle || launchStage !== 'idle'}
@@ -560,12 +618,12 @@ export default function App() {
                       <button
                         onClick={handleStop}
                         disabled={isIdle}
-                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-danger/20 text-danger font-bold text-xs border border-danger/30 hover:bg-danger hover:text-white transition-all duration-200 disabled:opacity-20 disabled:cursor-not-allowed cursor-pointer"
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-danger/20 text-danger font-bold text-xs border border-danger/30 hover:bg-danger hover:text-white transition duration-200 disabled:opacity-20 disabled:cursor-not-allowed cursor-pointer"
                       >
                         <Square className="w-3.5 h-3.5 fill-current" />
                         <span>Stop</span>
                       </button>
-                    </div>
+                    </div>}
                   </div>
                   {launchStage !== 'idle' && (
                     <div className="launch-progress" role="status" aria-live="polite">
@@ -577,46 +635,82 @@ export default function App() {
               </div>
 
               {/* Dashboard body */}
-              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-                <ClientControlRoom onOpenQoL={() => setActiveTab('qol')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
-                <QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
+              <div className="dashboard-page__body flex-1 overflow-y-auto px-4 py-3 space-y-4">
+                {remoteClient && <div className="phone-session-banner"><Shield /><span><strong>Phone session connected</strong><small>Live League controls are routed through your paired RiftOps desktop.</small></span></div>}
 
-                {/* Game Selector */}
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Server className="w-3.5 h-3.5 text-primary" />
-                    <span className="text-xs text-text-muted font-bold">TARGET GAME</span>
-                  </div>
-                  <GameSelector value={selectedGame} onChange={handleSetGame} disabled={!isIdle} />
-                </div>
+                {!remoteClient && (
+                  <section className="dashboard-section dashboard-section--preflight" aria-labelledby="dashboard-preflight-title">
+                    <div id="dashboard-preflight-title" className="dashboard-section__kicker">BEFORE YOU LAUNCH</div>
+                    <div className="dashboard-page__context-grid">
+                      <section className="dashboard-section dashboard-section--target">
+                        <div className="dashboard-section__heading">
+                          <span className="dashboard-section__icon"><Server /></span>
+                          <span><small>TARGET GAME</small><strong>Choose a launch target</strong></span>
+                        </div>
+                        <GameSelector value={selectedGame} onChange={handleSetGame} disabled={!isIdle} />
+                      </section>
 
-                {/* Launch history */}
+                      <section className="dashboard-section dashboard-section--presence glass-card p-3.5 space-y-3">
+                        <div className="dashboard-section__heading">
+                          <span className="dashboard-section__icon"><Shield /></span>
+                          <span><small>PRESENCE SHIELD</small><strong>Control what friends see</strong></span>
+                          <label className="toggle">
+                            <input type="checkbox" checked={snapshot.Enabled} onChange={(e) => handleToggleMasking(e.target.checked)} />
+                            <span className="slider" />
+                          </label>
+                        </div>
+                        <StatusSelector current={snapshot.Status} onChange={handleSetStatus} />
+                      </section>
+                    </div>
+                  </section>
+                )}
+
+                <section className="dashboard-section dashboard-section--control">
+                  <div className="dashboard-section__kicker">LEAGUE NOW</div>
+                  <ClientControlRoom remoteClient={remoteClient} onOpenQoL={() => setActiveTab(remoteClient ? 'live' : 'qol')} onOpenLive={() => setActiveTab('live')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
+                </section>
+                {remoteClient && <PhoneCompanionPanel showToast={(message, type = 'info') => showToast('League Client', message, type)} />}
+
                 {snapshot.StartedAt && (
-                  <div className="flex items-center gap-2 text-[11px] text-text-dim/70">
-                    <Play className="w-3 h-3 text-primary" />
-                    <span>Launched {timeAgo(snapshot.StartedAt)}</span>
-                    {snapshot.Game && <span className="text-text-dim/40">· {gameLabel(snapshot.Game)}</span>}
+                  <div className="dashboard-launch-history">
+                    <Play className="dashboard-launch-history__icon" />
+                    <span>Last launch <strong>{timeAgo(snapshot.StartedAt)}</strong></span>
+                    {snapshot.Game && <span className="dashboard-launch-history__game">{gameLabel(snapshot.Game)}</span>}
                   </div>
                 )}
 
-                {/* Presence Shield */}
-                <div className="glass-card p-3.5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Shield className="w-4 h-4 text-primary" />
-                      <span className="text-xs text-text-muted font-bold">Presence Shield</span>
-                    </div>
-                    <label className="toggle">
-                      <input type="checkbox" checked={snapshot.Enabled} onChange={(e) => handleToggleMasking(e.target.checked)} />
-                      <span className="slider" />
-                    </label>
+                {!remoteClient && <details className="dashboard-tools">
+                  <summary><span><Wrench /><span><strong>Utilities & diagnostics</strong><small>Shortcuts and local logs</small></span></span><ChevronDown /></summary>
+                  <div className="dashboard-tools__content">
+                    <section className="dashboard-section dashboard-section--quick">
+                      <div className="dashboard-section__kicker">SHORTCUTS</div>
+                      <QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
+                    </section>
+                    <section className="dashboard-section dashboard-section--logs">
+                      <div className="dashboard-section__kicker">DIAGNOSTICS</div>
+                      <LogViewer logs={logs} onClear={() => setLogs([])} />
+                    </section>
                   </div>
-                  <StatusSelector current={snapshot.Status} onChange={handleSetStatus} />
-                </div>
-
-                {/* Engine Logs */}
-                <LogViewer logs={logs} onClear={() => setLogs([])} />
+                </details>}
               </div>
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════
+             PLAY FLOW TAB
+             ═══════════════════════════════════════════════ */}
+          {activeTab === 'play' && (
+            <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden animate-fadeIn">
+              <PlayFlowPage remoteClient={remoteClient} showToast={(message, type = 'info') => showToast('Play Flow', message, type)} onOpenLive={() => setActiveTab('live')} />
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════
+             LIVE SESSION TAB
+             ═══════════════════════════════════════════════ */}
+          {activeTab === 'live' && (
+            <div className="workspace-stage workspace-stage--live flex-1 min-h-0 min-w-0 overflow-y-auto animate-fadeIn">
+              <LiveSessionPage remoteClient={remoteClient} onOpenPlayFlow={() => setActiveTab('play')} onOpenCommandCenter={() => setActiveTab('dashboard')} showToast={(message, type = 'info') => showToast('Live Session', message, type)} />
             </div>
           )}
 
@@ -624,7 +718,7 @@ export default function App() {
              MATCH HISTORY TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'history' && (
-            <div className="flex-1 overflow-y-auto p-4 animate-fadeIn">
+            <div className="workspace-stage workspace-stage--history flex-1 overflow-y-auto p-4 animate-fadeIn">
               <MatchHistory />
             </div>
           )}
@@ -633,8 +727,8 @@ export default function App() {
              SKIN SHOWCASE TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'skins' && (
-            <div className="flex-1 overflow-y-auto p-4 animate-fadeIn">
-              <SkinShowcase />
+            <div className="workspace-stage workspace-stage--skins flex-1 overflow-y-auto p-4 animate-fadeIn">
+              <CollectionWorkspace remoteClient={remoteClient} />
             </div>
           )}
 
@@ -642,20 +736,14 @@ export default function App() {
              LOOT DASHBOARD TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'loot' && (
-            <div className="flex-1 overflow-y-auto animate-fadeIn">
+            <div className="workspace-stage workspace-stage--loot flex-1 overflow-y-auto animate-fadeIn">
               <LootDashboard />
             </div>
           )}
 
-          {/* ═══════════════════════════════════════════════
-             NAVIGATION
-             ═══════════════════════════════════════════════ */}
-          {/* ═══════════════════════════════════════════════
-             RIOT ACCOUNT TAB
-             ═══════════════════════════════════════════════ */}
-          {activeTab === 'riot' && (
-            <div className="flex-1 overflow-y-auto p-4 animate-fadeIn">
-              <RiotPanel />
+          {activeTab === 'remote' && !remoteClient && (
+            <div className="workspace-stage workspace-stage--remote flex-1 overflow-y-auto animate-fadeIn">
+              <RemoteAccessPage showToast={showPhoneToast} />
             </div>
           )}
 
@@ -663,19 +751,29 @@ export default function App() {
              SETTINGS TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'settings' && (
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 animate-fadeIn">
-              <div className="flex items-center gap-2 mb-1">
-                <Settings className="w-4 h-4 text-primary" />
-                <span className="text-sm text-text-muted font-bold">App Settings</span>
+            <div className="workspace-stage workspace-stage--settings flex-1 overflow-y-auto p-4 space-y-4 animate-fadeIn">
+              <div className="settings-page-heading">
+                <div className="settings-page-heading__identity"><span className="settings-page-heading__icon"><Settings /></span><div><span className="page-header__eyebrow">WORKSPACE CONFIGURATION</span><h1>App settings</h1><p>Keep launch behavior, client performance, and desktop integration under control.</p></div></div>
+                <span className="page-header__badge">Local preferences</span>
               </div>
 
+              <nav className="settings-nav" aria-label="Settings sections">
+                <a href="#settings-launch">Launch & presence</a>
+                <a href="#settings-interface">Interface & performance</a>
+                <a href="#settings-league">League installation</a>
+                <a href="#settings-data">Data & app</a>
+              </nav>
+              <ActionFeedback state={settingsFeedback} className="settings-feedback" />
+
               {/* Preferences */}
-              <div className="glass-card p-4 space-y-3">
-                <h4 className="text-xs font-bold text-white">Default Launch Preferences</h4>
+              <div id="settings-launch" className="settings-card glass-card p-4 space-y-3">
+                <div className="settings-card__heading"><span><Play /></span><div><small>LAUNCH & PRESENCE</small><h4>League startup</h4><p>Choose what RiftOps launches and how your presence starts.</p></div></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="text-xs text-text-muted">Default Game</label>
                     <select
+                      aria-label="Default game"
+                      name="default-game"
                       value={prefGame}
                       onChange={(e) => {
                         setPrefGame(e.target.value);
@@ -689,6 +787,8 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-xs text-text-muted">Startup Status</label>
                     <select
+                      aria-label="Startup status"
+                      name="startup-status"
                       value={prefStartup}
                       onChange={(e) => {
                         setPrefStartup(e.target.value);
@@ -704,12 +804,13 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="space-y-2 pt-2 border-t border-white/[0.06]">
+                <div className="settings-control-list space-y-2 pt-2 border-t border-white/[0.06]">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-text">Keep lobby chat connected (MUC)</span>
                     <label className="toggle">
                       <input
                         type="checkbox"
+                        aria-label="Keep lobby chat connected"
                         checked={prefMUC}
                         onChange={(e) => {
                           setPrefMUC(e.target.checked);
@@ -719,11 +820,18 @@ export default function App() {
                       <span className="slider" />
                     </label>
                   </div>
+                </div>
+              </div>
+
+              <div id="settings-interface" className="settings-card glass-card p-4 space-y-3">
+                <div className="settings-card__heading"><span><Sparkles /></span><div><small>INTERFACE & PERFORMANCE</small><h4>Workspace behavior</h4><p>These controls are stored locally and apply immediately.</p></div></div>
+                <div className="settings-control-list space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-text">Auto check for updates</span>
                     <label className="toggle">
                       <input
                         type="checkbox"
+                        aria-label="Automatically check for updates"
                         checked={prefUpdates}
                         onChange={(e) => {
                           setPrefUpdates(e.target.checked);
@@ -736,14 +844,14 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-text">Compact workspace density</span>
                     <label className="toggle">
-                      <input type="checkbox" checked={compactMode} onChange={(e) => setCompactMode(e.target.checked)} />
+                      <input type="checkbox" aria-label="Use compact workspace density" checked={compactMode} onChange={(e) => { setCompactMode(e.target.checked); setSettingsFeedback({ tone: 'success', message: e.target.checked ? 'Compact density enabled.' : 'Comfortable density enabled.' }); }} />
                       <span className="slider" />
                     </label>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-text">Reduce interface motion</span>
                     <label className="toggle">
-                      <input type="checkbox" checked={reducedMotion} onChange={(e) => setReducedMotion(e.target.checked)} />
+                      <input type="checkbox" aria-label="Reduce interface motion" checked={reducedMotion} onChange={(e) => { setReducedMotion(e.target.checked); setSettingsFeedback({ tone: 'success', message: e.target.checked ? 'Interface motion reduced.' : 'Standard interface motion restored.' }); }} />
                       <span className="slider" />
                     </label>
                   </div>
@@ -754,7 +862,7 @@ export default function App() {
                     </div>
                     <select
                       value={performanceMode}
-                      onChange={(event) => setPerformanceMode(event.target.value as keyof typeof PERFORMANCE_MODES)}
+                      onChange={(event) => { setPerformanceMode(event.target.value as keyof typeof PERFORMANCE_MODES); setSettingsFeedback({ tone: 'success', message: `${PERFORMANCE_MODES[event.target.value as keyof typeof PERFORMANCE_MODES].label} performance mode applied.` }); }}
                       className="w-32 text-xs shrink-0"
                       aria-label="Client performance mode"
                     >
@@ -764,8 +872,8 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="glass-card p-4 space-y-3">
-                <h4 className="text-xs font-bold text-white">Desktop App</h4>
+              <div id="settings-league" className="settings-card glass-card p-4 space-y-3">
+                <div className="settings-card__heading"><span><FolderOpen /></span><div><small>LEAGUE INSTALLATION</small><h4>Client location & desktop</h4><p>Configure the executable RiftOps validates before launch.</p></div></div>
                 <div className="space-y-2 pb-3 border-b border-white/[0.06]">
                   <div>
                     <p className="text-xs text-text">Riot Client location</p>
@@ -774,6 +882,10 @@ export default function App() {
                     </p>
                   </div>
                   <input
+                    aria-label="Riot Client location"
+                    name="riot-client-location"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={riotClientPath}
                     disabled={riotLocationBusy}
                     onChange={(event) => setRiotClientPath(event.target.value)}
@@ -842,7 +954,7 @@ export default function App() {
                       <p className="text-[11px] text-text-muted mt-0.5">Run RiftOps after you sign in to this PC.</p>
                     </div>
                     <label className="toggle">
-                      <input type="checkbox" checked={autostartEnabled} onChange={(e) => void handleAutostart(e.target.checked)} />
+                      <input type="checkbox" aria-label="Start RiftOps with Windows" checked={autostartEnabled} onChange={(e) => void handleAutostart(e.target.checked)} />
                       <span className="slider" />
                     </label>
                   </div>
@@ -856,7 +968,7 @@ export default function App() {
               </div>
 
               {/* About RiftOps */}
-              <div className="glass-card p-4 space-y-2">
+              <div id="settings-data" className="settings-card settings-card--data glass-card p-4 space-y-2">
                 <div className="flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-primary" />
                   <span className="text-xs font-bold text-white">About RiftOps</span>

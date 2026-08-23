@@ -1,16 +1,21 @@
-import { Command, Gem, History, Medal, PanelLeftClose, PanelLeftOpen, Radar, Settings, Sparkles, Wand2 } from 'lucide-react';
+import { Activity, Command, Gem, History, PanelLeftClose, PanelLeftOpen, Radar, RadioTower, Settings, Sparkles, Swords, Wand2 } from 'lucide-react';
 import { useState } from 'react';
 import type { Tab } from '../types';
+import { tabAvailable } from '../clientCapabilities';
 import HealthIndicator from './HealthIndicator';
+import { livePhaseLabel, normalizeLivePhase } from '../liveSession';
+import { useLCUConnection } from './lcuConnectionContext';
 
 const NAV = [
-  { key: 'dashboard' as Tab, icon: Radar, label: 'Command Center', hint: 'Launch and presence' },
-  { key: 'history' as Tab, icon: History, label: 'Match History', hint: 'Recent performance' },
-  { key: 'skins' as Tab, icon: Sparkles, label: 'Skin Collection', hint: 'Browse cosmetics' },
-  { key: 'loot' as Tab, icon: Gem, label: 'Loot & Collection', hint: 'Shards and currencies' },
-  { key: 'qol' as Tab, icon: Wand2, label: 'Quality of Life', hint: 'Client controls' },
-  { key: 'riot' as Tab, icon: Medal, label: 'Riot Account', hint: 'Profile and rank' },
-  { key: 'settings' as Tab, icon: Settings, label: 'Settings', hint: 'App preferences' },
+  { key: 'dashboard' as Tab, icon: Radar, label: 'Command Center', hint: 'Readiness and launch', group: 'operate' },
+  { key: 'play' as Tab, icon: Swords, label: 'Play Flow', hint: 'Prepare matchmaking', group: 'operate' },
+  { key: 'live' as Tab, icon: Activity, label: 'Live Session', hint: 'Follow the current game', group: 'operate' },
+  { key: 'history' as Tab, icon: History, label: 'Match History', hint: 'Review performance', group: 'review' },
+  { key: 'skins' as Tab, icon: Sparkles, label: 'Collection', hint: 'Skins and profile studio', group: 'review' },
+  { key: 'loot' as Tab, icon: Gem, label: 'Loot Workshop', hint: 'Inventory and crafting', group: 'review' },
+  { key: 'qol' as Tab, icon: Wand2, label: 'Quality of Life', hint: 'Client utilities', group: 'system' },
+  { key: 'remote' as Tab, icon: RadioTower, label: 'Remote Access', hint: 'Pair and manage phones', group: 'system' },
+  { key: 'settings' as Tab, icon: Settings, label: 'Settings', hint: 'Application preferences', group: 'system' },
 ];
 
 export default function Sidebar({
@@ -18,16 +23,21 @@ export default function Sidebar({
   onTabChange,
   phase,
   onOpenCommandPalette,
+  remoteClient = false,
 }: {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
   phase: string;
   onOpenCommandPalette: () => void;
+  remoteClient?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('riftops.sidebarCollapsed') === 'true'; } catch { return false; }
   });
-  const isLive = phase !== 'idle' && phase !== 'error';
+  const { qol, stale } = useLCUConnection();
+  const sessionPhase = normalizeLivePhase(qol?.phase, qol?.queueState);
+  const isLive = sessionPhase !== 'IDLE' || (phase !== 'idle' && phase !== 'error');
+  const visibleNav = NAV.filter((item) => tabAvailable(item.key, remoteClient));
 
   const toggleCollapsed = () => setCollapsed((value) => {
     const next = !value;
@@ -35,8 +45,30 @@ export default function Sidebar({
     return next;
   });
 
+  const renderNavItem = (item: typeof NAV[number]) => {
+    const active = activeTab === item.key;
+    const Icon = item.icon;
+    return (
+      <button
+        type="button"
+        key={item.key}
+        className={`app-sidebar__item ${['loot', 'qol', 'remote', 'settings'].includes(item.key) ? 'is-mobile-hidden' : ''} ${active ? 'is-active' : ''}`}
+        onClick={() => onTabChange(item.key)}
+        aria-current={active ? 'page' : undefined}
+      >
+        <span className="app-sidebar__item-icon"><Icon /></span>
+        <span className="app-sidebar__item-copy">
+          <strong>{item.label}</strong>
+          <small>{item.hint}</small>
+        </span>
+        {item.key === 'live' && <span className={`app-sidebar__live-badge ${stale ? 'is-stale' : ''}`}>{stale ? 'Retrying' : livePhaseLabel(sessionPhase)}</span>}
+        {active && <span className="app-sidebar__active-dot" />}
+      </button>
+    );
+  };
+
   return (
-    <nav className={`app-sidebar ${collapsed ? 'is-collapsed' : ''}`}>
+    <nav className={`app-sidebar ${collapsed ? 'is-collapsed' : ''}`} aria-label="RiftOps workspaces">
       <div className="app-sidebar__brand">
         <div className="app-sidebar__mark">R</div>
         <div>
@@ -49,36 +81,25 @@ export default function Sidebar({
         {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}<span>{collapsed ? 'Expand' : 'Collapse'}</span>
       </button>
 
-      <div className="app-sidebar__section-label">Workspace</div>
-      <button type="button" className="app-sidebar__command" onClick={onOpenCommandPalette}>
+      <div className="app-sidebar__section-label">Operate</div>
+      <button type="button" className="app-sidebar__command" onClick={onOpenCommandPalette} aria-label="Search RiftOps commands">
         <span className="app-sidebar__command-icon"><Command /></span>
         <span>Search commands</span>
         <kbd>⌘K</kbd>
       </button>
       <div className="app-sidebar__nav">
-        {NAV.map((item) => {
-          const active = activeTab === item.key;
-          const Icon = item.icon;
-          return (
-            <button
-              type="button"
-              key={item.key}
-              className={`app-sidebar__item ${active ? 'is-active' : ''}`}
-              onClick={() => onTabChange(item.key)}
-              aria-current={active ? 'page' : undefined}
-            >
-              <span className="app-sidebar__item-icon"><Icon /></span>
-              <span className="app-sidebar__item-copy">
-                <strong>{item.label}</strong>
-                <small>{item.hint}</small>
-              </span>
-              {active && <span className="app-sidebar__active-dot" />}
-            </button>
-          );
-        })}
+        {visibleNav.filter((item) => item.group === 'operate').map(renderNavItem)}
+      </div>
+      <div className="app-sidebar__group-divider"><span>Review</span></div>
+      <div className="app-sidebar__nav">
+        {visibleNav.filter((item) => item.group === 'review').map(renderNavItem)}
+      </div>
+      <div className="app-sidebar__group-divider"><span>System</span></div>
+      <div className="app-sidebar__nav">
+        {visibleNav.filter((item) => item.group === 'system').map(renderNavItem)}
       </div>
 
-      <div style={{ padding: '0 10px 8px' }}>
+      <div className="app-sidebar__health-wrap">
         <HealthIndicator />
       </div>
 

@@ -2,10 +2,13 @@ module github.com/HassanSalah120/RiftOps
 
 go 1.26
 
+toolchain go1.26.6
+
 require (
 	fyne.io/fyne/v2 v2.8.0
 	fyne.io/systray v1.12.2
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	golang.org/x/sys v0.47.0
 	software.sslmate.com/src/go-pkcs12 v0.7.3

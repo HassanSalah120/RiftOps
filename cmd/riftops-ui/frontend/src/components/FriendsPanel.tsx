@@ -46,7 +46,7 @@ function readCollapsed(): boolean {
   }
 }
 
-export default function FriendsPanel({ connected }: { connected: boolean }) {
+export default function FriendsPanel({ connected, id }: { connected: boolean; id?: string }) {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'online' | 'favorites'>('all');
@@ -107,7 +107,7 @@ export default function FriendsPanel({ connected }: { connected: boolean }) {
   };
 
   return (
-    <section className={`friends-panel ${collapsed ? 'is-collapsed' : ''}`}>
+    <section id={id} className={`friends-panel ${collapsed ? 'is-collapsed' : ''}`}>
       <div className="friends-panel__header">
         <button type="button" className="friends-panel__toggle" onClick={toggleCollapsed} aria-expanded={!collapsed}>
           <span className="friends-panel__title-icon"><Users /></span>
@@ -137,7 +137,7 @@ export default function FriendsPanel({ connected }: { connected: boolean }) {
           const favorite = favorites.has(friendId);
           const iconId = friend.profileIconId || friend.iconId;
           return <div className="friends-panel__friend" key={friendId || `${displayName(friend)}-${index}`}>
-            {iconId ? <img className="friends-panel__avatar" src={`/lol-game-data/assets/v1/profile-icons/${iconId}.jpg`} alt="" loading="lazy" /> : <span className={`friends-panel__status ${statusTone(friend.availability)}`}><Circle /></span>}
+            {iconId ? <img className="friends-panel__avatar" src={`/lol-game-data/assets/v1/profile-icons/${iconId}.jpg`} alt="" width="36" height="36" loading="lazy" /> : <span className={`friends-panel__status ${statusTone(friend.availability)}`}><Circle /></span>}
             <span className="friends-panel__copy"><strong>{displayName(friend)}</strong><small>{friend.productName || friend.product || statusLabel(friend.availability)}</small></span>
             <span className={`friends-panel__availability ${statusTone(friend.availability)}`}>{statusLabel(friend.availability)}</span>
             <button type="button" className={`friends-panel__favorite ${favorite ? 'is-favorite' : ''}`} onClick={() => toggleFavorite(friend)} aria-label={favorite ? `Remove ${displayName(friend)} from favorites` : `Favorite ${displayName(friend)}`}><Star /></button>

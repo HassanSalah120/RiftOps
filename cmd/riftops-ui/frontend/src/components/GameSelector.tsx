@@ -31,7 +31,7 @@ export default function GameSelector({
             key={g.value}
             disabled={disabled}
             onClick={() => onChange(g.value)}
-            className={`relative overflow-hidden rounded-2xl h-24 transition-all duration-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed group border ${
+            className={`relative overflow-hidden rounded-2xl h-24 transition duration-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed group border ${
               selected
                 ? 'border-[#c8aa6e] shadow-[0_0_25px_rgba(200,170,110,0.35)] scale-[1.02]'
                 : 'border-white/[0.08] hover:border-white/20 hover:scale-[1.01]'
@@ -41,6 +41,8 @@ export default function GameSelector({
               <img
                 src={img}
                 alt=""
+                width="640"
+                height="360"
                 className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                 loading="lazy"
                 onError={() => setImgErrors((prev) => ({ ...prev, [g.value]: true }))}

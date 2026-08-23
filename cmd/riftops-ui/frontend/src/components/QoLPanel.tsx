@@ -1,27 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity, BellRing, Check, CheckCircle2, ChevronRight, CircleStop,
-  ChevronDown, Clock3, Gift, Heart, Image, Loader2, MessageSquareText, Play,
-  RefreshCw, Search, ShieldCheck, Sparkles, Swords, UserRound, Users,
+  Clock3, Gift, Heart, Loader2, MessageSquareText, Play,
+  RefreshCw, ShieldCheck, Swords, Users,
   Wifi, WifiOff, XCircle,
   type LucideIcon,
 } from 'lucide-react';
 import {
-  ddProfileIcon,
-  fetchDDProfileIcons,
-  fetchDDragonVersion,
-  fetchLCUBackgroundChampions,
-  fetchLCUBackgroundSkins,
-  fetchLCUProfileIconMetadata,
   fetchQueuePresets,
   fetchQoLPreferences,
   lcuAutoAccept,
   lcuAutoRequeue,
   lcuAutoRoles,
+  lcuQuitCustomSession,
   lcuStopQueue,
   saveQueuePreset,
   saveQoLPreferences,
-  type DDProfileIcon,
   type QoLPreferences,
   type QoLState,
 } from '../api';
@@ -47,8 +41,6 @@ const AVAILABILITY_OPTIONS = [
   ['offline', 'Offline'],
 ] as const;
 
-type BackgroundChampion = { id: number; name: string };
-type BackgroundSkin = { id: number; name: string };
 type ToastState = { message: string; ok: boolean } | null;
 type HonorPlayer = {
   puuid: string;
@@ -88,6 +80,7 @@ function Panel({
   children,
   accent = 'gold',
   className = '',
+  id,
 }: {
   icon: LucideIcon;
   eyebrow: string;
@@ -96,9 +89,10 @@ function Panel({
   children: React.ReactNode;
   accent?: 'gold' | 'cyan' | 'violet' | 'rose' | 'emerald';
   className?: string;
+  id?: string;
 }) {
   return (
-    <section className={`qol-panel qol-panel--${accent} ${className}`}>
+    <section id={id} className={`qol-panel qol-panel--${accent} ${className}`}>
       <div className="qol-panel__header">
         <div className="qol-panel__icon"><Icon /></div>
         <div className="min-w-0">
@@ -178,10 +172,49 @@ function ActionButton({
 function ToastBar({ toast }: { toast: ToastState }) {
   if (!toast) return null;
   return (
-    <div className={`qol-toast ${toast.ok ? 'is-success' : 'is-error'}`}>
+    <div className={`qol-toast ${toast.ok ? 'is-success' : 'is-error'}`} role="status" aria-live="polite">
       {toast.ok ? <CheckCircle2 /> : <XCircle />}
       <span>{toast.message}</span>
     </div>
+  );
+}
+
+const QOL_SECTIONS = [
+  { id: 'qol-automation', label: 'Automation', icon: BellRing },
+  { id: 'qol-queue', label: 'Queue', icon: Activity },
+  { id: 'qol-social', label: 'Social', icon: MessageSquareText },
+  { id: 'qol-champ-select', label: 'Champion Select', icon: Swords },
+  { id: 'qol-post-game', label: 'Post Game', icon: Clock3 },
+] as const;
+
+function SectionRail({ phase, connected, automationCount }: { phase: string; connected: boolean; automationCount: number }) {
+  const statuses: Record<string, string> = {
+    'qol-automation': automationCount ? `${automationCount} active` : 'Standby',
+    'qol-queue': phase === 'Matchmaking' ? 'Searching' : phase === 'Lobby' ? 'Lobby' : 'Standby',
+    'qol-social': connected ? 'Connected' : 'Offline',
+    'qol-champ-select': phase === 'ChampSelect' ? 'Live now' : 'Standby',
+    'qol-post-game': ['EndOfGame', 'PreEndOfGame', 'WaitingForStats'].includes(phase) ? 'Open' : 'Standby',
+  };
+
+  const jumpTo = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <nav className="qol-section-rail" aria-label="Quality of life sections">
+      <div className="qol-section-rail__label"><span>CONTROL DECK</span><small>Jump to a workspace</small></div>
+      <div className="qol-section-rail__items">
+        {QOL_SECTIONS.map(({ id, label, icon: Icon }) => {
+          const live = statuses[id] === 'Live now' || statuses[id] === 'Open' || statuses[id] === 'Searching';
+          return (
+            <button key={id} type="button" className={`qol-section-rail__item ${live ? 'is-live' : ''}`} onClick={() => jumpTo(id)}>
+              <Icon />
+              <span><strong>{label}</strong><small>{statuses[id]}</small></span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 
@@ -201,21 +234,6 @@ export default function QoLPanel() {
   const [firstRole, setFirstRole] = useState('MIDDLE');
   const [secondRole, setSecondRole] = useState('TOP');
 
-  const [champions, setChampions] = useState<BackgroundChampion[]>([]);
-  const [skins, setSkins] = useState<BackgroundSkin[]>([]);
-  const [selectedChampion, setSelectedChampion] = useState<number | null>(null);
-  const [selectedSkin, setSelectedSkin] = useState<number | null>(null);
-  const [catalogueLoading, setCatalogueLoading] = useState(false);
-  const [catalogueError, setCatalogueError] = useState('');
-
-  const [profileIcons, setProfileIcons] = useState<DDProfileIcon[]>([]);
-  const [ddVersion, setDDVersion] = useState('');
-  const [iconSearch, setIconSearch] = useState('');
-  const [iconsLoading, setIconsLoading] = useState(true);
-  const [iconsError, setIconsError] = useState('');
-  const [iconReloadKey, setIconReloadKey] = useState(0);
-  const [iconLimit, setIconLimit] = useState(72);
-  const [failedIconImages, setFailedIconImages] = useState<Set<number>>(() => new Set());
   const [honorBallot, setHonorBallot] = useState<HonorBallot | null>(null);
   const honorType = 'HEART';
   const { qol: sharedQolState, connected: sharedConnected, refresh: refreshConnection } = useLCUConnection();
@@ -282,71 +300,6 @@ export default function QoLPanel() {
   }, [showToast]);
 
   useEffect(() => {
-    let cancelled = false;
-    setIconsLoading(true);
-    setIconsError('');
-    Promise.allSettled([fetchDDragonVersion(), fetchDDProfileIcons()])
-      .then(([versionResult, iconsResult]) => {
-        if (cancelled) return;
-        if (versionResult.status === 'fulfilled') setDDVersion(versionResult.value.version);
-        if (iconsResult.status === 'fulfilled') {
-          const icons = Object.values(iconsResult.value.data || {})
-            .filter((icon) => Number.isFinite(icon.id) && icon.id >= 0)
-            .map((icon) => ({ ...icon, name: icon.name || `Profile icon ${icon.id}` }))
-            .sort((a, b) => b.id - a.id);
-          setProfileIcons(icons);
-          setIconLimit(72);
-          setFailedIconImages(new Set());
-          if (icons.length === 0) setIconsError('No profile icons were returned by Data Dragon.');
-        } else {
-          setProfileIcons([]);
-          setIconsError('The profile icon catalogue could not be loaded.');
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setProfileIcons([]);
-          setIconsError('The profile icon catalogue could not be loaded.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIconsLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [iconReloadKey]);
-
-  useEffect(() => {
-    if (!connected) return;
-    let cancelled = false;
-    fetchLCUProfileIconMetadata()
-      .then((metadata) => {
-        if (cancelled) return;
-        setProfileIcons((current) => {
-          const byID = new Map(current.map((icon) => [icon.id, icon]));
-          metadata.forEach((metadataIcon) => {
-            const id = Number(metadataIcon.id);
-            if (!Number.isFinite(id) || id < 0) return;
-            const title = String(metadataIcon.title || '').trim();
-            const existing = byID.get(id);
-            byID.set(id, {
-              ...(existing || {
-                id,
-                image: { full: '', sprite: '', group: 'profileicon' },
-              }),
-              name: title || existing?.name || `Profile icon ${id}`,
-              lcuImagePath: metadataIcon.imagePath || existing?.lcuImagePath,
-            });
-          });
-          return Array.from(byID.values()).sort((a, b) => b.id - a.id);
-        });
-      })
-      .catch(() => {
-        // Data Dragon remains the catalogue fallback when the LCU metadata is unavailable.
-      });
-    return () => { cancelled = true; };
-  }, [connected, iconReloadKey]);
-
-  useEffect(() => {
     fetchQueuePresets()
       .then((data) => {
         setQueuePresets(data.presets || {});
@@ -354,49 +307,6 @@ export default function QoLPanel() {
       })
       .catch(() => {});
   }, []);
-
-  const loadChampions = useCallback(async () => {
-    if (!connected || catalogueLoading) return;
-    setCatalogueLoading(true);
-    setCatalogueError('');
-    try {
-      const data = await fetchLCUBackgroundChampions();
-      const values = (Array.isArray(data) ? data : Object.values(data || {}))
-        .map((champion: any) => ({ id: Number(champion.id), name: String(champion.name || `Champion ${champion.id}`) }))
-        .filter((champion: BackgroundChampion) => champion.id > 0)
-        .sort((a: BackgroundChampion, b: BackgroundChampion) => a.name.localeCompare(b.name));
-      setChampions(values);
-    } catch (error: any) {
-      setCatalogueError(error.message || 'Champion catalogue is not available yet.');
-    } finally {
-      setCatalogueLoading(false);
-    }
-  }, [catalogueLoading, connected]);
-
-  useEffect(() => {
-    if (connected && champions.length === 0 && !catalogueError) void loadChampions();
-  }, [connected, champions.length, catalogueError, loadChampions]);
-
-  useEffect(() => {
-    if (!selectedChampion) {
-      setSkins([]);
-      return;
-    }
-    let cancelled = false;
-    setCatalogueLoading(true);
-    fetchLCUBackgroundSkins(selectedChampion)
-      .then((data) => {
-        if (cancelled) return;
-        const values = (Array.isArray(data) ? data : Object.values(data || {}))
-          .map((skin: any) => ({ id: Number(skin.id), name: String(skin.name || `Skin ${skin.id}`) }))
-          .filter((skin: BackgroundSkin) => skin.id > 0)
-          .sort((a: BackgroundSkin, b: BackgroundSkin) => a.name.localeCompare(b.name));
-        setSkins(values);
-      })
-      .catch((error) => !cancelled && setCatalogueError(error.message || 'Could not load skins.'))
-      .finally(() => !cancelled && setCatalogueLoading(false));
-    return () => { cancelled = true; };
-  }, [selectedChampion]);
 
   const runAction = useCallback(async (
     key: string,
@@ -427,25 +337,6 @@ export default function QoLPanel() {
     }
   };
 
-  const visibleIcons = useMemo(() => {
-    const query = iconSearch.trim().toLowerCase();
-    return profileIcons
-      .filter((icon) => !query || String(icon.id).includes(query) || icon.name?.toLowerCase().includes(query))
-      .slice(0, iconLimit);
-  }, [iconLimit, iconSearch, profileIcons]);
-
-  const iconImageURL = (icon: DDProfileIcon) => {
-    if (failedIconImages.has(icon.id)) {
-      return `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/profile-icons/${icon.id}.jpg`;
-    }
-    if (icon.lcuImagePath && icon.lcuImagePath.startsWith('/lol-game-data/')) {
-      return icon.lcuImagePath;
-    }
-    return ddVersion
-      ? ddProfileIcon(ddVersion, icon.id)
-      : `https://ddragon.leagueoflegends.com/cdn/img/profileicon/${icon.id}.png`;
-  };
-
   const loadHonorBallot = () => runAction('honor-load', 'Honor ballot loaded.', async () => {
     const response = await fetch('/api/lcu/honor-ballot');
     if (!response.ok) throw new Error(await readError(response, 'Honor is not available right now.'));
@@ -467,6 +358,36 @@ export default function QoLPanel() {
   const readyCheck = phase === 'ReadyCheck';
   const inChampSelect = phase === 'ChampSelect';
   const postGame = phase === 'EndOfGame' || phase === 'PreEndOfGame' || phase === 'WaitingForStats';
+  const customSession = Boolean(state?.isCustom || state?.queueId === 3140);
+  const customQuitAvailable = customSession && ['Lobby', 'Matchmaking', 'ChampSelect', 'GameStart', 'Loading', 'InProgress', 'Reconnect'].includes(phase);
+  const automationCount = [preferences.autoAccept, preferences.autoPlayAgain, preferences.autoHonor, preferences.autoStartQueue, preferences.autoClaimRewards].filter(Boolean).length;
+  const nextMove = !connected
+    ? 'Launch League Client to reconnect the control deck.'
+    : readyCheck
+      ? 'A ready check is waiting for your response.'
+      : inChampSelect
+        ? 'Champion Select is live — review your pick, ban, and loadout.'
+        : postGame
+          ? 'The match is finished — honor a player or return to the lobby.'
+          : inLobby
+            ? 'Lobby ready — set roles or start matchmaking.'
+            : inQueue
+              ? 'Matchmaking is running — RiftOps is watching the queue.'
+              : 'League Client is connected and standing by.';
+
+  const primaryAction = !connected
+    ? { label: 'Reconnect to League', detail: 'The control deck will unlock as soon as the local client is ready.', tone: 'neutral', action: () => void refreshState(true) }
+    : readyCheck
+      ? { label: 'Accept ready check', detail: 'A match is waiting for your response.', tone: 'success', action: () => void runAction('accept', 'Ready check accepted.', lcuAutoAccept) }
+      : inLobby
+        ? { label: 'Start matchmaking', detail: `${firstRole} primary · ${secondRole} secondary`, tone: 'gold', action: () => void runAction('queue-start', 'Matchmaking started.', lcuAutoRequeue) }
+        : inQueue
+          ? { label: 'Stop matchmaking', detail: 'Cancel the active search and return to the lobby.', tone: 'neutral', action: () => void runAction('queue-stop', 'Matchmaking stopped.', lcuStopQueue) }
+          : inChampSelect
+            ? { label: 'Open champion select', detail: 'Review picks, bans, loadout, and dodge controls.', tone: 'rose', action: () => document.getElementById('qol-champ-select')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
+            : postGame
+              ? { label: 'Return to lobby', detail: 'Play again, honor a teammate, or claim rewards.', tone: 'gold', action: () => void runAction('play-again', 'Returning to lobby.', () => post('/api/lcu/play-again')) }
+              : { label: 'Refresh League state', detail: 'Read the latest client phase and queue status.', tone: 'neutral', action: () => void refreshState(true) };
 
   return (
     <div className="qol-page">
@@ -514,8 +435,33 @@ export default function QoLPanel() {
         </div>
       )}
 
+      <section className="qol-command-deck" aria-label="Live League client summary">
+        <div className="qol-command-deck__lead">
+          <span className={`qol-command-deck__signal ${connected ? 'is-live' : ''}`}><span />{connected ? 'LIVE CLIENT SNAPSHOT' : 'CLIENT OFFLINE'}</span>
+          <strong>{nextMove}</strong>
+          <small>Actions stay phase-aware and are sent directly to the local League Client.</small>
+        </div>
+        <div className="qol-command-deck__metrics">
+          <div><span>PHASE</span><strong>{phase}</strong><small>{connected ? 'LCU detected' : 'Waiting for LCU'}</small></div>
+          <div><span>QUEUE</span><strong>{state?.queueState || (connected ? 'Idle' : '—')}</strong><small>{inQueue ? 'Searching now' : 'Current search state'}</small></div>
+          <div><span>AUTOMATION</span><strong>{automationCount}/5</strong><small>{automationCount ? 'Rules active' : 'No rules enabled'}</small></div>
+        </div>
+      </section>
+
+      <section className={`qol-priority-bar qol-priority-bar--${primaryAction.tone}`} aria-label="Recommended next action">
+        <div className="qol-priority-bar__signal"><span />NEXT ACTION</div>
+        <div className="qol-priority-bar__copy"><strong>{primaryAction.label}</strong><small>{primaryAction.detail}</small></div>
+        <button type="button" onClick={primaryAction.action} disabled={activeAction !== ''} className="qol-priority-bar__button">
+          {activeAction === 'accept' || activeAction === 'queue-start' || activeAction === 'queue-stop' || activeAction === 'play-again' ? <Loader2 className="animate-spin" /> : <ChevronRight />}
+          <span>{primaryAction.label}</span>
+        </button>
+      </section>
+
+      <SectionRail phase={phase} connected={connected} automationCount={automationCount} />
+
       <div className="qol-grid">
         <Panel
+          id="qol-automation"
           icon={BellRing}
           eyebrow="AUTOMATION"
           title="Set it once"
@@ -569,6 +515,7 @@ export default function QoLPanel() {
         </Panel>
 
         <Panel
+          id="qol-queue"
           icon={Activity}
           eyebrow="LIVE ACTION"
           title="Queue command"
@@ -664,9 +611,10 @@ export default function QoLPanel() {
           </div>
         </Panel>
 
-        <FriendsPanel connected={connected} />
+        <FriendsPanel id="qol-social" connected={connected} />
 
         <Panel
+          id="qol-social-presence"
           icon={MessageSquareText}
           eyebrow="SOCIAL"
           title="Presence and profile message"
@@ -726,156 +674,60 @@ export default function QoLPanel() {
         </Panel>
 
         <Panel
-          icon={Image}
-          eyebrow="PROFILE STUDIO"
-          title="Background skin"
-          description="Choose any champion skin exposed by your local League client."
-          accent="violet"
-        >
-          <div className="qol-inline-form qol-inline-form--profile">
-            <select
-              value={selectedChampion ?? ''}
-              disabled={!connected || catalogueLoading}
-              onChange={(event) => {
-                setSelectedChampion(Number(event.target.value) || null);
-                setSelectedSkin(null);
-                setCatalogueError('');
-              }}
-            >
-              <option value="">{catalogueLoading && champions.length === 0 ? 'Loading champions...' : 'Choose champion'}</option>
-              {champions.map((champion) => <option key={champion.id} value={champion.id}>{champion.name}</option>)}
-            </select>
-            <select
-              value={selectedSkin ?? ''}
-              disabled={!selectedChampion || catalogueLoading}
-              onChange={(event) => setSelectedSkin(Number(event.target.value) || null)}
-            >
-              <option value="">{catalogueLoading && selectedChampion ? 'Loading skins...' : 'Choose skin'}</option>
-              {skins.map((skin) => <option key={skin.id} value={skin.id}>{skin.name}</option>)}
-            </select>
-            <ActionButton
-              icon={Sparkles}
-              disabled={!selectedSkin}
-              loading={activeAction === 'background'}
-              onClick={() => void runAction('background', 'Profile background updated.', () =>
-                post('/api/lcu/profile-background', { skinId: selectedSkin }),
-              )}
-            >
-              Apply
-            </ActionButton>
-          </div>
-          {catalogueError && (
-            <button type="button" className="qol-retry" onClick={() => void loadChampions()}>
-              {catalogueError} Retry
-            </button>
-          )}
-          {state?.backgroundSkinId ? <p className="qol-current-value">Current background skin ID: {state.backgroundSkinId}</p> : null}
-        </Panel>
-
-        <Panel
-          icon={UserRound}
-          eyebrow="PROFILE STUDIO"
-          title="Profile icon library"
-          description="Search and apply an icon visually—no more guessing numeric IDs."
-          accent="violet"
-          className="qol-panel--wide"
-        >
-          <div className="qol-search">
-            <Search />
-            <input
-              value={iconSearch}
-              onChange={(event) => setIconSearch(event.target.value)}
-              placeholder="Search by icon name or ID"
-              aria-label="Search profile icons"
-            />
-            <span>{profileIcons.length ? `${visibleIcons.length} of ${profileIcons.length}` : '—'}</span>
-          </div>
-          {iconsLoading && <div className="qol-library-state"><Loader2 className="animate-spin" /><span>Loading the icon library…</span></div>}
-          {!iconsLoading && iconsError && (
-            <div className="qol-library-state qol-library-state--error">
-              <XCircle />
-              <span>{iconsError}</span>
-              <button type="button" onClick={() => setIconReloadKey((key) => key + 1)}>Retry</button>
-            </div>
-          )}
-          {!iconsLoading && !iconsError && (
-            <>
-              <div className="qol-icon-grid">
-                {visibleIcons.map((icon) => (
-                  <button
-                    type="button"
-                    key={icon.id}
-                    title={`${icon.name || `Profile icon ${icon.id}`} (#${icon.id})`}
-                    aria-label={`Apply ${icon.name || `profile icon ${icon.id}`}`}
-                    className={state?.profileIconId === icon.id ? 'is-current' : ''}
-                    disabled={!connected || activeAction === `icon-${icon.id}`}
-                    onClick={() => void runAction(`icon-${icon.id}`, 'Profile icon applied.', () =>
-                      post('/api/lcu/profile-icon', { iconId: icon.id }),
-                    )}
-                  >
-                    <img
-                      src={iconImageURL(icon)}
-                      alt={icon.name || `Profile icon ${icon.id}`}
-                      loading="lazy"
-                      onError={(event) => {
-                        if (!failedIconImages.has(icon.id)) {
-                          setFailedIconImages((current) => new Set(current).add(icon.id));
-                          return;
-                        }
-                        event.currentTarget.style.opacity = '0';
-                      }}
-                    />
-                    {activeAction === `icon-${icon.id}` && <Loader2 className="animate-spin" />}
-                    <span>{icon.name || `Profile icon ${icon.id}`} · #{icon.id}</span>
-                  </button>
-                ))}
-              </div>
-              {visibleIcons.length < profileIcons.length && (
-                <button type="button" className="qol-library-more" onClick={() => setIconLimit((limit) => limit + 72)}>
-                  Load more icons <ChevronDown />
-                </button>
-              )}
-            </>
-          )}
-        </Panel>
-
-        <Panel
+          id="qol-champion-dodge"
           icon={Swords}
           eyebrow="CHAMPION SELECT"
-          title="Dodge control"
-          description="This action is unlocked only while League reports an active champion select."
+          title={customSession ? 'Custom / Practice exit' : 'Dodge control'}
+          description={customSession ? 'Leave a custom or Practice Tool session using its dedicated LCU action.' : 'This action is unlocked only while League reports an active champion select.'}
           accent="rose"
         >
           <div className="qol-danger-box">
-            <div>
-              <strong>Leave champion select</strong>
-              <span>Riot applies the current queue and LP penalties. RiftOps never bypasses them.</span>
-            </div>
-            <ActionButton
-              icon={CircleStop}
-              tone="danger"
-              disabled={!inChampSelect}
-              loading={activeAction === 'dodge'}
-              onClick={() => setConfirmAction({
-                open: true,
-                title: 'Dodge this champion select?',
-                message: 'League will apply its current dodge penalties. This cannot be undone.',
-                actionLabel: 'Dodge game',
-                danger: true,
-                onConfirm: () => {
-                  setConfirmAction(null);
-                  void runAction('dodge', 'Dodge request accepted by League.', () => post('/api/lcu/dodge'));
-                },
-              })}
-            >
-              Dodge game
-            </ActionButton>
+            {customSession ? <>
+              <div>
+                <strong>Quit custom / Practice Tool</strong>
+                <span>Leaves the custom session without sending a normal matchmade dodge.</span>
+              </div>
+              <ActionButton
+                icon={CircleStop}
+                tone="danger"
+                disabled={!customQuitAvailable}
+                loading={activeAction === 'quit-custom'}
+                onClick={() => void runAction('quit-custom', 'Custom/practice session closed.', lcuQuitCustomSession)}
+              >
+                Quit custom game
+              </ActionButton>
+            </> : <>
+              <div>
+                <strong>Leave champion select</strong>
+                <span>Riot applies the current queue and LP penalties. RiftOps never bypasses them.</span>
+              </div>
+              <ActionButton
+                icon={CircleStop}
+                tone="danger"
+                disabled={!inChampSelect}
+                loading={activeAction === 'dodge'}
+                onClick={() => setConfirmAction({
+                  open: true,
+                  title: 'Dodge this champion select?',
+                  message: 'League will apply its current dodge penalties. This cannot be undone.',
+                  actionLabel: 'Dodge game',
+                  danger: true,
+                  onConfirm: () => {
+                    setConfirmAction(null);
+                    void runAction('dodge', 'Dodge request accepted by League.', () => post('/api/lcu/dodge'));
+                  },
+                })}
+              >
+                Dodge game
+              </ActionButton>
+            </>}
           </div>
         </Panel>
 
-        <ChampSelectWorkspace connected={connected} active={inChampSelect} />
+        <div id="qol-champ-select" className="qol-anchor-wrap"><ChampSelectWorkspace connected={connected} active={inChampSelect} onToast={(message, type) => showToast(message, type !== 'error')} /></div>
 
         <Panel
+          id="qol-post-game"
           icon={Clock3}
           eyebrow="POST GAME"
           title="Finish the loop"

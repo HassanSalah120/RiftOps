@@ -150,6 +150,55 @@ export async function quitApp(): Promise<void> {
   await fetch('/api/quit', { method: 'POST' });
 }
 
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  remote?: boolean;
+  client?: 'desktop' | 'phone';
+  capabilities?: string[];
+  pairingAvailable?: boolean;
+  url?: string;
+  displayUrl?: string;
+  port?: number;
+  expiresAt?: string;
+  sessionExpiresInSeconds?: number;
+  sessions?: Array<{ id: string; device: string; createdAt: string; lastSeen: string; expiresAt: string }>;
+}
+
+export async function fetchRemoteAccessStatus(): Promise<RemoteAccessStatus> {
+  const response = await fetch('/api/remote/status', { cache: 'no-store' });
+  if (!response.ok) throw new Error((await response.text()).trim() || 'Phone control is unavailable');
+  return response.json();
+}
+
+export async function rotateRemoteAccess(): Promise<RemoteAccessStatus> {
+  const response = await fetch('/api/remote/rotate', { method: 'POST', cache: 'no-store' });
+  if (!response.ok) throw new Error((await response.text()).trim() || 'Could not regenerate pairing access');
+  return response.json();
+}
+
+export async function setRemoteAccessEnabled(enabled: boolean): Promise<RemoteAccessStatus> {
+  const response = await fetch('/api/remote/enable', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error((await response.text()).trim() || 'Could not change phone access');
+  return response.json();
+}
+
+export async function revokeRemoteSession(id: string): Promise<RemoteAccessStatus> {
+  const response = await fetch('/api/remote/sessions/revoke', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }), cache: 'no-store' });
+  if (!response.ok) throw new Error((await response.text()).trim() || 'Could not revoke phone session');
+  return response.json();
+}
+
+export async function revokeAllRemoteSessions(): Promise<RemoteAccessStatus> {
+  const response = await fetch('/api/remote/sessions/revoke-all', { method: 'POST', cache: 'no-store' });
+  if (!response.ok) throw new Error((await response.text()).trim() || 'Could not revoke phone sessions');
+  return response.json();
+}
+
 export async function getAutostart(): Promise<{ enabled: boolean }> {
   const res = await fetch('/api/autostart');
   if (!res.ok) throw new Error('Failed to get autostart status');
@@ -313,6 +362,24 @@ export function fetchLCUProfileIconMetadata(): Promise<LCUProfileIconMetadata[]>
   return fetchCachedJSON<unknown>('/api/lcu/profile-icons', 6 * 60 * 60 * 1000).then((data) => Array.isArray(data) ? data as LCUProfileIconMetadata[] : []);
 }
 
+export interface LCUProfileIconInventory {
+  iconIds: number[];
+  complete: boolean;
+  source: string;
+}
+
+export function fetchLCUOwnedProfileIcons(): Promise<LCUProfileIconInventory> {
+  return fetch('/api/lcu/profile-icons/owned', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Profile icon ownership is unavailable');
+    const body = await response.json() as Partial<LCUProfileIconInventory>;
+    return {
+      iconIds: Array.isArray(body.iconIds) ? body.iconIds.filter((id) => Number.isInteger(id) && id > 0) : [],
+      complete: body.complete === true,
+      source: String(body.source || ''),
+    };
+  });
+}
+
 export const DDBASE = 'https://ddragon.leagueoflegends.com';
 export function ddChampionIcon(version: string, champId: string) { return `${DDBASE}/cdn/${version}/img/champion/${champId}.png`; }
 export function ddChampionSplash(champId: string) { return `${DDBASE}/cdn/img/champion/splash/${champId}_0.jpg`; }
@@ -387,8 +454,8 @@ export function launchLCULeague(): Promise<{ launched: boolean }> {
   });
 }
 
-export function fetchLCUMatchHistory(): Promise<any> {
-  return fetch('/api/lcu/match-history').then((r) => {
+export function fetchLCUMatchHistory(begin = 0, end = begin + 50): Promise<any> {
+  return fetch(`/api/lcu/match-history?begin=${encodeURIComponent(begin)}&end=${encodeURIComponent(end)}`).then((r) => {
     if (!r.ok) throw new Error('Failed to fetch match history');
     return r.json();
   });
@@ -416,6 +483,13 @@ export function lcuAutoAccept(): Promise<{ accepted: boolean }> {
   });
 }
 
+export function lcuDeclineReady(): Promise<{ declined: boolean }> {
+  return fetch('/api/lcu/decline-ready', { method: 'POST' }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Ready check decline failed');
+    return r.json();
+  });
+}
+
 export function lcuAutoRequeue(): Promise<{ requeued: boolean }> {
   return fetch('/api/lcu/auto-requeue', { method: 'POST' }).then((r) => {
     if (!r.ok) throw new Error('Failed to requeue');
@@ -426,6 +500,20 @@ export function lcuAutoRequeue(): Promise<{ requeued: boolean }> {
 export function lcuStopQueue(): Promise<{ stopped: boolean }> {
   return fetch('/api/lcu/stop-queue', { method: 'POST' }).then(async (r) => {
     if (!r.ok) throw new Error((await r.text()) || 'Failed to stop matchmaking');
+    return r.json();
+  });
+}
+
+export function lcuQuitCustomSession(): Promise<{ quit: boolean }> {
+  return fetch('/api/lcu/quit-custom', { method: 'POST' }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Could not leave the custom or practice game');
+    return r.json();
+  });
+}
+
+export function lcuCustomStart(): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/custom-start', { method: 'POST' }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Failed to start custom game');
     return r.json();
   });
 }
@@ -449,16 +537,43 @@ export function lcuAutoRoles(first: string, second: string): Promise<{ ok: boole
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ first, second }),
-  }).then((r) => {
-    if (!r.ok) throw new Error('Failed to set role preferences');
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'Failed to set role preferences');
     return r.json();
   });
 }
 
 export function fetchLCULoot(): Promise<any> {
-  return fetch('/api/lcu/loot').then((r) => {
-    if (!r.ok) return [];
+  return fetch('/api/lcu/loot').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'League loot inventory is unavailable');
     return r.json();
+  });
+}
+
+export function fetchLCUWallet(): Promise<Record<string, number>> {
+  return fetch('/api/lcu/wallet').then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League wallet is unavailable');
+    return response.json();
+  });
+}
+
+export function fetchLCULootRecipes(lootId: string): Promise<any[]> {
+  return fetch(`/api/lcu/loot/recipes?lootId=${encodeURIComponent(lootId)}`).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Crafting recipes are unavailable');
+    const body = await response.json();
+    return Array.isArray(body) ? body : [];
+  });
+}
+
+export function craftLCULootRecipe(recipeName: string, lootIds: string[], repeat = 1): Promise<any> {
+  return fetch('/api/lcu/loot/craft', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipeName, lootIds, repeat }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the crafting action');
+    const contentType = response.headers.get('content-type') || '';
+    return contentType.includes('application/json') ? response.json() : null;
   });
 }
 
@@ -532,16 +647,34 @@ export interface QoLState {
   firstRole: string;
   secondRole: string;
   backgroundSkinId: number;
+  readyCheck?: Record<string, unknown>;
+  queueId?: number;
+  isCustom?: boolean;
+}
+
+/** Optional payload returned by the LCU gameflow session endpoint. Riot does
+ * not keep this shape stable across client versions, so fields are treated as
+ * best-effort and the UI only renders values that are present. */
+export interface LCUGameflowSession {
+  gameData?: Record<string, unknown>;
+  gameClient?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface LCUOverview {
   status: LCUStatus;
   health: LCUHealth;
   qol?: QoLState | null;
+  gameflowSession?: LCUGameflowSession;
+  gameflowSessionAvailable?: boolean;
 }
 
 export function fetchLCUOverview(signal?: AbortSignal): Promise<LCUOverview> {
-  return fetch('/api/lcu/overview', { signal }).then(async (response) => {
+  return fetch('/api/lcu/overview', {
+    signal,
+    cache: 'no-store',
+    headers: { 'Cache-Control': 'no-cache' },
+  }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()) || 'League Client overview is unavailable');
     return response.json();
   });
@@ -572,11 +705,223 @@ export function fetchQoLState(): Promise<QoLState> {
   });
 }
 
+export function setLCUAvailability(availability: string): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/availability', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ availability }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League presence is unavailable');
+    return response.json();
+  });
+}
+
+export function setLCUStatusMessage(message: string): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/status-message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League status message is unavailable');
+    return response.json();
+  });
+}
+
+export function fetchGameflowPhase(): Promise<string> {
+  return fetch('/api/lcu/gameflow-phase').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'Gameflow phase is unavailable');
+    const value = await r.json();
+    return String((value as { phase?: string }).phase || '');
+  });
+}
+
+export interface LCUAvailableQueue {
+  id: number;
+  name: string;
+  gameMode?: string;
+  category?: string;
+  mapId?: number;
+}
+
+export function fetchLCUAvailableQueues(): Promise<LCUAvailableQueue[]> {
+  return fetch('/api/lcu/available-queues').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'Game modes are unavailable');
+    const value = await r.json();
+    return Array.isArray(value) ? value : [];
+  });
+}
+
+export interface LCULobby {
+  canStartActivity?: boolean;
+  gameConfig?: { queueId?: number; mapId?: number; gameMode?: string; isCustom?: boolean };
+  localMember?: { isLeader?: boolean; allowedStartActivity?: boolean };
+  phase?: string;
+}
+
+export function fetchLCULobby(): Promise<LCULobby | null> {
+  return fetch('/api/lcu/lobby').then(async (r) => {
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error('Lobby is unavailable');
+    return r.json() as Promise<LCULobby>;
+  });
+}
+
+export function createLCULobby(queueId: number, meta?: { category?: string; gameMode?: string; queueName?: string; mapId?: number }): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/create-lobby', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queueId, category: meta?.category, gameMode: meta?.gameMode, queueName: meta?.queueName, mapId: meta?.mapId }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'League rejected the new lobby');
+    return r.json();
+  });
+}
+
+export function createCustomLobby(queue: { id: number; category?: string; gameMode?: string; name?: string; mapId?: number }): Promise<{ ok: boolean }> {
+  return createLCULobby(queue.id, { category: queue.category, gameMode: queue.gameMode, queueName: queue.name, mapId: queue.mapId });
+}
+
+export function createPracticeToolLobby(): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/create-lobby', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ practiceTool: true }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'League rejected the Practice Tool lobby');
+    return r.json();
+  });
+}
+
 export function fetchLCUChampSelect(): Promise<unknown> {
   return fetch('/api/lcu/champ-select').then(async (r) => {
     if (!r.ok) throw new Error((await r.text()) || 'Champion Select is not active');
     return r.json();
   });
+}
+
+async function champSelectMutation<T = { ok: boolean }>(path: string, method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the champion-select action');
+  return response.json() as Promise<T>;
+}
+
+export function fetchLCUChampSelectPickable(): Promise<number[]> {
+  return fetch('/api/lcu/champ-select/pickable').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Pickable champions are unavailable');
+    return r.json();
+  });
+}
+
+export function fetchLCUChampSelectBannable(): Promise<number[]> {
+  return fetch('/api/lcu/champ-select/bannable').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Bannable champions are unavailable');
+    return r.json();
+  });
+}
+
+export function fetchLCUChampSelectSkins(): Promise<any[]> {
+  return fetch('/api/lcu/champ-select/skins').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Champion-select skins are unavailable');
+    const value = await r.json();
+    return Array.isArray(value) ? value : [];
+  });
+}
+
+export function submitLCUChampSelectAction(actionId: number, championId: number, completed = false): Promise<{ ok: boolean; completed: boolean }> {
+  return champSelectMutation('/api/lcu/champ-select/action', 'POST', { actionId, championId, completed });
+}
+
+export function updateLCUChampSelectSelection(selection: { spell1Id?: number; spell2Id?: number; selectedSkinId?: number }): Promise<{ ok: boolean }> {
+  return champSelectMutation('/api/lcu/champ-select/selection', 'PATCH', selection);
+}
+
+export function rerollLCUChampSelect(): Promise<{ ok: boolean }> {
+  return champSelectMutation('/api/lcu/champ-select/reroll', 'POST');
+}
+
+export function swapLCUChampSelectBench(championId: number): Promise<{ ok: boolean }> {
+  return champSelectMutation('/api/lcu/champ-select/bench/swap', 'POST', { championId });
+}
+
+export interface LCURunePage {
+  id: number;
+  name: string;
+  isEditable?: boolean;
+  isActive?: boolean;
+  current?: boolean;
+  isTemporary?: boolean;
+  order?: number;
+  primaryStyleId: number;
+  subStyleId: number;
+  selectedPerkIds: number[];
+}
+
+export interface LCURunePerk {
+  id: number;
+  name: string;
+  shortDesc?: string;
+  longDesc?: string;
+  iconPath?: string;
+  styleId?: number;
+  slotType?: string;
+}
+
+export interface LCURuneSlot {
+  type: string;
+  slotLabel?: string;
+  perks: number[];
+}
+
+export interface LCURuneStyle {
+  id: number;
+  name: string;
+  iconPath?: string;
+  allowedSubStyles?: number[];
+  slots: LCURuneSlot[];
+}
+
+export interface LCURuneCatalog {
+  perks: LCURunePerk[];
+  styles: { styles: LCURuneStyle[] };
+}
+
+export function fetchLCURunePages(): Promise<LCURunePage[]> {
+  return fetch('/api/lcu/champ-select/runes').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Rune pages are unavailable');
+    const value = await r.json();
+    return Array.isArray(value) ? value as LCURunePage[] : [];
+  });
+}
+
+export function fetchLCURuneCatalog(): Promise<LCURuneCatalog> {
+  return fetch('/api/lcu/champ-select/runes/catalog').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || 'Rune catalogue is unavailable');
+    const value = await r.json() as Partial<LCURuneCatalog>;
+    return {
+      perks: Array.isArray(value.perks) ? value.perks : [],
+      styles: value.styles && Array.isArray(value.styles.styles) ? value.styles : { styles: [] },
+    };
+  });
+}
+
+export function selectLCURunePage(pageId: number): Promise<{ ok: boolean }> {
+  return champSelectMutation('/api/lcu/champ-select/runes/select', 'POST', { pageId });
+}
+
+export function createLCURunePage(page: Partial<LCURunePage>): Promise<LCURunePage> {
+  return champSelectMutation<LCURunePage>('/api/lcu/champ-select/runes/page', 'POST', page);
+}
+
+export function updateLCURunePage(page: Pick<LCURunePage, 'id' | 'name' | 'primaryStyleId' | 'subStyleId' | 'selectedPerkIds'>): Promise<{ ok: boolean }> {
+  return champSelectMutation('/api/lcu/champ-select/runes/page', 'PUT', page);
+}
+
+export function deleteLCURunePage(pageId: number): Promise<{ ok: boolean }> {
+  return champSelectMutation('/api/lcu/champ-select/runes/page', 'DELETE', { id: pageId });
 }
 
 export function fetchLCUFriends(): Promise<unknown> {

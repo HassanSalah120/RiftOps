@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const DefaultLatestReleaseURL = "https://api.github.com/repos/HassanSalah120/RiftOps/releases/latest"
+
+const maxReleaseResponseBytes = 1 << 20
 
 type Release struct {
 	Version string
@@ -51,11 +55,22 @@ func (c Checker) Latest(ctx context.Context) (Release, error) {
 		URL  string `json:"html_url"`
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxReleaseResponseBytes+1))
+	if err != nil {
+		return Release{}, err
+	}
+	if len(body) > maxReleaseResponseBytes {
+		return Release{}, fmt.Errorf("release response exceeded %d bytes", maxReleaseResponseBytes)
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return Release{}, err
 	}
 	if _, err := parseVersion(payload.Tag); err != nil {
 		return Release{}, err
+	}
+	parsedURL, err := url.Parse(payload.URL)
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Hostname() == "" || parsedURL.User != nil {
+		return Release{}, fmt.Errorf("release service returned an unsafe download page")
 	}
 	return Release{Version: payload.Tag, URL: payload.URL, Name: payload.Name}, nil
 }

@@ -1,0 +1,74 @@
+name: Build Windows release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag to receive the Windows executable (for example v2.6.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package-windows:
+    runs-on: windows-2025
+    timeout-minutes: 35
+
+    steps:
+      - name: Choose release tag
+        id: release
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name || inputs.tag }}"
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "version=$($tag.TrimStart('v'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cmd/riftops-ui/frontend/package-lock.json
+
+      - name: Install MinGW and Fyne packaging CLI
+        shell: pwsh
+        run: |
+          choco install mingw --no-progress -y
+          go install fyne.io/tools/cmd/fyne@v1.7.2
+
+      - name: Build and verify Windows executable
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Version "${{ steps.release.outputs.version }}" -Build ${{ github.run_number }}
+
+      - name: Preserve Windows release files as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RiftOps-Windows-${{ steps.release.outputs.tag }}
+          path: |
+            dist/RiftOps-windows-amd64*.exe
+            dist/RiftOps-windows-amd64*.exe.sha256
+          if-no-files-found: error
+
+      - name: Attach Windows files to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [string[]]$assets = Get-ChildItem -Path "dist/RiftOps-windows-amd64*.exe", "dist/RiftOps-windows-amd64*.exe.sha256" | ForEach-Object FullName
+          if ($assets.Count -eq 0) { throw "No Windows release assets were produced." }
+          gh release upload "${{ steps.release.outputs.tag }}" @assets --clobber --repo "${{ github.repository }}"

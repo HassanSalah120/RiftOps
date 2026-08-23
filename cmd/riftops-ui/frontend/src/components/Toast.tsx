@@ -5,8 +5,11 @@ export default function Toast({ notification, onClose }: { notification: Notific
   if (!notification) return null;
   return (
     <div
-      className="fixed bottom-4 right-4 left-4 z-50 glass rounded-2xl p-3.5 shadow-2xl animate-[fadeIn_0.2s_ease-out] cursor-pointer"
+      className="riftops-toast glass rounded-2xl p-3.5 shadow-2xl cursor-pointer"
       onClick={onClose}
+      role={notification.type === 'error' ? 'alert' : 'status'}
+      aria-live={notification.type === 'error' ? 'assertive' : 'polite'}
+      aria-atomic="true"
     >
       <div className="flex items-start gap-2.5">
         {notification.type === 'success' && <CheckCircle2 className="w-4 h-4 text-success shrink-0 mt-0.5" />}
@@ -19,6 +22,7 @@ export default function Toast({ notification, onClose }: { notification: Notific
         <button
           onClick={(e) => { e.stopPropagation(); onClose?.(); }}
           className="p-1 rounded-lg hover:bg-white/[0.06] text-text-dim hover:text-white transition shrink-0 cursor-pointer"
+          aria-label="Dismiss notification"
         >
           <X className="w-3.5 h-3.5" />
         </button>

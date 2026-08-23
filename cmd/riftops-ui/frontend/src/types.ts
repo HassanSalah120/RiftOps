@@ -43,7 +43,7 @@ export interface Release {
   url: string;
 }
 
-export type Tab = 'dashboard' | 'settings' | 'riot' | 'history' | 'skins' | 'loot' | 'qol';
+export type Tab = 'dashboard' | 'play' | 'live' | 'history' | 'skins' | 'loot' | 'qol' | 'remote' | 'settings';
 
 /** Go-compatible game codes — these are what ParseGame() accepts */
 export const GAMES = [

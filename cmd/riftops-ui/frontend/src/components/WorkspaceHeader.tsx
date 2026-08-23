@@ -1,13 +1,15 @@
-import { Bell, Command, Search, ShieldCheck, Zap } from 'lucide-react';
+import { Bell, Command, Search, ShieldCheck } from 'lucide-react';
 import type { Tab } from '../types';
 
 const TAB_LABELS: Record<Tab, string> = {
   dashboard: 'Command Center',
+  play: 'Play Flow',
+  live: 'Live Session',
   qol: 'League QoL',
   history: 'Match History',
   skins: 'Skin Collection',
-  loot: 'Loot & Collection',
-  riot: 'Riot Account',
+  loot: 'Loot Workshop',
+  remote: 'Remote Access',
   settings: 'Settings',
 };
 
@@ -31,7 +33,7 @@ export default function WorkspaceHeader({
     <header className="workspace-header">
       <div className="workspace-header__crumbs">
         <span className="workspace-header__mark"><ShieldCheck /></span>
-        <span className="workspace-header__slash">RIFT / OPS</span>
+        <span className="workspace-header__slash">RIFTOPS</span>
         <span className="workspace-header__divider">/</span>
         <strong>{TAB_LABELS[activeTab]}</strong>
         {detail && <span className="workspace-header__detail">{detail}</span>}
@@ -45,7 +47,7 @@ export default function WorkspaceHeader({
           <Bell />
           {unreadNotifications > 0 && <span>{unreadNotifications > 9 ? '9+' : unreadNotifications}</span>}
         </button>
-        <span className="workspace-header__pulse" title="RiftOps is ready"><Zap /></span>
+        <span className="workspace-header__system"><i />SYSTEM READY</span>
       </div>
     </header>
   );

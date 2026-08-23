@@ -12,6 +12,8 @@ export interface LCUConnectionSnapshot {
   status: import('../api').LCUStatus | null;
   health: import('../api').LCUHealth | null;
   qol: import('../api').QoLState | null;
+  gameflowSession: import('../api').LCUGameflowSession | null;
+  gameflowSessionAvailable: boolean | null;
   connected: boolean;
   leagueReady: boolean;
   loading: boolean;

@@ -11,13 +11,17 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/systray"
@@ -51,6 +55,10 @@ var (
 	clientURL     = fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	httpServer *http.Server
+
+	// dashboardMux keeps the loopback route table reachable from handlers that
+	// must attach it to the optional phone listener.
+	dashboardMux atomic.Value
 
 	mOnline  *systray.MenuItem
 	mOffline *systray.MenuItem
@@ -135,12 +143,57 @@ func snapshotToWeb(snap engine.Snapshot) WebSnapshot {
 
 func originCheck(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			// Every local mutation is bounded, not only phone requests. This keeps
+			// malformed imports or JSON payloads from consuming unbounded memory.
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		}
+		if remoteRequest(r) {
+			// Paired phones may only call the API from pages served by this
+			// listener; any other web origin (including loopback origins
+			// reached through the LAN listener) is rejected.
+			origin := r.Header.Get("Origin")
+			if origin != "" && !isSameOrigin(origin, r.Host) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && origin == "" {
+				http.Error(w, "origin required", http.StatusForbidden)
+				return
+			}
+			next(w, r)
+			return
+		}
 		origin := r.Header.Get("Origin")
-		if origin != "" && !strings.HasPrefix(origin, "http://127.0.0.1") && !strings.HasPrefix(origin, "http://localhost") {
+		if origin != "" && !isLocalOrigin(origin) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		next(w, r)
+	}
+}
+
+// isSameOrigin reports whether an Origin header matches the host that served
+// the request. The LAN listener is intentionally HTTP-only until RiftOps can
+// provision a certificate trusted by the phone.
+func isSameOrigin(origin, host string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, host)
+}
+
+func isLocalOrigin(origin string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Hostname()) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -186,6 +239,7 @@ func logFatalStartup(title, message string) {
 }
 
 func shutdownHTTPServer() {
+	remoteAccess.shutdown()
 	if httpServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -223,10 +277,19 @@ func main() {
 			path = filepath.Join(home, ".riftops")
 		}
 	}
-	if err := os.MkdirAll(path, 0755); err != nil {
+	if err := os.MkdirAll(path, 0o700); err != nil {
 		logFatalStartup("RiftOps could not create data directory", err.Error())
 		return
 	}
+	_ = os.Chmod(path, 0o700)
+	initReports(filepath.Join(path, "reports"))
+	defer func() {
+		if rec := recover(); rec != nil {
+			writeReport("crash", fmt.Sprintf("panic in main: %v\n\n%s", rec, debug.Stack()))
+			panic(rec)
+		}
+		markCleanExit("main returned normally")
+	}()
 	instance, err := singleinstance.Acquire(filepath.Join(path, "lock"))
 	if err != nil {
 		if errors.Is(err, singleinstance.ErrAlreadyRunning) {
@@ -236,13 +299,17 @@ func main() {
 		logFatalStartup("RiftOps could not start", err.Error())
 		return
 	}
+	appLockInstance = instance
 	defer instance.Close()
 
-	logger, logFile, err := diagnostics.OpenLogger(filepath.Join(filepath.Dir(path), "debug.log"))
+	logPath := filepath.Join(path, "debug.log")
+	logger, logFile, err := diagnostics.OpenLogger(logPath)
 	if err == nil {
 		slog.SetDefault(logger)
 		defer logFile.Close()
 	}
+	initRunMarker(path)
+	slog.Info("RiftOps initialized", "dataDir", path, "reportsDir", reportDir, "logFile", logPath)
 
 	backend, err := engine.New(settings.Store{Path: filepath.Join(path, "settings.json")})
 	if err != nil {
@@ -271,83 +338,8 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/snapshot", originCheck(getSnapshot))
-	mux.HandleFunc("/api/events", originCheck(sseHandler))
-	mux.HandleFunc("/api/profiles", originCheck(getProfiles))
-	mux.HandleFunc("/api/select-profile", originCheck(selectProfile))
-	mux.HandleFunc("/api/save-profile", originCheck(saveProfile))
-	mux.HandleFunc("/api/delete-profile", originCheck(deleteProfile))
-	mux.HandleFunc("/api/profiles/export", originCheck(exportProfiles))
-	mux.HandleFunc("/api/profiles/import", originCheck(importProfiles))
-	mux.HandleFunc("/api/preferences", originCheck(getPreferences))
-	mux.HandleFunc("/api/save-preferences", originCheck(savePreferences))
-	mux.HandleFunc("/api/riot-client-location", originCheck(riotClientLocationHandler))
-	mux.HandleFunc("/api/riot-client-location/detect", originCheck(detectRiotClientLocation))
-	mux.HandleFunc("/api/riot-client-location/browse", originCheck(browseRiotClientLocation))
-	mux.HandleFunc("/api/set-enabled", originCheck(setEnabled))
-	mux.HandleFunc("/api/set-status", originCheck(setStatus))
-	mux.HandleFunc("/api/start", originCheck(startEngine))
-	mux.HandleFunc("/api/stop", originCheck(stopEngine))
-	mux.HandleFunc("/api/capture-session", originCheck(captureSession))
-	mux.HandleFunc("/api/forget-session", originCheck(forgetSession))
-	mux.HandleFunc("/api/session-status", originCheck(getSessionStatus))
-	mux.HandleFunc("/api/switch-profile", originCheck(switchProfile))
-	mux.HandleFunc("/api/set-autostart", originCheck(setAutostart))
-	mux.HandleFunc("/api/autostart", originCheck(getAutostart))
-	mux.HandleFunc("/api/check-update", originCheck(checkUpdate))
-	mux.HandleFunc("/api/show", originCheck(showApp))
-	mux.HandleFunc("/api/quit", originCheck(quitApp))
-
-	// Riot Dev API routes
-	mux.HandleFunc("/api/riot/account", originCheck(riotAccountHandler))
-	mux.HandleFunc("/api/riot/summoner", originCheck(riotSummonerHandler))
-	mux.HandleFunc("/api/riot/mastery", originCheck(riotMasteryHandler))
-	mux.HandleFunc("/api/riot/league", originCheck(riotLeagueHandler))
-	mux.HandleFunc("/api/riot/current-game", originCheck(riotCurrentGameHandler))
-	mux.HandleFunc("/api/riot/status", originCheck(riotStatusHandler))
-	mux.HandleFunc("/api/riot/configured", originCheck(riotConfiguredHandler))
-
-	// Data Dragon routes
-	mux.HandleFunc("/api/ddragon/version", originCheck(ddragonVersionHandler))
-	mux.HandleFunc("/api/ddragon/champions", originCheck(ddragonChampionsHandler))
-	mux.HandleFunc("/api/ddragon/profile-icons", originCheck(ddragonProfileIconsHandler))
-
-	// LCU (local client) data routes
-	mux.HandleFunc("/api/lcu/status", originCheck(lcuStatusHandler))
-	mux.HandleFunc("/api/lcu/overview", originCheck(lcuOverviewHandler))
-	mux.HandleFunc("/api/lcu/profile", originCheck(lcuProfileHandler))
-	mux.HandleFunc("/api/lcu/profile-icons", originCheck(lcuProfileIconMetadataHandler))
-	mux.HandleFunc("/api/lcu/launch-league", originCheck(lcuLaunchLeagueHandler))
-	mux.HandleFunc("/api/lcu/match-history", originCheck(lcuMatchHistoryHandler))
-	mux.HandleFunc("/api/lcu/game-detail", originCheck(lcuGameDetailHandler))
-	mux.HandleFunc("/api/lcu/skins", originCheck(lcuSkinsHandler))
-	mux.HandleFunc("/api/lcu/background-champions", originCheck(lcuBackgroundChampionsHandler))
-	mux.HandleFunc("/api/lcu/background-skins", originCheck(lcuBackgroundSkinsHandler))
-	mux.HandleFunc("/api/lcu/auto-accept", originCheck(lcuAutoAcceptHandler))
-	mux.HandleFunc("/api/lcu/auto-requeue", originCheck(lcuAutoRequeueHandler))
-	mux.HandleFunc("/api/lcu/stop-queue", originCheck(lcuStopQueueHandler))
-	mux.HandleFunc("/api/lcu/auto-roles", originCheck(lcuAutoRolesHandler))
-	mux.HandleFunc("/api/lcu/loot", originCheck(lcuLootHandler))
-	// QoL actions
-	mux.HandleFunc("/api/lcu/dodge", originCheck(lcuDodgeHandler))
-	mux.HandleFunc("/api/lcu/appear-offline", originCheck(lcuAppearOfflineHandler))
-	mux.HandleFunc("/api/lcu/availability", originCheck(lcuAvailabilityHandler))
-	mux.HandleFunc("/api/lcu/status-message", originCheck(lcuStatusMessageHandler))
-	mux.HandleFunc("/api/lcu/profile-background", originCheck(lcuProfileBackgroundHandler))
-	mux.HandleFunc("/api/lcu/profile-icon", originCheck(lcuProfileIconHandler))
-	mux.HandleFunc("/api/lcu/honor-ballot", originCheck(lcuHonorBallotHandler))
-	mux.HandleFunc("/api/lcu/honor-player", originCheck(lcuHonorPlayerHandler))
-	mux.HandleFunc("/api/lcu/play-again", originCheck(lcuPlayAgainHandler))
-	mux.HandleFunc("/api/lcu/claim-event-rewards", originCheck(lcuClaimEventRewardsHandler))
-	mux.HandleFunc("/api/lcu/gameflow-phase", originCheck(lcuGameflowPhaseHandler))
-	mux.HandleFunc("/api/lcu/champ-select", originCheck(lcuChampSelectHandler))
-	mux.HandleFunc("/api/lcu/friends", originCheck(lcuFriendsHandler))
-	mux.HandleFunc("/api/lcu/health", originCheck(lcuHealthHandler))
-	mux.HandleFunc("/api/lcu/server-status", originCheck(lcuServerStatusHandler))
-	mux.HandleFunc("/api/qol/queue-presets", originCheck(qolQueuePresetsHandler))
-	mux.HandleFunc("/api/qol/preferences", originCheck(qolPreferencesHandler))
-	mux.HandleFunc("/api/qol/state", originCheck(qolStateHandler))
-	mux.HandleFunc("/lol-game-data/", lcuAssetProxyHandler)
+	dashboardMux.Store(mux)
+	registerDashboardRoutes(mux)
 
 	distFS, err := fs.Sub(frontendFS, "frontend/dist")
 	if err != nil {
@@ -357,7 +349,11 @@ func main() {
 	}
 
 	httpServer = &http.Server{
-		Handler: mux,
+		Handler:           recoveryMiddleware(remoteSecurityHeaders(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       20 * time.Second,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    16 << 10,
 		BaseContext: func(_ net.Listener) context.Context {
 			return context.Background()
 		},
@@ -373,11 +369,17 @@ func main() {
 			slog.Error("Failed to start web server", "error", err)
 		}
 	}()
-
+	// Phone control is opt-in: the LAN listener only runs when the user has
+	// enabled it, and it is started on demand from the dashboard afterwards.
+	if backendEngine.Settings().PhoneAccess {
+		startRemoteAccess(mux)
+	}
+	go startHangWatchdog()
 	// The macOS host owns the native WebKit event loop so RiftOps appears as a
 	// normal Dock application. Windows keeps its WebView2 window and tray flow.
 	if runtime.GOOS == "darwin" {
 		safeOpenDashboard(clientURL)
+		markCleanExit("macOS window closed")
 		return
 	}
 
@@ -429,6 +431,7 @@ func onTrayReady() {
 			case <-mStop.ClickedCh:
 				backendEngine.Stop()
 			case <-mQuit.ClickedCh:
+				markCleanExit("Quit selected from the system tray")
 				backendEngine.Stop()
 				destroyWebView()
 				shutdownHTTPServer()
@@ -439,6 +442,10 @@ func onTrayReady() {
 }
 
 func onTrayExit() {
+	if !gracefulExit.Load() {
+		writeReport("unexpected-exit", "the system tray event loop exited without an explicit RiftOps quit request")
+		clearRunMarker()
+	}
 	shutdownHTTPServer()
 	os.Exit(0)
 }
@@ -487,7 +494,6 @@ func sseHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -712,6 +718,42 @@ func getPreferences(w http.ResponseWriter, r *http.Request) {
 		"checkUpdates":   prefs.CheckUpdates,
 		"riotClientPath": prefs.RiotClientPath,
 	})
+}
+
+// diagnosticsReportsHandler lists saved crash/hang reports, newest first.
+func diagnosticsReportsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	type reportFile struct {
+		Name     string `json:"name"`
+		Size     int64  `json:"size"`
+		Modified string `json:"modified"`
+	}
+	entries, err := os.ReadDir(reportDir)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]reportFile{})
+		return
+	}
+	reports := make([]reportFile, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".txt" {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		reports = append(reports, reportFile{Name: entry.Name(), Size: info.Size(), Modified: info.ModTime().UTC().Format(time.RFC3339)})
+	}
+	sort.Slice(reports, func(i, j int) bool { return reports[i].Name > reports[j].Name })
+	if len(reports) > maxSavedReports {
+		reports = reports[:maxSavedReports]
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(reports)
 }
 
 func writeRiotClientLocation(w http.ResponseWriter, path, source string) {
@@ -997,6 +1039,7 @@ func quitApp(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	go func() {
 		time.Sleep(50 * time.Millisecond)
+		markCleanExit("Quit requested from the app")
 		backendEngine.Stop()
 		destroyWebView()
 		shutdownHTTPServer()
@@ -1188,6 +1231,11 @@ type lcuOverviewResponse struct {
 		CPUPercent float64 `json:"cpuPercent"`
 	} `json:"health"`
 	QoL *riotclient.QoLState `json:"qol,omitempty"`
+	// Session is the raw LCU gameflow session when League is loading or in a
+	// match. It is deliberately kept optional: the endpoint is not available
+	// in every phase, and the UI must never invent live-game details.
+	Session          json.RawMessage `json:"gameflowSession,omitempty"`
+	SessionAvailable *bool           `json:"gameflowSessionAvailable,omitempty"`
 }
 
 // lcuOverviewHandler serves the frequently refreshed client state in one
@@ -1195,6 +1243,8 @@ type lcuOverviewResponse struct {
 // lockfile/phase read for status, health, and QoL.
 func lcuOverviewHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	response := lcuOverviewResponse{}
 	response.Status.AuthSource = "none"
 
@@ -1228,6 +1278,25 @@ func lcuOverviewHandler(w http.ResponseWriter, r *http.Request) {
 	response.Health.Connected = true
 	state := lf.FetchQoLStateWithPhase(ctx, phase)
 	response.QoL = &state
+	if phase == "GameStart" || phase == "Loading" || phase == "InProgress" || phase == "Reconnect" || phase == "EndOfGame" {
+		available := false
+		if sessionBody, sessionErr := lf.DoRequest(ctx, http.MethodGet, "/lol-gameflow/v1/session"); sessionErr == nil && json.Valid(sessionBody) {
+			available = true
+			response.Session = json.RawMessage(sessionBody)
+			var session struct {
+				GameData struct {
+					IsCustom bool   `json:"isCustom"`
+					QueueID  int    `json:"queueId"`
+					GameMode string `json:"gameMode"`
+				} `json:"gameData"`
+			}
+			if json.Unmarshal(sessionBody, &session) == nil {
+				state.QueueID = session.GameData.QueueID
+				state.IsCustom = state.IsCustom || session.GameData.IsCustom || session.GameData.QueueID == riotclient.PracticeToolQueueID || strings.EqualFold(session.GameData.GameMode, "PRACTICETOOL")
+			}
+		}
+		response.SessionAvailable = &available
+	}
 	process := riotclient.GetLeagueProcessInfo()
 	response.Health.Uptime = process.UptimeSec
 	response.Health.MemoryMB = process.MemoryMB
@@ -1327,12 +1396,27 @@ func lcuLaunchLeagueHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuMatchHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected — launch League of Legends first", http.StatusServiceUnavailable)
 		return
 	}
-	body, err := lf.FetchLCUMatchHistory(r.Context(), 0, 50)
+	begin, err := strconv.Atoi(r.URL.Query().Get("begin"))
+	if err != nil || begin < 0 {
+		begin = 0
+	}
+	end, err := strconv.Atoi(r.URL.Query().Get("end"))
+	if err != nil || end <= begin {
+		end = begin + 50
+	}
+	if end-begin > 50 {
+		end = begin + 50
+	}
+	body, err := lf.FetchLCUMatchHistory(r.Context(), begin, end)
 	if err != nil {
 		httpError(w, "Failed to fetch match history", http.StatusInternalServerError)
 		slog.Error("lcuMatchHistoryHandler", "error", err)
@@ -1401,6 +1485,10 @@ func lcuBackgroundChampionsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuBackgroundSkinsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	championID, err := strconv.Atoi(r.URL.Query().Get("championId"))
 	if err != nil || championID <= 0 {
 		httpError(w, "championId must be a positive integer", http.StatusBadRequest)
@@ -1411,14 +1499,27 @@ func lcuBackgroundSkinsHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "LCU not connected — launch League of Legends first", http.StatusServiceUnavailable)
 		return
 	}
-	body, err := lf.FetchLCUChampionSkins(r.Context(), championID)
+	inventory, err := lf.FetchLCUChampionSkins(r.Context(), championID)
 	if err != nil {
 		httpError(w, "Failed to fetch champion skins", http.StatusInternalServerError)
 		slog.Error("lcuBackgroundSkinsHandler", "championID", championID, "error", err)
 		return
 	}
+	catalogue, catalogueErr := lf.DoRequest(r.Context(), http.MethodGet, "/lol-game-data/assets/v1/skins.json")
+	if catalogueErr != nil {
+		// Inventory metadata can still contain real asset paths. Never guess a
+		// filename when the static catalogue is unavailable.
+		slog.Debug("skin asset catalogue unavailable", "error", catalogueErr)
+		catalogue = nil
+	}
+	skins, err := buildProfileBackgroundSkins(inventory, catalogue)
+	if err != nil {
+		httpError(w, "Failed to read champion skin metadata", http.StatusInternalServerError)
+		slog.Error("lcuBackgroundSkinsHandler metadata", "championID", championID, "error", err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(body)
+	_ = json.NewEncoder(w).Encode(skins)
 }
 
 func requireLCUPhase(w http.ResponseWriter, r *http.Request, lf *riotclient.Lockfile, allowed ...string) bool {
@@ -1451,6 +1552,23 @@ func lcuAutoAcceptHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"accepted": true})
+}
+
+func lcuDeclineReadyHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	if !requireLCUPhase(w, r, lf, "ReadyCheck") {
+		return
+	}
+	if err := lf.DeclineReadyCheck(r.Context()); err != nil {
+		httpError(w, "Failed to decline ready check", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"declined": true})
 }
 
 func lcuAutoRequeueHandler(w http.ResponseWriter, r *http.Request) {
@@ -1487,6 +1605,120 @@ func lcuStopQueueHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]bool{"stopped": true})
 }
 
+func lcuQuitCustomHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	phase, err := lf.GetGameflowPhase(r.Context())
+	if err != nil {
+		httpError(w, "Could not determine the current League phase", http.StatusServiceUnavailable)
+		return
+	}
+	if phase != "Lobby" && phase != "Matchmaking" && phase != "ChampSelect" && phase != "GameStart" && phase != "Loading" && phase != "InProgress" && phase != "Reconnect" {
+		httpError(w, "Quit is only available for an active custom or practice session", http.StatusConflict)
+		return
+	}
+	if err := lf.QuitCustomSession(r.Context(), phase); err != nil {
+		httpError(w, "Failed to leave the custom or practice session", http.StatusBadGateway)
+		slog.Info("custom session quit failed", "phase", phase, "error", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"quit": true})
+}
+
+func lcuAvailableQueuesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := lf.FetchAvailableQueues(r.Context())
+	if err != nil {
+		httpError(w, "Game modes are unavailable", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+// lcuCreateLobbyHandler opens a lobby for a game-mode queue, or a Practice
+// Tool session when practiceTool is set. Practice Tool is intended for safe
+// testing of the pick/ban automation without touching real matchmaking.
+func lcuCreateLobbyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		QueueID      int    `json:"queueId"`
+		PracticeTool bool   `json:"practiceTool"`
+		Category     string `json:"category"`
+		GameMode     string `json:"gameMode"`
+		QueueName    string `json:"queueName"`
+		MapID        int    `json:"mapId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid lobby request", http.StatusBadRequest)
+		return
+	}
+	if !requireLCUPhase(w, r, lf, "None", "Lobby") {
+		return
+	}
+	var err error
+	if body.PracticeTool {
+		err = lf.CreatePracticeToolLobby(r.Context())
+	} else if strings.EqualFold(strings.TrimSpace(body.Category), "Custom") {
+		err = lf.CreateCustomLobby(r.Context(), body.QueueID, body.GameMode, body.QueueName, body.MapID)
+	} else {
+		err = lf.CreateQueueLobby(r.Context(), body.QueueID)
+	}
+	if err != nil {
+		// Surface the LCU's own message so UI can tell "already in lobby" from "queue unavailable".
+		msg := strings.TrimSpace(err.Error())
+		if msg == "" {
+			msg = "That game mode is not available right now. Riot enables queues server-side, so only modes currently open can be created."
+		} else if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		httpError(w, msg, http.StatusBadGateway)
+		slog.Info("create lobby failed", "queueId", body.QueueID, "practice", body.PracticeTool, "category", body.Category, "gameMode", body.GameMode, "error", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuCurrentLobbyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := lf.FetchCurrentLobby(r.Context())
+	if err != nil {
+		httpError(w, "Lobby is unavailable", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
 func lcuAutoRolesHandler(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		First  string `json:"first"`
@@ -1512,7 +1744,40 @@ func lcuAutoRolesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := lf.AutoSetRoles(r.Context(), body.First, body.Second); err != nil {
-		httpError(w, "Failed to set position preferences", http.StatusInternalServerError)
+		msg := strings.TrimSpace(err.Error())
+		if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		if msg == "" {
+			msg = "Failed to set position preferences"
+		}
+		httpError(w, msg, http.StatusInternalServerError)
+		slog.Info("auto roles failed", "first", body.First, "second", body.Second, "error", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuCustomStartHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	if !requireLCUPhase(w, r, lf, "Lobby") {
+		return
+	}
+	if err := lf.StartCustomGame(r.Context()); err != nil {
+		msg := strings.TrimSpace(err.Error())
+		if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		if msg == "" {
+			msg = "Failed to start custom game"
+		}
+		httpError(w, msg, http.StatusBadGateway)
+		slog.Info("custom start failed", "error", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1531,6 +1796,79 @@ func lcuLootHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func lcuWalletHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := lf.FetchLCUWallet(r.Context())
+	if err != nil {
+		httpError(w, "Failed to fetch League wallet", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func lcuLootRecipesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := lf.FetchLCULootRecipes(r.Context(), r.URL.Query().Get("lootId"))
+	if err != nil {
+		httpError(w, strings.TrimSpace(err.Error()), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func lcuLootCraftHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	var request struct {
+		RecipeName string   `json:"recipeName"`
+		LootIDs    []string `json:"lootIds"`
+		Repeat     int      `json:"repeat"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		httpError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if request.Repeat == 0 {
+		request.Repeat = 1
+	}
+	body, err := lf.CraftLCULootRecipe(r.Context(), request.RecipeName, request.LootIDs, request.Repeat)
+	if err != nil {
+		httpError(w, strings.TrimSpace(err.Error()), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if len(body) == 0 {
+		_ = json.NewEncoder(w).Encode(map[string]bool{"crafted": true})
+		return
+	}
 	_, _ = w.Write(body)
 }
 
@@ -1658,8 +1996,29 @@ func lcuProfileIconHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if body.IconID < 0 {
+	if body.IconID <= 0 {
 		httpError(w, "Choose a valid profile icon", http.StatusBadRequest)
+		return
+	}
+	inventory, err := lf.FetchLCUProfileIconInventory(r.Context())
+	if err != nil {
+		slog.Warn("lcuProfileIconHandler inventory", "iconID", body.IconID, "error", err)
+		httpError(w, "League icon ownership could not be verified. Keep League open and refresh the icon library.", http.StatusServiceUnavailable)
+		return
+	}
+	owned := false
+	for _, iconID := range inventory.IconIDs {
+		if iconID == body.IconID {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		if inventory.Complete {
+			httpError(w, "This profile icon is not owned by the signed-in Riot account.", http.StatusForbidden)
+		} else {
+			httpError(w, "League returned a limited icon inventory. Refresh after the client finishes signing in.", http.StatusServiceUnavailable)
+		}
 		return
 	}
 	if err := lf.SetProfileIcon(r.Context(), body.IconID); err != nil {
@@ -1803,6 +2162,10 @@ func lcuGameflowPhaseHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuChampSelectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -1815,6 +2178,321 @@ func lcuChampSelectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
+}
+
+func lcuChampSelectReadHandler(w http.ResponseWriter, r *http.Request, message string, fetch func(*riotclient.Lockfile, context.Context) ([]byte, error)) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := fetch(lf, r.Context())
+	if err != nil {
+		httpError(w, message, http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func lcuChampSelectPickableHandler(w http.ResponseWriter, r *http.Request) {
+	lcuChampSelectReadHandler(w, r, "Pickable champions are unavailable", func(lf *riotclient.Lockfile, ctx context.Context) ([]byte, error) {
+		return lf.FetchChampSelectPickable(ctx)
+	})
+}
+
+func lcuChampSelectBannableHandler(w http.ResponseWriter, r *http.Request) {
+	lcuChampSelectReadHandler(w, r, "Bannable champions are unavailable", func(lf *riotclient.Lockfile, ctx context.Context) ([]byte, error) {
+		return lf.FetchChampSelectBannable(ctx)
+	})
+}
+
+func lcuChampSelectSkinsHandler(w http.ResponseWriter, r *http.Request) {
+	lcuChampSelectReadHandler(w, r, "Champion-select skins are unavailable", func(lf *riotclient.Lockfile, ctx context.Context) ([]byte, error) {
+		return lf.FetchChampSelectSkins(ctx)
+	})
+}
+
+func champSelectLockfile(w http.ResponseWriter, r *http.Request) *riotclient.Lockfile {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return nil
+	}
+	if !requireLCUPhase(w, r, lf, "ChampSelect") {
+		return nil
+	}
+	return lf
+}
+
+func lcuChampSelectActionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := champSelectLockfile(w, r)
+	if lf == nil {
+		return
+	}
+	var body struct {
+		ActionID   *int `json:"actionId"`
+		ChampionID *int `json:"championId"`
+		Completed  bool `json:"completed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid champion-select action", http.StatusBadRequest)
+		return
+	}
+	if body.ActionID == nil || body.ChampionID == nil {
+		httpError(w, "Champion-select actionId and championId are required", http.StatusBadRequest)
+		return
+	}
+	if err := lf.UpdateChampSelectAction(r.Context(), *body.ActionID, *body.ChampionID, body.Completed); err != nil {
+		slog.Warn("League rejected champion-select action", "actionID", *body.ActionID, "championID", *body.ChampionID, "completed", body.Completed, "error", err)
+		if body.Completed {
+			httpError(w, "League did not apply the lock. The turn may have ended or the champion is unavailable.", http.StatusBadGateway)
+		} else {
+			httpError(w, "League did not apply the hover. The turn may not be open or the champion is unavailable.", http.StatusBadGateway)
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true, "completed": body.Completed})
+}
+
+func lcuChampSelectSelectionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := champSelectLockfile(w, r)
+	if lf == nil {
+		return
+	}
+	var body struct {
+		Spell1ID       int `json:"spell1Id"`
+		Spell2ID       int `json:"spell2Id"`
+		SelectedSkinID int `json:"selectedSkinId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid champion-select selection", http.StatusBadRequest)
+		return
+	}
+	if err := lf.UpdateChampSelectSelection(r.Context(), body.Spell1ID, body.Spell2ID, body.SelectedSkinID); err != nil {
+		httpError(w, "League rejected the champion-select loadout", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuChampSelectRerollHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := champSelectLockfile(w, r)
+	if lf == nil {
+		return
+	}
+	if err := lf.RerollChampSelect(r.Context()); err != nil {
+		httpError(w, "League rejected the reroll", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuChampSelectBenchSwapHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := champSelectLockfile(w, r)
+	if lf == nil {
+		return
+	}
+	var body struct {
+		ChampionID int `json:"championId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid bench champion", http.StatusBadRequest)
+		return
+	}
+	if err := lf.SwapBenchChampion(r.Context(), body.ChampionID); err != nil {
+		httpError(w, "League rejected the bench swap", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuChampSelectRunesHandler(w http.ResponseWriter, r *http.Request) {
+	lcuChampSelectReadHandler(w, r, "Rune pages are unavailable", func(lf *riotclient.Lockfile, ctx context.Context) ([]byte, error) {
+		return lf.FetchRunePages(ctx)
+	})
+}
+
+func lcuChampSelectRuneCatalogHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	perks, err := lf.FetchRunePerks(r.Context())
+	if err != nil {
+		slog.Warn("load rune perk catalogue", "error", err)
+		httpError(w, "Rune catalogue is unavailable", http.StatusBadGateway)
+		return
+	}
+	styles, err := lf.FetchRuneStyles(r.Context())
+	if err != nil {
+		slog.Warn("load rune style catalogue", "error", err)
+		httpError(w, "Rune style catalogue is unavailable", http.StatusBadGateway)
+		return
+	}
+	if !json.Valid(perks) || !json.Valid(styles) {
+		httpError(w, "League returned an invalid rune catalogue", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]json.RawMessage{
+		"perks":  perks,
+		"styles": styles,
+	})
+}
+
+func lcuChampSelectRuneSelectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		PageID int `json:"pageId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid rune page", http.StatusBadRequest)
+		return
+	}
+	if err := lf.SetCurrentRunePage(r.Context(), body.PageID); err != nil {
+		httpError(w, "League rejected the rune page", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuChampSelectRunePageHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		httpError(w, "Invalid rune page", http.StatusBadRequest)
+		return
+	}
+	pageID, _ := payload["id"].(float64)
+	pageIDInt := int(pageID)
+	switch r.Method {
+	case http.MethodPost:
+		clean, err := validatedRunePagePayload(payload)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		body, err := lf.CreateRunePage(r.Context(), clean)
+		if err != nil {
+			slog.Warn("create rune page", "error", err)
+			httpError(w, "Could not create rune page", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	case http.MethodPut:
+		if pageIDInt <= 0 {
+			httpError(w, "Rune page ID must be positive", http.StatusBadRequest)
+			return
+		}
+		clean, err := validatedRunePagePayload(payload)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := lf.UpdateRunePage(r.Context(), pageIDInt, clean); err != nil {
+			slog.Warn("update rune page", "page_id", pageIDInt, "error", err)
+			httpError(w, "Could not save rune page", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	case http.MethodDelete:
+		if pageIDInt <= 0 {
+			httpError(w, "Rune page ID must be positive", http.StatusBadRequest)
+			return
+		}
+		if err := lf.DeleteRunePage(r.Context(), pageIDInt); err != nil {
+			slog.Warn("delete rune page", "page_id", pageIDInt, "error", err)
+			httpError(w, "Could not delete rune page", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}
+}
+
+func validatedRunePagePayload(payload map[string]any) (map[string]any, error) {
+	name, _ := payload["name"].(string)
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 25 {
+		return nil, fmt.Errorf("Rune page name must be between 1 and 25 characters")
+	}
+	primaryStyleID, primaryOK := payload["primaryStyleId"].(float64)
+	subStyleID, subOK := payload["subStyleId"].(float64)
+	if !primaryOK || !subOK || primaryStyleID <= 0 || subStyleID <= 0 || primaryStyleID == subStyleID {
+		return nil, fmt.Errorf("Choose valid primary and secondary rune styles")
+	}
+	rawPerks, ok := payload["selectedPerkIds"].([]any)
+	if !ok || len(rawPerks) != 9 {
+		return nil, fmt.Errorf("A rune page must contain exactly 9 perks")
+	}
+	perkIDs := make([]int, 0, len(rawPerks))
+	for _, raw := range rawPerks {
+		value, ok := raw.(float64)
+		if !ok || value <= 0 || value != float64(int(value)) {
+			return nil, fmt.Errorf("Rune page contains an invalid perk")
+		}
+		perkIDs = append(perkIDs, int(value))
+	}
+	clean := map[string]any{
+		"name":            name,
+		"primaryStyleId":  int(primaryStyleID),
+		"subStyleId":      int(subStyleID),
+		"selectedPerkIds": perkIDs,
+	}
+	if temporary, ok := payload["isTemporary"].(bool); ok {
+		clean["isTemporary"] = temporary
+	}
+	return clean, nil
 }
 
 func lcuFriendsHandler(w http.ResponseWriter, r *http.Request) {
@@ -2003,4 +2681,24 @@ func lcuProfileIconMetadataHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(body)
+}
+
+// lcuOwnedProfileIconsHandler returns only profile icons that League reports
+// for the signed-in account. Catalogue metadata remains a separate discovery
+// source and must never be treated as ownership proof.
+func lcuOwnedProfileIconsHandler(w http.ResponseWriter, r *http.Request) {
+	lf := riotclient.GetLCULockfile()
+	if lf == nil {
+		http.Error(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	inventory, err := lf.FetchLCUProfileIconInventory(r.Context())
+	if err != nil {
+		slog.Warn("lcuOwnedProfileIconsHandler", "error", err)
+		http.Error(w, "Profile icon ownership unavailable", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(inventory)
 }

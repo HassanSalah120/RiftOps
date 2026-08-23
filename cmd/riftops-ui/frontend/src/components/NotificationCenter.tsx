@@ -1,5 +1,6 @@
 import { Bell, CheckCircle2, AlertCircle, Shield, Trash2, X } from 'lucide-react';
 import type { Notification } from '../types';
+import { useDialogFocus } from './useDialogFocus';
 
 export type NotificationEntry = Notification & { id: number; createdAt: string; read: boolean };
 
@@ -16,12 +17,13 @@ export default function NotificationCenter({
   onRead: (id: number) => void;
   onClear: () => void;
 }) {
+  const dialogRef = useDialogFocus<HTMLElement>(open, onClose);
   if (!open) return null;
   return (
     <div className="notification-center__backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <aside className="notification-center" role="dialog" aria-modal="true" aria-label="RiftOps notifications">
+      <aside ref={dialogRef} tabIndex={-1} className="notification-center" role="dialog" aria-modal="true" aria-label="RiftOps notifications">
         <div className="notification-center__header">
           <div><span className="notification-center__eyebrow">ACTIVITY LOG</span><h2><Bell /> Notifications</h2></div>
           <div className="notification-center__tools">

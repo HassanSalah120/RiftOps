@@ -1,6 +1,46 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchLCUMatchHistory, fetchDDragonVersion, fetchLCUGameDetail } from '../api';
-import { History, Loader2, RefreshCw, Trophy, Skull, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download } from 'lucide-react';
+import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog } from '../api';
+import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download, Coins, Crosshair, Target, Trophy, Users } from 'lucide-react';
+import PageHeader from './PageHeader';
+import { RiotAssetImage } from '../riotAssets';
+
+type AssetEntry = { id: number; name: string; iconPath?: string; inStore?: boolean; displayInItemSets?: boolean; specialRecipe?: number; from?: number[] | string[]; to?: number[] | string[] };
+type MatchAssets = { items: Map<number, AssetEntry>; spells: Map<number, AssetEntry>; perks: Map<number, AssetEntry>; styles: Map<number, AssetEntry> };
+
+const EMPTY_ASSETS: MatchAssets = { items: new Map(), spells: new Map(), perks: new Map(), styles: new Map() };
+
+function matchRows(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.games?.games) ? data.games.games : [];
+}
+
+function catalogueMap(raw: any): Map<number, AssetEntry> {
+  const values = Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? Object.values(raw) : [];
+  return new Map(values.map((entry: any) => [Number(entry.id), { ...entry, id: Number(entry.id), name: String(entry.name || `#${entry.id}`) }]).filter(([id]) => Number(id) > 0) as Array<[number, AssetEntry]>);
+}
+
+function runeSelection(participant: any): { perks: number[]; styles: number[]; shards: number[] } {
+  const stats = participantStats(participant);
+  const modernStyles = Array.isArray(participant?.perks?.styles) ? participant.perks.styles : [];
+  const modernPerks: number[] = modernStyles.flatMap((style: any) => Array.isArray(style?.selections) ? style.selections.map((selection: any) => Number(selection?.perk)).filter(Boolean) : []);
+  const legacyPerks: number[] = [stats.perk0, stats.perk1, stats.perk2, stats.perk3, stats.perk4, stats.perk5].map(Number).filter(Boolean);
+  const styles: number[] = modernStyles.map((style: any) => Number(style?.style)).filter(Boolean);
+  if (!styles.length) styles.push(...[stats.perkPrimaryStyle, stats.perkStyle, stats.perkSubStyle].map(Number).filter(Boolean));
+  const statPerks = participant?.perks?.statPerks || stats?.statPerks || {};
+  const shards: number[] = [statPerks.offense, statPerks.flex, statPerks.defense, stats.statPerk0, stats.statPerk1, stats.statPerk2].map(Number).filter(Boolean);
+  return { perks: [...new Set(modernPerks.length ? modernPerks : legacyPerks)], styles: [...new Set(styles)], shards: [...new Set(shards)] };
+}
+
+function ItemStrip({ stats, assets, compact = false }: { stats: any; assets: MatchAssets; compact?: boolean }) {
+  const ids = [stats.item0, stats.item1, stats.item2, stats.item3, stats.item4, stats.item5, stats.item6].map(Number);
+  return <div className={compact ? 'history-match__items flex items-center gap-1' : 'match-score-row__items'}>{ids.map((id, index) => {
+    const item = assets.items.get(id);
+    const isTrinket = TRINKET_IDS.has(id);
+    const isQuest = Boolean(item && /quest/i.test(item.name));
+    const isUpgrade = Boolean(item && (Number(item.specialRecipe) > 0 || item.inStore === false && Array.isArray(item.from) && item.from.length > 0));
+    return id > 0 ? <span key={`${id}-${index}`} className={`match-item ${isTrinket ? 'is-trinket' : ''}`} title={item?.name || `Unknown item ${id}`}><RiotAssetImage path={item?.iconPath} alt={item?.name || ''} loading="lazy" fallback={<i>{id}</i>} />{!compact && (isQuest || isUpgrade) && <b>{isQuest ? 'Quest' : 'Upgrade'}</b>}</span> : <i key={index} />;
+  })}</div>;
+}
 
 const QUEUE_MAP: Record<number, string> = {
   420: 'Ranked Solo',
@@ -12,28 +52,6 @@ const QUEUE_MAP: Record<number, string> = {
   1700: 'Arena',
 };
 
-const SPELL_ICONS: Record<number, { name: string; icon: string }> = {
-  1: { name: 'Cleanse', icon: 'SummonerBoost' },
-  3: { name: 'Exhaust', icon: 'SummonerExhaust' },
-  4: { name: 'Flash', icon: 'SummonerFlash' },
-  6: { name: 'Ghost', icon: 'SummonerGhost' },
-  7: { name: 'Heal', icon: 'SummonerHeal' },
-  11: { name: 'Smite', icon: 'SummonerSmite' },
-  12: { name: 'Teleport', icon: 'SummonerTeleport' },
-  14: { name: 'Ignite', icon: 'SummonerDot' },
-  21: { name: 'Barrier', icon: 'SummonerBarrier' },
-  32: { name: 'Snowball', icon: 'SummonerSnowball' },
-  39: { name: 'Mark', icon: 'SummonerPoroRecall' },
-};
-
-const RUNE_TREES: Record<number, { name: string; img: string }> = {
-  8000: { name: 'Precision', img: '7000_Precision' },
-  8100: { name: 'Domination', img: '7100_Domination' },
-  8200: { name: 'Sorcery', img: '7200_Sorcery' },
-  8300: { name: 'Inspiration', img: '7300_Inspiration' },
-  8400: { name: 'Resolve', img: '7400_Resolve' },
-};
-
 const TRINKET_IDS = new Set([3340, 3363, 3364, 2055, 3013]);
 
 const PERIODS: Record<string, { label: string; ms: number }> = {
@@ -43,23 +61,141 @@ const PERIODS: Record<string, { label: string; ms: number }> = {
   month: { label: '30 Days', ms: 2_592_000_000 },
 };
 
-function getRuneTreeId(s: any): { primary: number; secondary: number } {
-  let primary = s?.perkStyle || s?.perkPrimaryStyle || s?.perk0Style || s?.perks?.perkStyle || s?.perkStyleId || 0;
-  let secondary = s?.perkSubStyle || s?.perkSubStyleId || s?.perks?.perkSubStyle || 0;
+function matchDate(match: any): string {
+  const raw = match.gameCreation || match.gameCreationDate || match.gameStartTimestamp;
+  if (!raw) return 'Time unavailable';
+  const date = new Date(typeof raw === 'number' && raw < 10_000_000_000 ? raw * 1000 : raw);
+  if (Number.isNaN(date.getTime())) return 'Time unavailable';
+  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 
-  const keystone = s?.perk0 || s?.perks?.perk0 || s?.perkPrimaryStyle || 0;
-  if (!primary && keystone) {
-    if (keystone >= 8000 && keystone < 8100) primary = 8000;
-    else if (keystone >= 8100 && keystone < 8200) primary = 8100;
-    else if (keystone >= 8200 && keystone < 8300) primary = 8200;
-    else if (keystone >= 8300 && keystone < 8400) primary = 8300;
-    else if (keystone >= 8400 && keystone < 8500) primary = 8400;
-  }
+function durationLabel(seconds: number): string {
+  const safe = Math.max(0, Number(seconds) || 0);
+  return `${Math.floor(safe / 60)}m ${safe % 60}s`;
+}
 
-  return { primary, secondary };
+function positionLabel(participant: any): string {
+  const value = participant?.teamPosition || participant?.individualPosition || participant?.timeline?.lane || participant?.lane || participant?.role;
+  if (!value || value === 'NONE') return 'Position unavailable';
+  const labels: Record<string, string> = { TOP: 'Top', JUNGLE: 'Jungle', MIDDLE: 'Mid', MID: 'Mid', BOTTOM: 'Bot', BOT: 'Bot', UTILITY: 'Support', SUPPORT: 'Support' };
+  return labels[String(value).toUpperCase()] || String(value).replaceAll('_', ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function participantStats(participant: any): any {
+  return participant?.stats || participant || {};
+}
+
+function participantName(participant: any, names: Record<number, string>, fallback: string): string {
+  return participant?.summonerName
+    || participant?.gameName
+    || participant?.riotIdGameName
+    || names[participant?.participantId]
+    || names[participant?.participantIdentityId]
+    || fallback;
+}
+
+function ParticipantLoadout({ participant, assets }: { participant: any; assets: MatchAssets }) {
+  const stats = participantStats(participant);
+  const spellIds = [participant?.spell1Id, participant?.spell2Id].map(Number);
+  const runes = runeSelection(participant);
+  return (
+    <div className="match-score-row__loadout">
+      <div className="match-score-row__spells">
+        {spellIds.map((id, index) => { const spell = assets.spells.get(id); return id ? <RiotAssetImage key={`${id}-${index}`} path={spell?.iconPath} alt={spell?.name || ''} title={spell?.name || `Unknown spell ${id}`} loading="lazy" fallback={<i />} /> : <i key={index} />; })}
+      </div>
+      <div className="match-score-row__runes">
+        {runes.styles.map((id) => { const style = assets.styles.get(id); return <RiotAssetImage key={`style-${id}`} path={style?.iconPath} alt={style?.name || ''} title={style?.name || `Rune style ${id}`} loading="lazy" fallback={<i />} />; })}
+        {runes.perks.map((id) => { const perk = assets.perks.get(id); return <RiotAssetImage key={`perk-${id}`} path={perk?.iconPath} alt={perk?.name || ''} title={perk?.name || `Rune ${id}`} loading="lazy" fallback={<i />} />; })}
+        {runes.shards.map((id) => { const shard = assets.perks.get(id); return <RiotAssetImage key={`shard-${id}`} path={shard?.iconPath} alt={shard?.name || ''} title={shard?.name || `Stat shard ${id}`} loading="lazy" fallback={<i />} />; })}
+      </div>
+      <ItemStrip stats={stats} assets={assets} />
+    </div>
+  );
+}
+
+function MatchDetails({ match, detail, loading, player, queueName, championName, championNames, assets }: { match: any; detail: any; loading: boolean; player: any; queueName: string; championName: string; championNames: Record<number, string>; assets: MatchAssets }) {
+  const allParticipants: any[] = detail?.participants || match?.participants || [player];
+  const identities = detail?.participantIdentities || match?.participantIdentities || [];
+  const nameMap: Record<number, string> = {};
+  identities.forEach((identity: any) => {
+    const name = identity?.player?.summonerName || identity?.player?.gameName || identity?.player?.riotIdGameName;
+    if (identity?.participantId && name) nameMap[identity.participantId] = name;
+  });
+  const localID = player?.participantId || identities[0]?.participantId;
+  const localParticipant = allParticipants.find((entry) => entry?.participantId === localID) || player;
+  const stats = participantStats(localParticipant);
+  const teamID = localParticipant?.teamId || player?.teamId || 100;
+  const teamPlayers = allParticipants.filter((entry) => (entry?.teamId || 100) === teamID);
+  const teamKills = teamPlayers.reduce((sum, entry) => sum + (participantStats(entry).kills || 0), 0);
+  const kills = stats.kills || 0;
+  const deaths = stats.deaths || 0;
+  const assists = stats.assists || 0;
+  const cs = (stats.totalMinionsKilled || 0) + (stats.neutralMinionsKilled || 0);
+  const kp = teamKills > 0 ? Math.round(((kills + assists) / teamKills) * 100) : null;
+  const isWin = Boolean(stats.win || stats.winner);
+  const teams: any[] = detail?.teams || [];
+  const teamOrder = [teamID, ...[100, 200].filter((id) => id !== teamID)];
+
+  return (
+    <div className="match-analysis">
+      <header className="match-analysis__overview">
+        <div className={`match-analysis__result ${isWin ? 'is-victory' : 'is-defeat'}`}><Trophy /><span>{isWin ? 'Victory' : 'Defeat'}</span></div>
+        <div><small>QUEUE</small><strong>{queueName}</strong><span>{matchDate(match)}</span></div>
+        <div><small>DURATION</small><strong>{durationLabel(match?.gameDuration || detail?.gameDuration)}</strong><span>Game {match?.gameId || detail?.gameId || '—'}</span></div>
+        <div className="match-analysis__champion"><img src={`/lol-game-data/assets/v1/champion-icons/${localParticipant?.championId || player?.championId || 0}.png`} alt="" width="72" height="72" /><span><small>YOUR PICK</small><strong>{championName}</strong><em>{positionLabel(localParticipant)}</em></span></div>
+      </header>
+
+      <section className="match-performance" aria-label="Your performance">
+        <div className="match-analysis__section-title"><Crosshair /><span><small>PLAYER PERFORMANCE</small><strong>Your match at a glance</strong></span></div>
+        <div className="match-performance__primary">
+          <div><small>KDA</small><strong>{kills} / <em>{deaths}</em> / {assists}</strong><span>{deaths === 0 ? 'Perfect KDA' : `${((kills + assists) / deaths).toFixed(2)} ratio`}</span></div>
+          <div><small>KILL PARTICIPATION</small><strong>{kp == null ? '—' : `${kp}%`}</strong><span>{teamKills ? `${teamKills} team kills` : 'Team data unavailable'}</span></div>
+          <div><small>FARM</small><strong>{cs} CS</strong><span>{match?.gameDuration ? `${(cs / (match.gameDuration / 60)).toFixed(1)} per min` : 'Rate unavailable'}</span></div>
+          <div><small>GOLD</small><strong>{(stats.goldEarned || 0).toLocaleString()}</strong><span>Level {stats.champLevel || localParticipant?.champLevel || '—'}</span></div>
+        </div>
+        <div className="match-performance__secondary">
+          <span><Flame /><small>Champion damage</small><strong>{(stats.totalDamageDealtToChampions || 0).toLocaleString()}</strong></span>
+          <span><Shield /><small>Damage taken</small><strong>{(stats.totalDamageTaken || 0).toLocaleString()}</strong></span>
+          <span><Eye /><small>Vision score</small><strong>{stats.visionScore ?? '—'}</strong></span>
+          <span><Target /><small>Wards</small><strong>{stats.wardsPlaced || 0} placed · {stats.wardsKilled || 0} cleared</strong></span>
+          <span><Crosshair /><small>Best spree</small><strong>{stats.largestKillingSpree || 0}</strong></span>
+          <span><Users /><small>Multi-kills</small><strong>{(stats.doubleKills || 0) + (stats.tripleKills || 0) + (stats.quadraKills || 0) + (stats.pentaKills || 0)}</strong></span>
+        </div>
+      </section>
+
+      <section className="match-scoreboard" aria-label="Match scoreboard">
+        <div className="match-analysis__section-title"><Users /><span><small>FULL SCOREBOARD</small><strong>Your team and opponents</strong></span></div>
+        {loading && <div className="match-analysis__loading"><Loader2 className="animate-spin" />Loading participant details…</div>}
+        {!loading && teamOrder.map((id) => {
+          const participants = allParticipants.filter((entry) => (entry?.teamId || 100) === id);
+          if (!participants.length) return null;
+          const team = teams.find((entry) => entry?.teamId === id) || {};
+          const won = String(team.win || '').toLowerCase() === 'win' || participants.some((entry) => participantStats(entry).win === true);
+          const totalTeamKills = participants.reduce((sum, entry) => sum + (participantStats(entry).kills || 0), 0);
+          return <div className={`match-team ${id === teamID ? 'is-yours' : 'is-enemy'}`} key={id}>
+            <header><span><strong>{id === teamID ? 'Your team' : 'Enemy team'}</strong><small>{won ? 'Victory' : 'Defeat'} · {totalTeamKills} kills</small></span><div><b><Target />{team.towerKills ?? '—'} towers</b><b><span>◆</span>{team.dragonKills ?? '—'} dragons</b><b><span>◈</span>{team.baronKills ?? '—'} barons</b><b><span>◇</span>{team.riftHeraldKills ?? '—'} heralds</b></div></header>
+            <div className="match-team__players">{participants.map((entry, index) => {
+              const entryStats = participantStats(entry);
+              const entryID = entry?.participantId;
+              const isMe = Boolean(localID && entryID === localID);
+              const championID = entry?.championId || 0;
+              const entryCS = (entryStats.totalMinionsKilled || 0) + (entryStats.neutralMinionsKilled || 0);
+              return <article className={`match-score-row ${isMe ? 'is-me' : ''}`} key={entryID || index}>
+                <div className="match-score-row__identity"><img src={`/lol-game-data/assets/v1/champion-icons/${championID}.png`} alt="" width="40" height="40" loading="lazy" /><span><strong>{participantName(entry, nameMap, `Player ${index + 1}`)}{isMe ? ' · You' : ''}</strong><small>{championNames[championID] || `Champion ${championID}`} · Level {entryStats.champLevel || entry?.champLevel || '—'}</small></span></div>
+                <div className="match-score-row__kda"><strong>{entryStats.kills || 0} / <em>{entryStats.deaths || 0}</em> / {entryStats.assists || 0}</strong><small>{entryStats.deaths ? (((entryStats.kills || 0) + (entryStats.assists || 0)) / entryStats.deaths).toFixed(1) : 'Perfect'} KDA</small></div>
+                <div className="match-score-row__economy"><span><Crosshair />{entryCS} CS</span><span><Coins />{((entryStats.goldEarned || 0) / 1000).toFixed(1)}k</span><span><Flame />{(entryStats.totalDamageDealtToChampions || 0).toLocaleString()}</span><span><Eye />{entryStats.visionScore ?? '—'}</span></div>
+                <ParticipantLoadout participant={entry} assets={assets} />
+              </article>;
+            })}</div>
+          </div>;
+        })}
+      </section>
+    </div>
+  );
 }
 
 export default function MatchHistory() {
+  const showLegacyMatchDetails = false;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<any[]>([]);
@@ -71,24 +207,29 @@ export default function MatchHistory() {
   });
   const [periodFilter, setPeriodFilter] = useState<string>(() => localStorage.getItem('riftops.history.period') || 'all');
   const [gameCount, setGameCount] = useState<number>(() => Number(localStorage.getItem('riftops.history.count') || 50));
-  const [ddVer, setDdVer] = useState('15.1.1');
+  const [championNames, setChampionNames] = useState<Record<number, string>>({});
+  const [assets, setAssets] = useState<MatchAssets>(EMPTY_ASSETS);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [paginationError, setPaginationError] = useState('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setPaginationError('');
     try {
-      // Fetch version first so all images use the correct patch
-      const vData = await fetchDDragonVersion().catch(() => null);
-      if (vData?.version) setDdVer(vData.version);
-
-      const data = await fetchLCUMatchHistory();
-      if (data && data.games && data.games.games) {
-        setMatches(data.games.games);
-      } else if (Array.isArray(data)) {
-        setMatches(data);
-      } else {
-        setMatches([]);
-      }
+      const [data, champions, items, spells, runeCatalog] = await Promise.all([
+        fetchLCUMatchHistory(0, 50),
+        fetch('/lol-game-data/assets/v1/champion-summary.json').then((response) => response.ok ? response.json() : []).catch(() => []),
+        fetch('/lol-game-data/assets/v1/items.json').then((response) => response.ok ? response.json() : []).catch(() => []),
+        fetch('/lol-game-data/assets/v1/summoner-spells.json').then((response) => response.ok ? response.json() : []).catch(() => []),
+        fetchLCURuneCatalog().catch(() => ({ perks: [], styles: { styles: [] } })),
+      ]);
+      if (Array.isArray(champions)) setChampionNames(Object.fromEntries(champions.map((champion: any) => [Number(champion.id), String(champion.name || champion.alias || `Champion ${champion.id}`)])));
+      setAssets({ items: catalogueMap(items), spells: catalogueMap(spells), perks: catalogueMap(runeCatalog.perks), styles: catalogueMap(runeCatalog.styles.styles) });
+      const rows = matchRows(data);
+      setMatches(rows);
+      setHasMore(rows.length === 50);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch match history — launch League first.');
     } finally {
@@ -99,6 +240,30 @@ export default function MatchHistory() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  const appendPage = useCallback(async (loadAll = false) => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    setPaginationError('');
+    try {
+      let begin = matches.length;
+      let combined = [...matches];
+      while (begin < 500) {
+        const rows = matchRows(await fetchLCUMatchHistory(begin, begin + 50));
+        const known = new Set(combined.map((match) => String(match.gameId ?? `${match.gameCreation}-${match.queueId}`)));
+        for (const row of rows) {
+          const key = String(row.gameId ?? `${row.gameCreation}-${row.queueId}`);
+          if (!known.has(key)) { known.add(key); combined.push(row); }
+        }
+        begin += rows.length;
+        if (rows.length < 50 || !loadAll) { setHasMore(rows.length === 50 && begin < 500); break; }
+      }
+      if (begin >= 500) setHasMore(false);
+      setMatches(combined);
+    } catch (reason: any) {
+      setPaginationError(reason?.message || 'Could not load more matches. Your existing history is still available.');
+    } finally { setLoadingMore(false); }
+  }, [hasMore, loadingMore, matches]);
 
   useEffect(() => {
     try {
@@ -124,11 +289,6 @@ export default function MatchHistory() {
       } else if (detail && !detail.participants) {
         // try common wrapper keys
         detail = detail.games?.games?.[0] ?? detail.game ?? detail.games ?? detail;
-      }
-      // Log first participant keys for debugging name resolution
-      if (detail?.participants?.[0]) {
-        console.debug('[RiftOps] gameDetail participant keys:', Object.keys(detail.participants[0]));
-        console.debug('[RiftOps] gameDetail identities:', detail.participantIdentities?.slice(0, 2));
       }
       setGameDetails((prev) => ({ ...prev, [gameId]: detail }));
     } catch {
@@ -225,49 +385,33 @@ export default function MatchHistory() {
     URL.revokeObjectURL(url);
   };
 
+  const headerActions = (
+    <>
+      <button type="button" onClick={exportMatches} disabled={loading || filteredMatches.length === 0} className="page-header__icon-action" title="Export filtered matches" aria-label="Export filtered matches">
+        <Download />
+      </button>
+      <select value={gameCount} onChange={(e) => setGameCount(Number(e.target.value))} className="page-header__select" aria-label="Number of games">
+        <option value={20}>20 games</option>
+        <option value={50}>50 games</option>
+        <option value={100}>100 games</option>
+      </select>
+      <button type="button" onClick={() => void loadData()} disabled={loading} className="page-header__icon-action" title="Refresh match history" aria-label="Refresh match history">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </button>
+    </>
+  );
+
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <History className="w-5 h-5 text-primary" />
-          <h2 className="text-base font-black text-white">Match History</h2>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-            {filteredMatches.length} Matches
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={exportMatches}
-            disabled={loading || filteredMatches.length === 0}
-            className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-text-muted hover:text-white transition cursor-pointer border border-white/[0.06] disabled:opacity-30"
-            title="Export filtered matches"
-          >
-            <Download className="w-4 h-4" />
-          </button>
-          {/* Game count dropdown */}
-          <select
-            value={gameCount}
-            onChange={(e) => setGameCount(Number(e.target.value))}
-            className="text-xs bg-surface/80 border border-white/10 text-white font-bold rounded-xl px-2 py-1 cursor-pointer"
-          >
-            <option value={20}>20 Games</option>
-            <option value={50}>50 Games</option>
-            <option value={100}>100 Games</option>
-          </select>
-
-          <button
-            onClick={() => void loadData()}
-            disabled={loading}
-            className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-text-muted hover:text-white transition cursor-pointer border border-white/[0.06]"
-            title="Refresh Match History"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      </div>
+    <div className="page-content page-content--history space-y-4">
+      <PageHeader
+        variant="data"
+        icon={History}
+        eyebrow="MATCH INTELLIGENCE"
+        title="Match history"
+        description="Review the last games, spot trends, and open a match for the full scoreboard."
+        meta={<span className="page-header__badge">{filteredMatches.length} matches</span>}
+        actions={headerActions}
+      />
 
       {/* Summary Statistics Bar */}
       {!loading && !error && filteredMatches.length > 0 && (
@@ -309,7 +453,7 @@ export default function MatchHistory() {
       )}
 
       {/* Filter Toolbar */}
-      <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1">
+      <div className="page-toolbar page-toolbar--history flex items-center justify-between gap-2 overflow-x-auto pb-1">
         {/* Queue Filters */}
         <div className="flex items-center gap-1 shrink-0">
           <Filter className="w-3.5 h-3.5 text-primary mr-1" />
@@ -398,16 +542,11 @@ export default function MatchHistory() {
               const durationSecs = (m.gameDuration || 0) % 60;
               const queueName = QUEUE_MAP[m.queueId] || m.gameMode || 'Normal';
               const champId = participant.championId || m.championId || 0;
+              const championName = participant.championName || m.championName || championNames[champId] || (champId ? `Champion ${champId}` : 'Unknown champion');
 
-              const spell1 = SPELL_ICONS[participant.spell1Id];
-              const spell2 = SPELL_ICONS[participant.spell2Id];
-              const { primary: primaryStyle, secondary: subStyle } = getRuneTreeId(stats);
-
-              // Items build array
-              const items = [
-                stats.item0, stats.item1, stats.item2,
-                stats.item3, stats.item4, stats.item5, stats.item6,
-              ];
+              const spell1 = assets.spells.get(Number(participant.spell1Id));
+              const spell2 = assets.spells.get(Number(participant.spell2Id));
+              const selectedRunes = runeSelection(participant);
 
               // Damage Types Breakdown
               const dmgMagic = stats.magicDamageDealtToChampions || 0;
@@ -418,7 +557,7 @@ export default function MatchHistory() {
               return (
                 <div
                   key={gameId}
-                  className={`glass-card rounded-2xl border transition-all duration-200 overflow-hidden ${
+                  className={`history-match ${isWin ? 'is-victory' : 'is-defeat'} glass-card rounded-2xl border transition duration-200 overflow-hidden ${
                     isWin
                       ? 'bg-emerald-950/20 border-emerald-500/30 hover:border-emerald-500/50'
                       : 'bg-rose-950/20 border-rose-500/30 hover:border-rose-500/50'
@@ -427,19 +566,20 @@ export default function MatchHistory() {
                   {/* Summary Card Header */}
                   <div
                     onClick={() => void handleExpand(gameId)}
-                    className="p-3.5 flex items-center justify-between gap-3 cursor-pointer select-none"
+                    className="history-match__summary p-3.5 flex items-center justify-between gap-3 cursor-pointer select-none"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void handleExpand(gameId); } }}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs shrink-0 border ${
-                        isWin ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
-                      }`}>
-                        {isWin ? <Trophy className="w-5 h-5" /> : <Skull className="w-5 h-5" />}
-                      </div>
+                    <div className="history-match__identity flex items-center gap-3 min-w-0">
+                      <div className="history-result-crest" aria-hidden="true"><span>{isWin ? 'W' : 'L'}</span></div>
 
                       {champId > 0 && (
                         <img
                           src={`/lol-game-data/assets/v1/champion-icons/${champId}.png`}
                           alt=""
+                          width="40"
+                          height="40"
                           loading="lazy"
                           className="w-10 h-10 rounded-xl border border-white/10 bg-surface shrink-0 object-cover"
                           onError={(e: any) => { e.target.style.display = 'none'; }}
@@ -450,8 +590,8 @@ export default function MatchHistory() {
                       <div className="flex flex-col gap-1 shrink-0">
                         <div className="flex items-center gap-0.5">
                           {spell1 && (
-                            <img
-                              src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/spell/${spell1.icon}.png`}
+                            <RiotAssetImage
+                              path={spell1.iconPath}
                               alt={spell1.name}
                               title={spell1.name}
                               loading="lazy"
@@ -459,8 +599,8 @@ export default function MatchHistory() {
                             />
                           )}
                           {spell2 && (
-                            <img
-                              src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/spell/${spell2.icon}.png`}
+                            <RiotAssetImage
+                              path={spell2.iconPath}
                               alt={spell2.name}
                               title={spell2.name}
                               loading="lazy"
@@ -469,30 +609,12 @@ export default function MatchHistory() {
                           )}
                         </div>
                         <div className="flex items-center gap-0.5">
-                          {RUNE_TREES[primaryStyle] && (
-                            <img
-                              src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/perk-images/Styles/${RUNE_TREES[primaryStyle].img}.png`}
-                              alt={RUNE_TREES[primaryStyle].name}
-                              title={`Primary: ${RUNE_TREES[primaryStyle].name}`}
-                              loading="lazy"
-                              className="w-4 h-4 rounded-md bg-black/40"
-                              onError={(e: any) => { e.target.style.display = 'none'; }}
-                            />
-                          )}
-                          {RUNE_TREES[subStyle] && (
-                            <img
-                              src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/perk-images/Styles/${RUNE_TREES[subStyle].img}.png`}
-                              alt={RUNE_TREES[subStyle].name}
-                              title={`Secondary: ${RUNE_TREES[subStyle].name}`}
-                              loading="lazy"
-                              className="w-3.5 h-3.5 rounded-md bg-black/40 opacity-75"
-                              onError={(e: any) => { e.target.style.display = 'none'; }}
-                            />
-                          )}
+                          {selectedRunes.styles.slice(0, 2).map((id, index) => { const style = assets.styles.get(id); return <RiotAssetImage key={id} path={style?.iconPath} alt={style?.name || ''} title={`${index ? 'Secondary' : 'Primary'}: ${style?.name || id}`} loading="lazy" className="w-4 h-4 rounded-md bg-black/40" fallback={<i className="w-4 h-4 rounded-md bg-black/30" />} />; })}
+                          {selectedRunes.perks.slice(0, 1).map((id) => { const perk = assets.perks.get(id); return <RiotAssetImage key={id} path={perk?.iconPath} alt={perk?.name || ''} title={`Keystone: ${perk?.name || id}`} loading="lazy" className="w-4 h-4 rounded-md bg-black/40" fallback={<i className="w-4 h-4 rounded-md bg-black/30" />} />; })}
                         </div>
                       </div>
 
-                      <div className="min-w-0">
+                      <div className="history-match__meta min-w-0">
                         <div className="flex items-center gap-2">
                           <span className={`text-xs font-black uppercase ${isWin ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {isWin ? 'VICTORY' : 'DEFEAT'}
@@ -501,14 +623,13 @@ export default function MatchHistory() {
                             {queueName}
                           </span>
                         </div>
-                        <p className="text-[11px] text-text-dim font-medium mt-0.5">
-                          Duration: {durationMins}m {durationSecs}s
-                        </p>
+                        <strong className="history-match__champion">{championName}</strong>
+                        <p className="text-[11px] text-text-dim font-medium mt-0.5">{matchDate(m)} · {durationMins}m {durationSecs}s</p>
                       </div>
                     </div>
 
                     {/* Middle: KDA Stats */}
-                    <div className="text-center">
+                    <div className="history-match__kda text-center">
                       <p className="text-sm font-black text-white">
                         {kills} / <span className="text-rose-400">{deaths}</span> / {assists}
                       </p>
@@ -518,26 +639,8 @@ export default function MatchHistory() {
                     </div>
 
                     {/* Right: Items Build Slots & Drawer Toggle */}
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="flex items-center gap-1">
-                        {items.map((itemId: number | undefined, i: number) => {
-                          if (!itemId) {
-                            return <div key={i} className="w-6 h-6 rounded-lg border border-white/5 bg-black/30" />;
-                          }
-                          const isTrinket = TRINKET_IDS.has(itemId);
-                          return (
-                            <img
-                              key={i}
-                              src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/item/${itemId}.png`}
-                              alt=""
-                              className={`w-6 h-6 rounded-lg bg-surface object-cover border ${
-                                isTrinket ? 'border-amber-400/60 shadow-[0_0_8px_rgba(200,170,110,0.3)]' : 'border-white/10'
-                              }`}
-                              onError={(e: any) => { e.target.style.display = 'none'; }}
-                            />
-                          );
-                        })}
-                      </div>
+                    <div className="history-match__loadout flex items-center gap-3 shrink-0">
+                      <ItemStrip stats={stats} assets={assets} compact />
 
                       <button className="text-text-dim hover:text-white transition">
                         {isExpanded ? <ChevronUp className="w-4 h-4 text-primary" /> : <ChevronDown className="w-4 h-4" />}
@@ -545,8 +648,10 @@ export default function MatchHistory() {
                     </div>
                   </div>
 
-                  {/* Expanded Advanced Match Metrics & Scoreboard */}
-                  {isExpanded && (
+                  {isExpanded && <MatchDetails match={m} detail={gameDetails[gameId]} loading={loadingDetail === gameId} player={participant} queueName={queueName} championName={championName} championNames={championNames} assets={assets} />}
+
+                  {/* Previous detail renderer retained unreachable for one migration release. */}
+                  {showLegacyMatchDetails && isExpanded && (
                     <div className="p-4 bg-black/50 border-t border-white/[0.06] space-y-4 animate-fadeIn">
                       {/* Advanced Metrics Grid */}
                       <div className="grid grid-cols-3 gap-3">
@@ -661,13 +766,12 @@ export default function MatchHistory() {
                                       const pDmg = pStats.totalDamageDealtToChampions || 0;
                                       const pGold = pStats.goldEarned || 0;
                                       const pVis = pStats.visionScore || 0;
-                                      const pItems = [pStats.item0, pStats.item1, pStats.item2, pStats.item3, pStats.item4, pStats.item5, pStats.item6];
                                       const isMe = p.participantId === m.participants?.[0]?.participantId;
 
                                       return (
                                         <div
                                           key={pIdx}
-                                          className={`rounded-xl border p-2 space-y-1.5 transition-all ${
+                                          className={`rounded-xl border p-2 space-y-1.5 transition ${
                                             isMe
                                               ? 'bg-primary/10 border-primary/40 shadow-[0_0_12px_rgba(200,170,110,0.15)]'
                                               : teamWon
@@ -680,6 +784,8 @@ export default function MatchHistory() {
                                             <img
                                               src={`/lol-game-data/assets/v1/champion-icons/${pChampId}.png`}
                                               alt=""
+                                              width="32"
+                                              height="32"
                                               loading="lazy"
                                               className="w-8 h-8 rounded-lg border border-white/10 object-cover shrink-0"
                                               onError={(e: any) => { e.target.style.display = 'none'; }}
@@ -719,22 +825,7 @@ export default function MatchHistory() {
                                             </div>
 
                                             {/* Items strip */}
-                                            <div className="flex items-center gap-0.5 shrink-0">
-                                              {pItems.map((itemId: number | undefined, i: number) =>
-                                                itemId ? (
-                                                  <img
-                                                    key={i}
-                                                    src={`https://ddragon.leagueoflegends.com/cdn/${ddVer}/img/item/${itemId}.png`}
-                                                    alt=""
-                                                    loading="lazy"
-                                                    className={`w-5 h-5 rounded object-cover border ${TRINKET_IDS.has(itemId) ? 'border-amber-400/60' : 'border-white/10'}`}
-                                                    onError={(e: any) => { e.target.style.display = 'none'; }}
-                                                  />
-                                                ) : (
-                                                  <div key={i} className="w-5 h-5 rounded border border-white/5 bg-black/20" />
-                                                )
-                                              )}
-                                            </div>
+                                            <ItemStrip stats={pStats} assets={assets} compact />
                                           </div>
                                         </div>
                                       );
@@ -752,6 +843,8 @@ export default function MatchHistory() {
               );
             })
           )}
+          {paginationError && <div className="loot-workshop__state is-error"><span>{paginationError}</span></div>}
+          {hasMore && <div className="incremental-actions match-history__load-actions"><button type="button" className="skin-vault-results__more" disabled={loadingMore} onClick={() => void appendPage(false)}>{loadingMore ? <Loader2 className="animate-spin" /> : <ChevronDown />}Load 50 more matches</button><button type="button" className="skin-vault-results__more" disabled={loadingMore} onClick={() => void appendPage(true)}>{loadingMore ? <Loader2 className="animate-spin" /> : <History />}Load all available <span>up to 500 safely</span></button></div>}
         </div>
       )}
     </div>

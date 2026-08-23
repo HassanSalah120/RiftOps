@@ -6,9 +6,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/HassanSalah120/RiftOps/internal/diagnostics"
 	"github.com/HassanSalah120/RiftOps/internal/riotclient"
 )
 
@@ -18,9 +21,15 @@ import (
 // LCU is re-checked on every call (it's cached internally for 5min),
 // so launching the Riot Client later will be picked up automatically.
 
-// resolveAuth returns the LCU RSO access token. The client caches it and
-// refreshes when Riot Client starts or changes its local connection details.
+// resolveAuth returns credentials for the public Riot API. A developer-portal
+// key set via RIOT_API_KEY takes priority; otherwise RiftOps tries the local
+// client's RSO token (works where Riot accepts it, e.g. some personal-use
+// endpoints). The LCU is re-checked on every call so launching the client
+// later is picked up automatically.
 func resolveAuth() string {
+	if key := strings.TrimSpace(os.Getenv("RIOT_API_KEY")); key != "" {
+		return key
+	}
 	// Try LCU RSO token first (cached for 5min inside GetRSOAccessToken)
 	if token, ok := riotclient.GetRSOAccessToken(); ok {
 		slog.Debug("riotapi: auth via LCU RSO token")
@@ -147,6 +156,11 @@ var (
 	rlLast time.Time
 )
 
+const (
+	maxRiotAPIResponseBytes = 8 << 20
+	maxRiotAPIErrorBytes    = 8 << 10
+)
+
 func doRequest(url string) ([]byte, error) {
 	key := resolveAuth()
 	if key == "" {
@@ -175,13 +189,31 @@ func doRequest(url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	limit := int64(maxRiotAPIResponseBytes)
+	if resp.StatusCode != http.StatusOK {
+		limit = maxRiotAPIErrorBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, err
 	}
+	truncated := int64(len(body)) > limit
+	if truncated {
+		body = body[:limit]
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("riot API %d: %s", resp.StatusCode, string(body))
+		detail := strings.TrimSpace(diagnostics.Redact(string(body)))
+		if detail == "" {
+			detail = http.StatusText(resp.StatusCode)
+		}
+		if truncated {
+			detail += "… [truncated]"
+		}
+		return nil, fmt.Errorf("riot API %d: %s", resp.StatusCode, detail)
+	}
+	if truncated {
+		return nil, fmt.Errorf("riot API response exceeded %d bytes", maxRiotAPIResponseBytes)
 	}
 
 	return body, nil
@@ -191,10 +223,15 @@ func doRequest(url string) ([]byte, error) {
 // API methods
 // ---------------------------------------------------------------------------
 
+// normalizedRegion accepts "euw", " EUW ", and "EUW" alike.
+func normalizedRegion(regionCode string) string {
+	return strings.ToUpper(strings.TrimSpace(regionCode))
+}
+
 // GetAccountByRiotID looks up a Riot account by gameName#tagLine.
 // regionCode is a 2-3 letter region like "NA", "EUW", "KR".
 func GetAccountByRiotID(regionCode, gameName, tagLine string) (*Account, error) {
-	routing, ok := Regions[regionCode]
+	routing, ok := Regions[normalizedRegion(regionCode)]
 	if !ok {
 		routing = "americas"
 	}
@@ -214,7 +251,7 @@ func GetAccountByRiotID(regionCode, gameName, tagLine string) (*Account, error) 
 
 // GetSummonerByPUUID fetches summoner info using the PUUID.
 func GetSummonerByPUUID(regionCode, puuid string) (*Summoner, error) {
-	platform, ok := Platform[regionCode]
+	platform, ok := Platform[normalizedRegion(regionCode)]
 	if !ok {
 		platform = "na1"
 	}
@@ -233,7 +270,7 @@ func GetSummonerByPUUID(regionCode, puuid string) (*Summoner, error) {
 
 // GetChampionMastery fetches top champion masteries for a PUUID (default top 6).
 func GetChampionMastery(regionCode, puuid string, count int) ([]ChampionMastery, error) {
-	platform, ok := Platform[regionCode]
+	platform, ok := Platform[normalizedRegion(regionCode)]
 	if !ok {
 		platform = "na1"
 	}
@@ -255,7 +292,7 @@ func GetChampionMastery(regionCode, puuid string, count int) ([]ChampionMastery,
 
 // GetLeagueEntries fetches ranked league entries (solo/duo, flex) for a summoner ID.
 func GetLeagueEntries(regionCode, summonerID string) ([]LeagueEntry, error) {
-	platform, ok := Platform[regionCode]
+	platform, ok := Platform[normalizedRegion(regionCode)]
 	if !ok {
 		platform = "na1"
 	}
@@ -274,7 +311,7 @@ func GetLeagueEntries(regionCode, summonerID string) ([]LeagueEntry, error) {
 
 // GetCurrentGame fetches current game info for a summoner by PUUID.
 func GetCurrentGame(regionCode, puuid string) (*CurrentGameInfo, error) {
-	platform, ok := Platform[regionCode]
+	platform, ok := Platform[normalizedRegion(regionCode)]
 	if !ok {
 		platform = "na1"
 	}
@@ -293,7 +330,7 @@ func GetCurrentGame(regionCode, puuid string) (*CurrentGameInfo, error) {
 
 // GetRegionStatus fetches the League of Legends service status for a region.
 func GetRegionStatus(regionCode string) ([]RegionStatus, error) {
-	platform, ok := Platform[regionCode]
+	platform, ok := Platform[normalizedRegion(regionCode)]
 	if !ok {
 		platform = "na1"
 	}

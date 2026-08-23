@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { AlertTriangle, ShieldAlert } from 'lucide-react';
 import type { ConfirmAction } from '../types';
+import { useDialogFocus } from './useDialogFocus';
 
 export default function ConfirmModal({
   action,
@@ -10,15 +11,7 @@ export default function ConfirmModal({
   onClose: () => void;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    cancelRef.current?.focus();
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
+  const dialogRef = useDialogFocus<HTMLDivElement>(action.open, onClose, cancelRef);
 
   if (!action.open) return null;
 
@@ -31,6 +24,8 @@ export default function ConfirmModal({
       aria-labelledby="confirm-title"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="hextech-modal max-w-sm w-full p-5 space-y-4 shadow-2xl relative overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
@@ -54,12 +49,14 @@ export default function ConfirmModal({
         <div className="flex justify-end gap-2.5 pt-2 border-t border-white/[0.06]">
           <button
             ref={cancelRef}
+            type="button"
             onClick={onClose}
             className="px-4 py-2 rounded-xl text-xs font-bold text-text-muted hover:text-white bg-white/[0.04] hover:bg-white/[0.08] transition cursor-pointer border border-white/[0.06]"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={() => action.onConfirm()}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
               action.danger

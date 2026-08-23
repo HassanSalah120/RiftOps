@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,21 @@ func TestCheckerAndComparison(t *testing.T) {
 	newer, err := IsNewer("1.17.2", release.Version)
 	if err != nil || !newer {
 		t.Fatalf("release=%+v newer=%v err=%v", release, newer, err)
+	}
+}
+
+func TestCheckerRejectsUnsafeOrOversizedReleaseResponses(t *testing.T) {
+	for name, payload := range map[string]string{
+		"unsafe URL": `{"tag_name":"v1.18.0","html_url":"javascript:alert(1)","name":"Release"}`,
+		"oversized":  `{"tag_name":"v1.18.0","html_url":"https://example.test/release","name":"` + strings.Repeat("x", maxReleaseResponseBytes) + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(payload)) }))
+			defer server.Close()
+			if _, err := (Checker{URL: server.URL}).Latest(context.Background()); err == nil {
+				t.Fatal("unsafe release response was accepted")
+			}
+		})
 	}
 }
 
