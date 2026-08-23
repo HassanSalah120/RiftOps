@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing GitHub release tag to receive the Windows executable (for example v2.6.0)
+        description: Existing GitHub release tag to receive the Windows executable (for example v2.6.1)
         required: true
         type: string
 

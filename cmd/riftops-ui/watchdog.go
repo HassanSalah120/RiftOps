@@ -145,6 +145,11 @@ func initRunMarker(dataDir string) {
 	}
 	if err := os.WriteFile(runMarkerPath, marker, 0o600); err != nil {
 		slog.Warn("Could not write run marker", "path", runMarkerPath, "error", err)
+	} else {
+		// os.WriteFile does not change permissions when refreshing an existing
+		// marker. Re-apply the private mode so a stale 0644 marker cannot leak
+		// process metadata on Unix systems.
+		_ = os.Chmod(runMarkerPath, 0o600)
 	}
 }
 
