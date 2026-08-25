@@ -234,7 +234,7 @@ still require platform signing and macOS Developer ID notarization.
 
 If Windows reports that the standard executable is in use, close RiftOps and
 build again. The script safely writes a versioned fallback such as
-`dist/RiftOps-windows-amd64-v2.7.1.exe` instead of replacing a running file.
+`dist/RiftOps-windows-amd64-v2.7.2.exe` instead of replacing a running file.
 
 The desktop dashboard prefers loopback port `24080`. If another local service
 or a Windows excluded-port policy blocks it, RiftOps tries `24081` through
@@ -272,12 +272,10 @@ The Go module and release updater use <https://github.com/HassanSalah120/RiftOps
 RiftOps stores data under the `RiftOps` user configuration directory and imports
 compatible settings from the previous `Deceive` directory on first launch.
 
-The current TLS compatibility defaults still use the predecessor's loopback DNS
-and certificate endpoint. They are isolated as build-time variables in
-`internal/engine` and are a release gate: do not replace them with
-`localhost`/`127.0.0.1` unless RiftOps has an owned domain resolving to loopback
-and a trusted matching certificate. A rename alone would make the Riot chat
-proxy fail TLS validation.
+RiftOps rewrites Riot chat to `127.0.0.1` and generates a private local
+certificate for the chat proxy. The rewritten client configuration enables
+Riot's local bad-certificate compatibility mode, so RiftOps no longer depends
+on a predecessor-owned DNS record or remote certificate download service.
 
 RiftOps does not expose account switching or store Riot credentials in its
 dashboard. It keeps normal launch and presence preferences locally, while Riot
@@ -312,5 +310,5 @@ only an explicit, named mobile capability manifest. A route inventory test
 ensures phone permissions cannot reference an unregistered endpoint, and new
 desktop APIs remain remote-denied by default. The config proxy forwards only
 Riot's required headers, the outgoing chat connection verifies Riot's TLS
-hostname, downloaded certificates are hostname/validity checked, and
-diagnostics exclude tokens and chat content.
+hostname, RiftOps-generated certificates are cached with hostname/validity
+checks, and diagnostics exclude tokens and chat content.

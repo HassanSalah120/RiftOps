@@ -6,7 +6,7 @@
 
 > **Current-status addendum (2026-08-25).** The findings and checklist below preserve
 > the original audit evidence, but several entries are historical because the
-> source has moved on. The current baseline is v2.7.1: custom League install
+> source has moved on. The current baseline is v2.7.2: custom League install
 > discovery and Riot Client product launch are implemented, both platform release
 > workflows run the same frontend and desktop Go gates, and the local verification
 > suite passes (`npm run lint`, 30 frontend tests, production build,
@@ -16,12 +16,13 @@
 > version is supplied.
 >
 > The remaining release gates are not solved by splitting the oversized modules:
-> live League/phone/firewall/clean-machine smoke tests, Developer ID signing and
-> notarization, and ownership of the inherited Deceive-compatible TLS hostname and
-> certificate. The LAN phone transport remains explicitly HTTP and trusted-LAN
-> only. Saved session vaults use Windows DPAPI; macOS does not advertise account
-> switching until a native Keychain implementation is added. These are explicit
-> product/release constraints, not hidden failures.
+> live League/phone/firewall/clean-machine smoke tests and Developer ID signing
+> and notarization. The chat proxy is now self-contained: it rewrites to
+> `127.0.0.1`, generates its own local certificate, and has no predecessor DNS
+> or remote certificate dependency. The LAN phone transport remains explicitly
+> HTTP and trusted-LAN only. Saved session vaults use Windows DPAPI; macOS does
+> not advertise account switching until a native Keychain implementation is
+> added. These are explicit product/release constraints, not hidden failures.
 
 The operator-facing release procedure is maintained in
 [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
@@ -191,7 +192,7 @@ Replace panel polling with one backend snapshot/event stream and one frontend qu
 
 The original audit reported unbounded reads at `internal/riotclient/lcu.go:401`. The current client uses bounded readers and redacted/truncated error text, with regression coverage in `internal/riotclient/lcu_test.go`. Keep those limits in place when adding endpoints.
 
-The loopback LCU uses `InsecureSkipVerify` with `ServerName=127.0.0.1` (`internal/riotclient/lcu.go:79-81`). This is an intentional self-signed loopback compatibility decision, but keep it narrowly scoped to the loopback client and test that remote URLs cannot enter this client.
+The loopback LCU uses `InsecureSkipVerify` with `ServerName=127.0.0.1` (`internal/riotclient/lcu.go:79-81`). This is an intentional self-signed loopback compatibility decision, but keep it narrowly scoped to the loopback client and test that remote URLs cannot enter this client. The chat proxy follows the same boundary with a RiftOps-generated loopback certificate; no remote certificate service is involved.
 
 ### Watchdog coverage differs by OS — P2
 

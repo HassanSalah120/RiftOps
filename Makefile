@@ -1,4 +1,4 @@
-VERSION ?= $(shell tr -d '\r\n' < VERSION 2>/dev/null || echo 2.7.1)
+VERSION ?= $(shell tr -d '\r\n' < VERSION 2>/dev/null || echo 2.7.2)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 

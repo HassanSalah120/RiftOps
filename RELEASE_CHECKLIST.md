@@ -42,10 +42,11 @@ League Client.
 - [ ] The phone is tested on the same trusted private network; never expose
       the HTTP listener to the public internet.
 
-## Explicit external gate
+## Chat proxy acceptance
 
-The chat proxy still uses the inherited Deceive-compatible loopback hostname
-and certificate endpoint. Keep those values until RiftOps owns a domain that
-resolves to loopback and a trusted matching certificate. Replacing the hostname
-with `localhost` is not a valid release fix because Riot validates the expected
-TLS name.
+- [ ] Client config rewrites chat to `127.0.0.1` and enables Riot's local
+      bad-certificate compatibility mode.
+- [ ] RiftOps generates and caches a private certificate for `127.0.0.1`; no
+      external DNS record or certificate download is required.
+- [ ] Confirm chat, friends, lobby presence, and in-game notifications on a
+      real League Client after a clean first start.

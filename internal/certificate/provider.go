@@ -10,11 +10,9 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/big"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,14 +21,10 @@ import (
 	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
 
-const MaxPFXBytes = 2 << 20
-
 type Provider struct {
 	CachePath   string
-	URL         string
 	Hostname    string
 	MinValidFor time.Duration
-	Client      *http.Client
 }
 
 func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
@@ -44,60 +38,13 @@ func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
 		}
 		_ = os.Remove(p.CachePath) // stale cache, discard
 	}
-	// Always produce a local certificate immediately — never block startup on network.
+	// Always produce a local certificate immediately. The chat proxy is
+	// loopback-only and must never depend on an external certificate service.
 	cert, err := p.generateSelfSigned()
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	// In background, try to download the real certificate and replace the cache
-	// for next boot. Never block the caller on this.
-	if p.URL != "" {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			realCert, err := p.download(ctx)
-			if err != nil {
-				slog.Debug("background cert download skipped", "error", err)
-				return
-			}
-			slog.Info("downloaded and cached real proxy certificate")
-			_ = realCert // already cached by download()
-		}()
-	}
 	return cert, nil
-}
-
-// download fetches and caches the remote certificate.
-func (p Provider) download(ctx context.Context) (tls.Certificate, error) {
-	client := p.Client
-	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second}
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	request.Header.Set("User-Agent", "RiftOps/2.0")
-	response, err := client.Do(request)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("download proxy certificate: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return tls.Certificate{}, fmt.Errorf("certificate server returned %s", response.Status)
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, MaxPFXBytes+1))
-	if err != nil || len(data) > MaxPFXBytes {
-		return tls.Certificate{}, errors.New("certificate response was invalid or too large")
-	}
-	certificate, err := p.decodeAndValidate(data)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	if err := writePrivateFile(p.CachePath, data); err != nil {
-		return tls.Certificate{}, fmt.Errorf("cache proxy certificate: %w", err)
-	}
-	return certificate, nil
 }
 
 // generateSelfSigned creates an ECDSA self-signed certificate as a last-resort fallback.
@@ -145,7 +92,7 @@ func (p Provider) generateSelfSigned() (tls.Certificate, error) {
 		PrivateKey:  key,
 		Leaf:        leaf,
 	}
-	// Cache the self-signed cert as PKCS#12 for consistency with the download format
+	// Cache the self-signed cert as PKCS#12 so subsequent starts can reuse it.
 	pfxData, err := pkcs12.Encode(rand.Reader, key, leaf, nil, "")
 	if err != nil {
 		slog.Warn("could not cache self-signed cert as PKCS#12", "error", err)

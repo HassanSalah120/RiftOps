@@ -20,7 +20,7 @@ Status meanings:
 | Fake RiftOps friend and chat commands | `ProxiedConnection.cs`, `MainController.cs` | `internal/fakeplayer`, `internal/chatproxy` | Verified with roster/command tests |
 | First-run chat guidance | `MainController.cs` | `internal/engine/engine.go` | Implemented |
 | Remember-last/default startup status | `MainController.cs`, `Persistence.cs` | `internal/settings`, dashboard and tray | Verified persistence |
-| Certificate download/cache | `Utils.cs`, `Persistence.cs` | `internal/certificate` | Implemented with stronger hostname and validity checks |
+| Local certificate generation/cache | `Utils.cs`, `Persistence.cs` | `internal/certificate` | Implemented with loopback IP SAN and validity checks; no remote service |
 | Update notification | `Utils.cs` | `internal/update`, dashboard lifecycle | Version logic verified; live UI gate |
 | Extra Riot/game arguments | `StartupHandler.cs` | `cmd/riftops/main.go`, `internal/platform` | Verified argument generation |
 | System tray workflow | `MainController.cs` | `cmd/riftops-ui/main.go` | Implemented for Windows/macOS |

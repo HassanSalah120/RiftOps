@@ -19,7 +19,7 @@ func TestRewrite(t *testing.T) {
 	if err := json.Unmarshal(modified, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["chat.host"] != "riftops.test" || got["chat.port"] != float64(12345) || got["untouched"] != true {
+	if got["chat.host"] != "riftops.test" || got["chat.port"] != float64(12345) || got["chat.allow_bad_cert.enabled"] != true || got["untouched"] != true {
 		t.Fatalf("modified config = %s", modified)
 	}
 	for key, host := range got["chat.affinities"].(map[string]any) {

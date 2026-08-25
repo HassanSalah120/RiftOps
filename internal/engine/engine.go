@@ -22,13 +22,12 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
-// These defaults keep the existing Riot TLS interception path working. They
-// are variables so official RiftOps builds can replace them with -X once a
-// RiftOps-owned loopback hostname and certificate service are available.
-var (
-	LocalhostDomain = "deceive-localhost.molenzwiebel.xyz"
-	CertificateURL  = "https://mln.cx/deceive/localhost.pfx"
-)
+// Riot's client-config service is rewritten to a loopback-only chat endpoint.
+// The chat proxy uses a locally generated certificate and the
+// rewritten config explicitly enables Riot's local bad-certificate mode. This
+// keeps RiftOps independent of a predecessor-owned DNS record or certificate
+// download service.
+const LocalhostDomain = "127.0.0.1"
 
 type Phase string
 
@@ -389,7 +388,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		e.emit(Snapshot{Phase: PhaseIdle, Status: finalConfig.Status, Enabled: finalConfig.Enabled, Game: game, Detail: "Ready to launch"})
 	}()
 	e.emit(e.phaseSnapshot(PhasePreflight, game, "Checking Riot Client and local networking"))
-	if err := ensureLoopbackDNS(ctx, LocalhostDomain); err != nil {
+	if err := ensureLoopbackEndpoint(ctx, LocalhostDomain); err != nil {
 		return e.fail(game, status, err)
 	}
 
@@ -450,7 +449,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	if err != nil {
 		return e.fail(game, status, err)
 	}
-	serverCertificate, err := (certificate.Provider{CachePath: cachePath, URL: CertificateURL, Hostname: LocalhostDomain}).Load(ctx)
+	serverCertificate, err := (certificate.Provider{CachePath: cachePath, Hostname: LocalhostDomain}).Load(ctx)
 	if err != nil {
 		return e.fail(game, status, err)
 	}
@@ -843,7 +842,13 @@ func startupStatus(config settings.Settings) model.Status {
 	return status
 }
 
-func ensureLoopbackDNS(ctx context.Context, hostname string) error {
+func ensureLoopbackEndpoint(ctx context.Context, hostname string) error {
+	if ip := net.ParseIP(hostname); ip != nil {
+		if ip.IsLoopback() {
+			return nil
+		}
+		return fmt.Errorf("%s is not a loopback address", hostname)
+	}
 	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", hostname, err)

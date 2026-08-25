@@ -7,8 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,14 +42,10 @@ func makePFX(t *testing.T, hostname string, notAfter time.Time) []byte {
 	return encoded
 }
 
-func TestProviderDownloadsValidatesAndCaches(t *testing.T) {
+func TestProviderGeneratesValidatesAndCaches(t *testing.T) {
 	const hostname = "riftops-localhost.example.test"
-	pfx := makePFX(t, hostname, time.Now().Add(90*24*time.Hour))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(pfx)
-	}))
 	cache := filepath.Join(t.TempDir(), "cache", "localhost.pfx")
-	provider := Provider{CachePath: cache, URL: server.URL, Hostname: hostname}
+	provider := Provider{CachePath: cache, Hostname: hostname}
 	certificate, err := provider.Load(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -58,9 +53,19 @@ func TestProviderDownloadsValidatesAndCaches(t *testing.T) {
 	if certificate.Leaf == nil || certificate.Leaf.DNSNames[0] != hostname {
 		t.Fatalf("unexpected certificate: %+v", certificate.Leaf)
 	}
-	server.Close()
 	if _, err := (Provider{CachePath: cache, Hostname: hostname}).Load(context.Background()); err != nil {
 		t.Fatalf("cached certificate was not reusable: %v", err)
+	}
+}
+
+func TestProviderGeneratesLoopbackIPCertificate(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "cache", "localhost.pfx")
+	certificate, err := (Provider{CachePath: cache, Hostname: "127.0.0.1"}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if certificate.Leaf == nil || len(certificate.Leaf.IPAddresses) != 1 || !certificate.Leaf.IPAddresses[0].Equal(net.ParseIP("127.0.0.1")) {
+		t.Fatalf("generated certificate has no loopback IP SAN: %+v", certificate.Leaf)
 	}
 }
 
