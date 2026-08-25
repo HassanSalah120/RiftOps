@@ -6,6 +6,10 @@ Windows and macOS. The canonical release version is stored in the root
 `VERSION` file; the local packaging scripts read it when `-Version`/the version
 argument is omitted.
 
+Download links and Windows signing details are in [Downloads](DOWNLOADS.md).
+See the [Privacy Policy](PRIVACY.md) for local storage, Riot-service requests,
+and optional LAN phone control.
+
 ## Start here
 
 1. Download the latest `RiftOps-<version>-win-x64.exe` from the
@@ -15,11 +19,12 @@ argument is omitted.
 4. For League tools, open and sign in to the League Client first. In RiftOps,
    select **Quality of Life** from the sidebar.
 
-Windows release trust: the v2.7.2 binary predates the Kingof30 Authenticode
-signing pipeline and may show a SmartScreen “Unknown publisher” prompt. Verify
-the downloaded file against its `.sha256` checksum before running it. The
-release workflow now refuses to publish future Windows binaries unless they
-are signed with the configured Kingof30 certificate and timestamped.
+Windows release trust: while the SignPath Foundation application is pending,
+Windows releases are published unsigned and may show a SmartScreen “Unknown
+publisher” prompt. Verify the downloaded file against its `.sha256` checksum
+before running it. The release workflow can enable SignPath signing after
+approval; signed releases are Authenticode-verified and published with a
+refreshed checksum.
 
 League does not have to be inside the Riot Client folder. On Windows, RiftOps
 also reads Riot's install registry and checks the registered League folder
@@ -237,6 +242,23 @@ Outputs are `dist/RiftOps-<version>-win-x64.exe` and
 and macOS release workflows run the same locked frontend install, lint, tests,
 production build, race-enabled desktop Go tests, and vet gates. Public releases
 still require platform signing and macOS Developer ID notarization.
+
+### Windows signing for maintainers
+
+RiftOps plans to use [SignPath Foundation](https://signpath.org/) for free
+signing of eligible open-source releases. Until approval, no signing secret or
+certificate is needed: the Windows workflow publishes an unsigned portable
+executable. After approval, create the GitHub trusted-build project and
+release-signing policy, then configure these GitHub Actions values:
+
+- Secret: `SIGNPATH_API_TOKEN`
+- Repository variables: `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`,
+  `SIGNPATH_SIGNING_POLICY_SLUG`, and `SIGNPATH_ENABLED=true`
+
+When enabled, the Windows workflow uploads the unsigned artifact to SignPath,
+downloads the signed artifact, verifies that its publisher is SignPath
+Foundation, and then attaches it to the GitHub release. The private signing
+key never enters this repository or GitHub Actions.
 
 If Windows reports that the standard executable is in use, close RiftOps and
 build again. The script safely writes a versioned fallback such as

@@ -23,10 +23,17 @@ League Client.
    `bash ./scripts/build-macos.sh`.
 4. Confirm each artifact has a matching `.sha256` file and verify the hash on a
    separate machine before uploading it to the GitHub Release.
-5. Configure the `WINDOWS_SIGNING_PFX_BASE64` and
-   `WINDOWS_SIGNING_PFX_PASSWORD` GitHub Secrets for the Kingof30 certificate.
-   The Windows release workflow signs with SHA-256 and an RFC 3161 timestamp,
-   verifies the Authenticode subject, then regenerates the checksum.
+5. (Optional while the SignPath application is pending.) Configure SignPath
+   Foundation before publishing signed Windows releases:
+   - GitHub Actions secret: `SIGNPATH_API_TOKEN`.
+   - Repository variables: `SIGNPATH_ORGANIZATION_ID`,
+     `SIGNPATH_PROJECT_SLUG`, and `SIGNPATH_SIGNING_POLICY_SLUG`.
+   Set the repository variable `SIGNPATH_ENABLED` to `true` only after the
+   SignPath project is ready. With it unset or `false`, the workflow publishes
+   an unsigned executable and does not require any SignPath credentials. When
+   enabled, the workflow uploads the executable to SignPath's trusted GitHub
+   build system, waits for the signing request, verifies the SignPath
+   Authenticode subject, then regenerates the checksum.
 6. Attach Windows and macOS artifacts to the same release tag. Do not claim
    macOS Gatekeeper compatibility until Developer ID signing and notarization
    have completed.
@@ -39,8 +46,9 @@ the checksum and Authenticode verification must describe the published bytes.
 
 - [ ] Clean Windows startup has no console window and works with League outside
       the Riot Client directory.
-- [ ] `Get-AuthenticodeSignature` reports `Valid` and the signer subject contains
-      `Kingof30` for the published Windows executable.
+- [ ] If SignPath is enabled, `Get-AuthenticodeSignature` reports `Valid` and
+      the signer subject contains `SignPath Foundation` for the published
+      Windows executable.
 - [ ] Clean macOS startup opens `RiftOps.app`; the app is signed/notarized for
       the intended distribution channel.
 - [ ] League Client discovery, launch, lockfile refresh, friend list, and LCU

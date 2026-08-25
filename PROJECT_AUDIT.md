@@ -65,7 +65,7 @@ The next release should ship only after these gates are closed:
 | Desktop UI | `cmd/riftops-ui/frontend/src`, shared `App.tsx`, pages for command center, play flow, live session, history, skins, loot, QoL, settings | Feature-rich but duplicated: QoL, Play Flow, Live Session, and Loot/Profile Studio overlap. |
 | Phone UI | The same SPA served by the LAN listener; QR creates a separate in-memory cookie session | Pairing/session primitives are good; there is no first-class `isRemote` capability in the React app. |
 | Diagnostics | `watchdog.go`, logger, timestamped reports under the user config directory | Useful crash/hang evidence; retention, privacy scrubbing, and macOS UI probing are incomplete. |
-| Releases | Local Windows/macOS packaging scripts plus GitHub Actions release and PR CI workflows | Windows release signing is enforced through the Kingof30 certificate secrets and SHA-256 timestamped Authenticode; macOS signing/notarization and clean-machine startup remain release-owner gates. |
+| Releases | Local Windows/macOS packaging scripts plus GitHub Actions release and PR CI workflows | Windows releases are unsigned by default while SignPath Foundation approval is pending, with optional trusted signing and SHA-256 checksums; macOS signing/notarization and clean-machine startup remain release-owner gates. |
 
 ## 2. What is working well
 
