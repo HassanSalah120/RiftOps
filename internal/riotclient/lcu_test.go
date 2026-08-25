@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -49,6 +50,9 @@ func TestLeagueLockfileCandidatesIncludeDirectInstallFolder(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "League of Legends")
 	paths := leagueLockfileCandidates([]string{base})
 	want := filepath.Join(base, "lockfile")
+	if runtime.GOOS == "darwin" {
+		want = filepath.Join(base, "League of Legends.app", "Contents", "LoL", "lockfile")
+	}
 	for _, path := range paths {
 		if path == want {
 			return
