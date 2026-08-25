@@ -111,6 +111,30 @@ func TestRemoteRouteScopeRejectsDesktopCapabilities(t *testing.T) {
 	}
 }
 
+func TestRemoteRouteScopeOnlyServesSafeGameAssets(t *testing.T) {
+	called := false
+	handler := remoteRouteScope(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, test := range []struct {
+		path string
+		code int
+	}{
+		{path: "/lol-game-data/assets/v1/champion-summary.json", code: http.StatusNoContent},
+		{path: "/lol-game-data/assets/ASSETS/UX/champion.png", code: http.StatusNoContent},
+		{path: "/lol-game-data/../api/preferences", code: http.StatusForbidden},
+		{path: "/lol-game-data/assets/v1/secret.bin", code: http.StatusForbidden},
+	} {
+		called = false
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if recorder.Code != test.code || (test.code == http.StatusNoContent && !called) || (test.code == http.StatusForbidden && called) {
+			t.Errorf("asset path %s: code=%d called=%v, want code=%d", test.path, recorder.Code, called, test.code)
+		}
+	}
+}
+
 func TestRemoteCapabilityManifestMatchesRegisteredRoutes(t *testing.T) {
 	registered := make(map[string]bool)
 	for _, route := range dashboardRoutes() {

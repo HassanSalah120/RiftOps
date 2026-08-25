@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -189,6 +190,12 @@ func (m *Manager) Run(ctx context.Context) {
 					cooldowns["startqueue"] = time.Now().Add(2 * time.Second)
 				}
 				if time.Now().After(cooldowns["startqueue"]) {
+					// A custom/practice lobby is already ready for an explicit
+					// Start button. Never replace it with a matchmade queue.
+					if m.isCustomLobby(lockfile) {
+						handled["startqueue"] = true
+						continue
+					}
 					// Apply role presets if configured for this queue type
 					m.applyRolePreset(lockfile, prefs)
 					actionCtx, actionCancel := context.WithTimeout(ctx, 2*time.Second)
@@ -212,15 +219,46 @@ func (m *Manager) Run(ctx context.Context) {
 						actionCtx, actionCancel := context.WithTimeout(ctx, 4*time.Second)
 						claimed, rewardErr := lockfile.ClaimEventRewards(actionCtx)
 						actionCancel()
-						if rewardErr == nil && claimed > 0 {
-							handled["rewards"] = true
+						// Claim is a best-effort, phase-scoped action. Mark it
+						// handled even when there are no unclaimed rewards or one
+						// event endpoint is unavailable; otherwise the background
+						// loop hammers the event service every second.
+						handled["rewards"] = true
+						if rewardErr == nil {
 							slog.Info("qol: auto-claimed event rewards", "count", claimed)
+						} else {
+							slog.Debug("qol: event reward claim was incomplete", "error", rewardErr, "count", claimed)
 						}
 					}
 				}
 			}
 		}
 	}
+}
+
+func (m *Manager) isCustomLobby(lf *riotclient.Lockfile) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	body, err := lf.FetchCurrentLobby(ctx)
+	if err != nil {
+		return false
+	}
+	var lobby struct {
+		IsCustom        bool            `json:"isCustom"`
+		CustomGameLobby json.RawMessage `json:"customGameLobby"`
+		GameConfig      struct {
+			IsCustom bool   `json:"isCustom"`
+			QueueID  int    `json:"queueId"`
+			GameMode string `json:"gameMode"`
+		} `json:"gameConfig"`
+	}
+	if json.Unmarshal(body, &lobby) != nil {
+		return false
+	}
+	return lobby.IsCustom || lobby.GameConfig.IsCustom ||
+		(len(lobby.CustomGameLobby) > 0 && string(lobby.CustomGameLobby) != "null") ||
+		lobby.GameConfig.QueueID == riotclient.PracticeToolQueueID ||
+		strings.EqualFold(lobby.GameConfig.GameMode, "PRACTICETOOL")
 }
 
 // autoHonorFirstTeammate honors the first eligible ally with the single honor type.
@@ -271,14 +309,31 @@ func (m *Manager) applyRolePreset(lf *riotclient.Lockfile, prefs Preferences) {
 		return
 	}
 	var lobby struct {
-		GameMode string `json:"gameMode"`
-		QueueID  int    `json:"queueId"`
+		GameMode   string `json:"gameMode"`
+		QueueID    int    `json:"queueId"`
+		IsCustom   bool   `json:"isCustom"`
+		GameConfig struct {
+			QueueID  int    `json:"queueId"`
+			GameMode string `json:"gameMode"`
+			IsCustom bool   `json:"isCustom"`
+		} `json:"gameConfig"`
+		CustomGameLobby json.RawMessage `json:"customGameLobby"`
 	}
 	if json.Unmarshal(lobbyBody, &lobby) != nil {
 		return
 	}
+	if lobby.IsCustom || lobby.GameConfig.IsCustom || (len(lobby.CustomGameLobby) > 0 && string(lobby.CustomGameLobby) != "null") {
+		return
+	}
+	queueID := lobby.QueueID
+	if queueID == 0 {
+		queueID = lobby.GameConfig.QueueID
+	}
+	if queueID == 0 {
+		return
+	}
 	// Map queue ID to preset key
-	key := queueIDToKey(lobby.QueueID)
+	key := queueIDToKey(queueID)
 	if key == "" {
 		return
 	}
@@ -288,8 +343,11 @@ func (m *Manager) applyRolePreset(lf *riotclient.Lockfile, prefs Preferences) {
 	}
 	// Apply role preset
 	setCtx, setCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	_ = lf.AutoSetRoles(setCtx, preset.First, preset.Second)
-	setCancel()
+	defer setCancel()
+	if err := lf.AutoSetRoles(setCtx, preset.First, preset.Second); err != nil {
+		slog.Debug("qol: role preset could not be applied", "queue", key, "error", err)
+		return
+	}
 	slog.Info("qol: applied role preset", "queue", key, "first", preset.First, "second", preset.Second)
 }
 

@@ -8,6 +8,7 @@ import {
   firstLocalPendingPick,
   hasChampSelectActionID,
   liveLocalChampSelectAction,
+  localAssignedPosition,
   occupiedChampSelectChampionIDs,
   runePageForPick,
   type ChampSelectSession,
@@ -93,4 +94,11 @@ test('session fallback key is stable across hover and completion updates', () =>
   session.actions![0][0].championId = 103;
   session.actions![0][0].completed = true;
   assert.equal(champSelectSessionKey(session), initial);
+});
+
+test('local assigned position normalizes lane aliases and ignores Fill', () => {
+  assert.equal(localAssignedPosition({ localPlayerCellId: 4, myTeam: [{ cellId: 4, assignedPosition: 'MIDDLE' }] }), 'MIDDLE');
+  assert.equal(localAssignedPosition({ localPlayerCellId: 4, myTeam: [{ cellId: 4, position: 'ADC' }] }), 'BOTTOM');
+  assert.equal(localAssignedPosition({ localPlayerCellId: 4, myTeam: [{ cellId: 4, assignedRole: 'FILL' }] }), null);
+  assert.equal(localAssignedPosition({ localPlayerCellId: 4, myTeam: [{ cellId: 9, assignedPosition: 'TOP' }] }), null);
 });

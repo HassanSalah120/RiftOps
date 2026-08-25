@@ -309,6 +309,34 @@ export function fetchRiotCurrentGame(region: string, puuid: string): Promise<Rio
   });
 }
 
+export interface RiotMatchIDsResponse {
+  source: 'riot-api';
+  matchIds: string[];
+  start: number;
+  count: number;
+}
+
+export function fetchRiotMatchIDs(region: string, puuid: string, start = 0, count = 20): Promise<RiotMatchIDsResponse> {
+  return fetch(`/api/riot/match-ids?region=${encodeURIComponent(region)}&puuid=${encodeURIComponent(puuid)}&start=${start}&count=${count}`).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()) || 'Riot Match-V5 is unavailable');
+    return response.json();
+  });
+}
+
+export function fetchRiotMatch(region: string, matchId: string): Promise<any> {
+  return fetch(`/api/riot/match?region=${encodeURIComponent(region)}&matchId=${encodeURIComponent(matchId)}`).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()) || 'Riot match data is unavailable');
+    return response.json();
+  });
+}
+
+export function fetchRiotMatchTimeline(region: string, matchId: string): Promise<any> {
+  return fetch(`/api/riot/match-timeline?region=${encodeURIComponent(region)}&matchId=${encodeURIComponent(matchId)}`).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()) || 'Riot match timeline is unavailable');
+    return response.json();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Data Dragon
 // ---------------------------------------------------------------------------
@@ -427,6 +455,8 @@ export interface LCUProfile {
   summoner: LCUSummoner;
   league: LCULeagueEntry[];
   mastery: LCUChampionMastery[];
+  leagueError?: string;
+  masteryError?: string;
 }
 
 export interface LCUStatus {
@@ -661,12 +691,60 @@ export interface LCUGameflowSession {
   [key: string]: unknown;
 }
 
+export interface GameClientData {
+  available: boolean;
+  updatedAt?: string;
+  gameData?: {
+    gameId?: string;
+    gameTime?: number;
+    queueId?: number;
+    gameMode?: string;
+    mapName?: string;
+    mapNumber?: number;
+    mode?: string;
+    platformId?: string;
+    arena?: Record<string, unknown>;
+  };
+  arena?: Record<string, unknown>;
+  activePlayer?: {
+    summonerName?: string;
+    championName?: string;
+    level?: number;
+    currentGold?: number;
+    championStats?: Record<string, number>;
+    summonerSpells?: Array<Record<string, string>>;
+    fullRunes?: Array<Record<string, string | number>>;
+  };
+  players?: Array<{
+    summonerName?: string;
+    championName?: string;
+    team?: string;
+    position?: string;
+    level?: number;
+    isBot?: boolean;
+    isDead?: boolean;
+    items?: Array<{ itemID?: number; id?: number; count?: number; displayName?: string; price?: number }>;
+    scores?: {
+      kills?: number;
+      deaths?: number;
+      assists?: number;
+      creepScore?: number;
+      wardScore?: number;
+    };
+    summonerSpells?: Array<Record<string, string>>;
+  }>;
+  events?: Array<{ eventId?: number; eventName?: string; eventTime?: number }>;
+  detail?: string;
+}
+
 export interface LCUOverview {
   status: LCUStatus;
   health: LCUHealth;
   qol?: QoLState | null;
   gameflowSession?: LCUGameflowSession;
   gameflowSessionAvailable?: boolean;
+  activeGame?: GameClientData;
+  activeGameAvailable?: boolean;
 }
 
 export function fetchLCUOverview(signal?: AbortSignal): Promise<LCUOverview> {
@@ -676,6 +754,13 @@ export function fetchLCUOverview(signal?: AbortSignal): Promise<LCUOverview> {
     headers: { 'Cache-Control': 'no-cache' },
   }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()) || 'League Client overview is unavailable');
+    return response.json();
+  });
+}
+
+export function fetchActiveGame(): Promise<GameClientData> {
+  return fetch('/api/lcu/active-game', { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()) || 'Live game data is unavailable');
     return response.json();
   });
 }
@@ -753,6 +838,8 @@ export function fetchLCUAvailableQueues(): Promise<LCUAvailableQueue[]> {
 
 export interface LCULobby {
   canStartActivity?: boolean;
+  isCustom?: boolean;
+  customGameLobby?: unknown;
   gameConfig?: { queueId?: number; mapId?: number; gameMode?: string; isCustom?: boolean };
   localMember?: { isLeader?: boolean; allowedStartActivity?: boolean };
   phase?: string;
@@ -797,6 +884,21 @@ export function fetchLCUChampSelect(): Promise<unknown> {
     if (!r.ok) throw new Error((await r.text()) || 'Champion Select is not active');
     return r.json();
   });
+}
+
+async function fetchLCUChampSelectSwaps(path: string): Promise<any[]> {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error((await response.text()) || 'Champion-select swaps are unavailable');
+  const value = await response.json();
+  return Array.isArray(value) ? value : [];
+}
+
+export function fetchLCUChampSelectPickOrderSwaps(): Promise<any[]> {
+  return fetchLCUChampSelectSwaps('/api/lcu/champ-select/pick-order-swaps');
+}
+
+export function fetchLCUChampSelectPositionSwaps(): Promise<any[]> {
+  return fetchLCUChampSelectSwaps('/api/lcu/champ-select/position-swaps');
 }
 
 async function champSelectMutation<T = { ok: boolean }>(path: string, method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
@@ -845,6 +947,12 @@ export function rerollLCUChampSelect(): Promise<{ ok: boolean }> {
 
 export function swapLCUChampSelectBench(championId: number): Promise<{ ok: boolean }> {
   return champSelectMutation('/api/lcu/champ-select/bench/swap', 'POST', { championId });
+}
+
+export type ChampSelectSwapAction = 'request' | 'accept' | 'cancel' | 'decline';
+
+export function mutateLCUChampSelectSwap(kind: 'pick-order' | 'position', id: number, action: ChampSelectSwapAction): Promise<{ ok: boolean }> {
+  return champSelectMutation(`/api/lcu/champ-select/${kind}-swap`, 'POST', { id, action });
 }
 
 export interface LCURunePage {

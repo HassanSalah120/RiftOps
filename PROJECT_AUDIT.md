@@ -20,7 +20,7 @@ The remaining gates are environment-owned validation, not missing implementation
 
 ## Executive decision
 
-RiftOps has a solid desktop foundation and a credible LAN pairing design, but it is **not release-ready as a full phone companion yet**. The biggest issue is product boundary drift: the phone is presented as a safe League-control surface, while the same SPA and remote allowlist still expose desktop settings, engine controls, update checks, local path information, automation configuration, loot crafting, rune CRUD, and profile mutations.
+RiftOps has a solid desktop foundation and a credible LAN pairing design, but it is **not release-ready as a full phone companion yet**. The phone boundary is now enforced by the named, deny-by-default capability manifest in `remote_access.go`; the remaining blockers are live device/firewall validation, platform packaging, and a complete game smoke test.
 
 The next release should ship only after these gates are closed:
 
@@ -65,12 +65,12 @@ The next release should ship only after these gates are closed:
 - The phone is the same React tree as desktop; `App.tsx` has no remote capability/context (`cmd/riftops-ui/frontend/src/App.tsx:62-104`).
 - Settings and QoL are only CSS-hidden in the mobile dock (`Sidebar.tsx:49-52`, `index.css:1621`).
 - The command palette still includes `Open League QoL` and `Open Settings` (`CommandPalette.tsx:18-22`), and `App.tsx` accepts all eight tabs from keyboard navigation (`App.tsx:214-238`).
-- The remote allowlist currently includes desktop-oriented endpoints: preferences, update check, autostart, profiles/session status, Riot Client location, engine start/stop, QoL preferences/presets, rune page CRUD, loot craft, and profile customization (`cmd/riftops-ui/remote_access.go:342-360`).
+- The current remote allowlist is intentionally limited to live-session state/actions, read-only collection/history, presence, and named launch control (`cmd/riftops-ui/remote_access.go:356-401`). Desktop preferences, update checks, autostart, saved sessions, loot crafting, rune CRUD, cosmetics, diagnostics, and engine administration remain excluded.
 - The README says filesystem, credential-session, update, diagnostics, and quit routes are desktop-only (`README.md:80-83`), but `/api/preferences`, `/api/check-update`, `/api/autostart`, `/api/riot-client-location`, and `/api/session-status` are currently remote-allowed.
 
 **Impact**
 
-Paired phones can discover or mutate more of the desktop than the documented contract promises. A phone user can also enter a desktop page through search/keyboard paths even when its nav item is hidden. This is a security, privacy, and UX boundary defect.
+The earlier audit found phone route drift. The current source has a server capability bootstrap, remote-aware navigation, and deny-by-default route scope; keep the manifest/route inventory tests as a regression gate when adding new APIs.
 
 **Required fix**
 

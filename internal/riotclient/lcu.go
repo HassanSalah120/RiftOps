@@ -44,6 +44,33 @@ type Lockfile struct {
 	BaseURL  string
 	// Source indicates which lockfile was found: "league" or "riot-client".
 	Source string
+	// allowInsecure is intentionally unexported so real lockfiles can never
+	// opt into plain HTTP. Tests use an httptest HTTP server and set it inside
+	// this package only.
+	allowInsecure bool
+}
+
+// LCUError keeps the HTTP status separate from the redacted, user-facing
+// message. Callers must use the status instead of matching broad fragments
+// such as "400" because a 400 can mean an invalid payload, not a stale lobby
+// or an unsupported route.
+type LCUError struct {
+	StatusCode int
+	Method     string
+	Path       string
+	Detail     string
+	RetryAfter time.Duration
+}
+
+func (e *LCUError) Error() string {
+	if e == nil {
+		return "lcu request failed"
+	}
+	detail := e.Detail
+	if detail == "" {
+		detail = http.StatusText(e.StatusCode)
+	}
+	return fmt.Sprintf("lcu %d on %s %s: %s", e.StatusCode, e.Method, safeLCUPath(e.Path), detail)
 }
 
 // RSOAccessToken is the response from /lol-rso-auth/v1/authorization/access-token.
@@ -330,49 +357,124 @@ func readLockfileFromProcess() (*Lockfile, error) {
 	if err != nil || len(out) == 0 {
 		return nil, errors.New("no running client processes found")
 	}
-	output := string(out)
-	portMatch := regexp.MustCompile(`--app-port=(\d+)`).FindStringSubmatch(output)
-	tokenMatch := regexp.MustCompile(`--remoting-auth-token=([A-Za-z0-9_-]+)`).FindStringSubmatch(output)
-	if len(portMatch) >= 2 && len(tokenMatch) >= 2 {
-		port, _ := strconv.Atoi(portMatch[1])
-		source := "riot-client"
-		if strings.Contains(strings.ToLower(output), "leagueclientux") {
-			source = "league"
+	for _, process := range parseProcessSnapshots(out) {
+		if lf, ok := lockfileFromProcess(process); ok {
+			return lf, nil
 		}
-		return &Lockfile{
-			Name:     "LeagueClient",
-			PID:      0,
-			Port:     port,
-			Password: tokenMatch[1],
-			Protocol: "https",
-			BaseURL:  fmt.Sprintf("https://127.0.0.1:%d", port),
-			Source:   source,
-		}, nil
 	}
 	return nil, errors.New("command line args missing LCU port/token")
 }
 
-func parseLockfile(content string) (*Lockfile, error) {
-	parts := strings.Split(content, ":")
-	if len(parts) < 5 {
-		return nil, fmt.Errorf("invalid lockfile: expected 'name:pid:port:password:protocol', got %q", content)
+type processSnapshot struct {
+	Name        string `json:"Name"`
+	PID         int    `json:"ProcessId"`
+	CommandLine string `json:"CommandLine"`
+}
+
+// parseProcessSnapshots preserves process boundaries. Searching the complete
+// process listing for the first port and first token can accidentally combine
+// Riot Client credentials with League credentials during startup.
+func parseProcessSnapshots(raw []byte) []processSnapshot {
+	text := strings.TrimSpace(string(raw))
+	if text == "" {
+		return nil
+	}
+	var windows []processSnapshot
+	if strings.HasPrefix(text, "[") || strings.HasPrefix(text, "{") {
+		if json.Unmarshal([]byte(text), &windows) == nil && len(windows) > 0 {
+			return windows
+		}
+		var single processSnapshot
+		if json.Unmarshal([]byte(text), &single) == nil && (single.Name != "" || single.CommandLine != "") {
+			return []processSnapshot{single}
+		}
 	}
 
-	pid := 0
-	port := 0
-	fmt.Sscanf(parts[1], "%d", &pid)
-	fmt.Sscanf(parts[2], "%d", &port)
+	// macOS ps output is `pid command`; retain the full command after the PID.
+	var snapshots []processSnapshot
+	for _, line := range strings.Split(text, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		command := strings.TrimSpace(line[len(fields[0]):])
+		name := filepath.Base(strings.Fields(command)[0])
+		snapshots = append(snapshots, processSnapshot{Name: name, PID: pid, CommandLine: command})
+	}
+	return snapshots
+}
 
-	protocol := parts[4]
+func lockfileFromProcess(process processSnapshot) (*Lockfile, bool) {
+	command := process.CommandLine
+	name := strings.ToLower(process.Name + " " + command)
+	if !strings.Contains(name, "leagueclientux") && !strings.Contains(name, "riotclientservices") {
+		return nil, false
+	}
+	portMatch := regexp.MustCompile(`(?:^|\s)--app-port=(\d+)`).FindStringSubmatch(command)
+	tokenMatch := regexp.MustCompile(`(?:^|\s)--remoting-auth-token=([A-Za-z0-9._~-]+)`).FindStringSubmatch(command)
+	if len(portMatch) < 2 || len(tokenMatch) < 2 {
+		return nil, false
+	}
+	port, err := strconv.Atoi(portMatch[1])
+	if err != nil || port < 1 || port > 65535 {
+		return nil, false
+	}
+	source := "riot-client"
+	if strings.Contains(name, "leagueclientux") {
+		source = "league"
+	}
+	return &Lockfile{
+		Name:     process.Name,
+		PID:      process.PID,
+		Port:     port,
+		Password: tokenMatch[1],
+		Protocol: "https",
+		BaseURL:  fmt.Sprintf("https://127.0.0.1:%d", port),
+		Source:   source,
+	}, true
+}
+
+func parseLockfile(content string) (*Lockfile, error) {
+	content = strings.TrimSpace(content)
+	parts := strings.SplitN(content, ":", 4)
+	if len(parts) != 4 {
+		return nil, fmt.Errorf("invalid lockfile: expected 'name:pid:port:password:protocol', got %q", content)
+	}
+	name := strings.TrimSpace(parts[0])
+	passwordAndProtocol := parts[3]
+	separator := strings.LastIndexByte(passwordAndProtocol, ':')
+	if separator <= 0 || separator == len(passwordAndProtocol)-1 {
+		return nil, errors.New("invalid lockfile: password and protocol are required")
+	}
+	password := strings.TrimSpace(passwordAndProtocol[:separator])
+	if name == "" || password == "" {
+		return nil, errors.New("invalid lockfile: name and password are required")
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || pid < 0 {
+		return nil, fmt.Errorf("invalid lockfile: bad process id %q", parts[1])
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("invalid lockfile: bad port %q", parts[2])
+	}
+	protocol := strings.ToLower(strings.TrimSpace(passwordAndProtocol[separator+1:]))
 	if protocol == "" {
 		protocol = "https"
 	}
+	if protocol != "https" {
+		return nil, fmt.Errorf("invalid lockfile: unsupported protocol %q", protocol)
+	}
 
 	return &Lockfile{
-		Name:     parts[0],
+		Name:     name,
 		PID:      pid,
 		Port:     port,
-		Password: parts[3],
+		Password: password,
 		Protocol: protocol,
 		BaseURL:  fmt.Sprintf("%s://127.0.0.1:%d", protocol, port),
 	}, nil
@@ -391,8 +493,15 @@ func (lf *Lockfile) DoRequest(ctx context.Context, method, path string) ([]byte,
 }
 
 func (lf *Lockfile) doRequest(ctx context.Context, method, path string, body io.Reader) ([]byte, error) {
+	if path == "" || !strings.HasPrefix(path, "/") || strings.ContainsRune(path, '\x00') {
+		return nil, errors.New("lcu request path is invalid")
+	}
 	if err := validateLCUBaseURL(lf.BaseURL); err != nil {
 		return nil, err
+	}
+	parsedBase, _ := url.Parse(lf.BaseURL)
+	if parsedBase.Scheme == "http" && !lf.allowInsecure {
+		return nil, errors.New("lcu base URL must use HTTPS")
 	}
 	url := lf.BaseURL + path
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
@@ -435,13 +544,31 @@ func (lf *Lockfile) doRequest(ctx context.Context, method, path string, body io.
 		if truncated {
 			detail += "… [truncated]"
 		}
-		return nil, fmt.Errorf("lcu %d on %s %s: %s", resp.StatusCode, method, safeLCUPath(path), detail)
+		return nil, &LCUError{
+			StatusCode: resp.StatusCode,
+			Method:     method,
+			Path:       path,
+			Detail:     detail,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 	if truncated {
 		return nil, fmt.Errorf("lcu response exceeded %d bytes on %s %s", maxLCUResponseBytes, method, safeLCUPath(path))
 	}
 
 	return responseBody, nil
+}
+
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 0 || seconds > 300 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func validateLCUBaseURL(raw string) error {
@@ -493,11 +620,12 @@ func (lf *Lockfile) FetchRSOAccessToken(ctx context.Context) (*RSOAccessToken, e
 // Returns the raw token string and whether the LCU was the source.
 func GetRSOAccessToken() (string, bool) {
 	tokenMu.Lock()
-	defer tokenMu.Unlock()
-
 	if cachedToken != "" && time.Now().Before(cachedTokenExp.Add(-5*time.Minute)) {
-		return cachedToken, true
+		value := cachedToken
+		tokenMu.Unlock()
+		return value, true
 	}
+	tokenMu.Unlock()
 
 	lf := GetLCULockfile()
 	if lf == nil {
@@ -520,16 +648,25 @@ func GetRSOAccessToken() (string, bool) {
 		return "", false
 	}
 
-	cachedToken = value
 	// Riot reports expiry in Unix seconds; the ms multiplication landed in 1970.
+	expiresAt := time.Now().Add(time.Hour)
 	if token.Expiry > 0 {
-		cachedTokenExp = time.Unix(token.Expiry, 0)
-	} else {
-		cachedTokenExp = time.Now().Add(time.Hour)
+		expiresAt = time.Unix(token.Expiry, 0)
 	}
+	tokenMu.Lock()
+	// Another caller may have completed the same request while we were on the
+	// network. Prefer its value so concurrent callers converge on one cache.
+	if cachedToken != "" && time.Now().Before(cachedTokenExp.Add(-5*time.Minute)) {
+		value = cachedToken
+		expiresAt = cachedTokenExp
+	} else {
+		cachedToken = value
+		cachedTokenExp = expiresAt
+	}
+	tokenMu.Unlock()
 
-	slog.Debug("lcu: got RSO access token, expires " + cachedTokenExp.Format(time.RFC3339))
-	return cachedToken, true
+	slog.Debug("lcu: got RSO access token, expires " + expiresAt.Format(time.RFC3339))
+	return value, true
 }
 
 // ClearTokenCache clears the cached RSO token.
@@ -567,7 +704,9 @@ func GetLCULockfile() *Lockfile {
 	lf, err := ReadLockfile()
 	lockfileCacheMu.Lock()
 	lockfileScanning = false
-	lockfileCheckedAt = now
+	// Start the cache TTL after discovery completes. A slow process scan must
+	// not make the freshly discovered credentials expire immediately.
+	lockfileCheckedAt = time.Now()
 	if err != nil {
 		lockfileCached = nil
 		lockfileCacheMu.Unlock()
@@ -654,9 +793,11 @@ type LCUChampionMastery struct {
 
 // LCUProfile is the aggregated profile data from the LCU.
 type LCUProfile struct {
-	Summoner *LCUSummoner         `json:"summoner,omitempty"`
-	League   []LCULeagueEntry     `json:"league,omitempty"`
-	Mastery  []LCUChampionMastery `json:"mastery,omitempty"`
+	Summoner     *LCUSummoner         `json:"summoner,omitempty"`
+	League       []LCULeagueEntry     `json:"league,omitempty"`
+	Mastery      []LCUChampionMastery `json:"mastery,omitempty"`
+	LeagueError  string               `json:"leagueError,omitempty"`
+	MasteryError string               `json:"masteryError,omitempty"`
 }
 
 // FetchLCUSummoner fetches summoner info from the LCU API directly.
@@ -680,7 +821,7 @@ func (lf *Lockfile) FetchLCULeague(ctx context.Context, puuid string) ([]LCULeag
 		var stats struct {
 			Queues []LCULeagueEntry `json:"queues"`
 		}
-		if err := json.Unmarshal(body, &stats); err == nil && len(stats.Queues) > 0 {
+		if err := json.Unmarshal(body, &stats); err == nil {
 			for i := range stats.Queues {
 				if stats.Queues[i].Rank == "" && stats.Queues[i].Division != "" {
 					stats.Queues[i].Rank = stats.Queues[i].Division
@@ -697,7 +838,7 @@ func (lf *Lockfile) FetchLCULeague(ctx context.Context, puuid string) ([]LCULeag
 			var stats struct {
 				Queues []LCULeagueEntry `json:"queues"`
 			}
-			if err := json.Unmarshal(body, &stats); err == nil && len(stats.Queues) > 0 {
+			if err := json.Unmarshal(body, &stats); err == nil {
 				for i := range stats.Queues {
 					if stats.Queues[i].Rank == "" && stats.Queues[i].Division != "" {
 						stats.Queues[i].Rank = stats.Queues[i].Division
@@ -722,7 +863,7 @@ func (lf *Lockfile) FetchLCUMastery(ctx context.Context, limit int) ([]LCUChampi
 	body, err := lf.DoRequest(ctx, "GET", path)
 	if err == nil {
 		var mastery []LCUChampionMastery
-		if err := json.Unmarshal(body, &mastery); err == nil && len(mastery) > 0 {
+		if err := json.Unmarshal(body, &mastery); err == nil {
 			return mastery, nil
 		}
 	}
@@ -748,6 +889,7 @@ func (lf *Lockfile) FetchLCUProfile(ctx context.Context) (*LCUProfile, error) {
 		if err == nil {
 			profile.League = league
 		} else {
+			profile.LeagueError = err.Error()
 			slog.Debug("lcu: failed to fetch league entries", "error", err)
 		}
 	}()
@@ -758,6 +900,7 @@ func (lf *Lockfile) FetchLCUProfile(ctx context.Context) (*LCUProfile, error) {
 		if err == nil {
 			profile.Mastery = mastery
 		} else {
+			profile.MasteryError = err.Error()
 			slog.Debug("lcu: failed to fetch mastery", "error", err)
 		}
 	}()
@@ -782,29 +925,50 @@ func LaunchLeague(ctx context.Context) error {
 				slog.Info("lcu: League is already running; reusing existing client")
 				return nil
 			}
+			// A League process with a valid lockfile is already starting. Wait
+			// for its gameflow service instead of launching a duplicate UX
+			// process through the OS fallback.
+			return waitForLeagueReady(ctx)
 		}
-		// Try the Riot Client product-launcher API first.
+		// Try the Riot Client product-launcher API first. Use the shared LCU
+		// transport so loopback validation, auth, bounded responses, and useful
+		// status errors are consistent with every other endpoint.
 		launchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		body := strings.NewReader("{}")
-		url := lf.BaseURL + "/product-launcher/v1/products/league_of_legends/launch"
-		req, apiErr := http.NewRequestWithContext(launchCtx, "POST", url, body)
-		if apiErr == nil {
-			req.Header.Set("Authorization", lf.BasicAuthHeader())
-			req.Header.Set("Content-Type", "application/json")
-			resp, httpErr := httpClient.Do(req)
-			if httpErr == nil {
-				resp.Body.Close()
-				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-					slog.Info("lcu: launched League via Riot Client API")
-					return nil
-				}
-			}
+		_, launchErr := lf.doJSON(launchCtx, http.MethodPost, "/product-launcher/v1/products/league_of_legends/launch", map[string]any{})
+		cancel()
+		if launchErr == nil {
+			slog.Info("lcu: launched League via Riot Client API")
+			return waitForLeagueReady(ctx)
 		}
+		slog.Debug("lcu: product launcher request failed; using OS fallback", "error", launchErr)
 	}
 
-	return launchLeagueFallback(ctx)
+	if err := launchLeagueFallback(ctx); err != nil {
+		return err
+	}
+	return waitForLeagueReady(ctx)
+}
+
+func waitForLeagueReady(ctx context.Context) error {
+	readyCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if lf, err := ReadLockfile(); err == nil && lf != nil && lf.Source == "league" {
+			phaseCtx, phaseCancel := context.WithTimeout(readyCtx, 2*time.Second)
+			_, phaseErr := lf.GetGameflowPhase(phaseCtx)
+			phaseCancel()
+			if phaseErr == nil {
+				return nil
+			}
+		}
+		select {
+		case <-readyCtx.Done():
+			return fmt.Errorf("League launched but the client did not become ready: %w", readyCtx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -926,6 +1090,9 @@ func (lf *Lockfile) DeclineReadyCheck(ctx context.Context) error {
 	if err == nil {
 		return nil
 	}
+	if !isRetryableLCURouteError(err) {
+		return err
+	}
 	// Older client builds route the same action through the lobby-team-builder
 	// service. Keep the primary endpoint first and only fall back on failure.
 	_, fallbackErr := lf.DoRequest(ctx, "POST", "/lol-lobby-team-builder/v1/ready-check/decline")
@@ -1001,10 +1168,11 @@ func (lf *Lockfile) CreateQueueLobby(ctx context.Context, queueID int) error {
 	payload := map[string]any{"queueId": queueID}
 	if _, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload); err == nil {
 		return nil
-	} else if !isRetryableLCURouteError(err) && !isLobbyExistsError(err) {
+	} else if !isLobbyExistsError(err) {
 		return err
 	}
-	// Already in a lobby or route mismatch — leave current lobby and retry.
+	// Only an explicit "already in lobby" response authorizes replacing the
+	// current lobby. Invalid payloads and route errors must never delete it.
 	_, _ = lf.DoRequest(ctx, "DELETE", "/lol-lobby/v2/lobby")
 	// Small grace period for gameflow to return to None.
 	select {
@@ -1019,14 +1187,25 @@ func (lf *Lockfile) CreateQueueLobby(ctx context.Context, queueID int) error {
 // isLobbyExistsError reports whether LCU rejected creation because a lobby
 // already exists (400 with "lobby already exists" or similar).
 func isLobbyExistsError(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "lobby") && (strings.Contains(msg, "already") || strings.Contains(msg, "exists") || strings.Contains(msg, "400"))
+	if err == nil {
+		return false
+	}
+	var lcuErr *LCUError
+	if !errors.As(err, &lcuErr) || (lcuErr.StatusCode != http.StatusBadRequest && lcuErr.StatusCode != http.StatusConflict) {
+		return false
+	}
+	msg := strings.ToLower(lcuErr.Detail)
+	return strings.Contains(msg, "lobby") &&
+		(strings.Contains(msg, "already exists") || strings.Contains(msg, "lobby exists") || strings.Contains(msg, "already in lobby") || strings.Contains(msg, "already in a lobby") || strings.Contains(msg, "already have a lobby"))
 }
 
 // CreateCustomLobby creates a custom game lobby for modes whose category is
 // "Custom" (e.g. SR Draft Pick Custom, Howling Abyss custom). These queues
 // are not matchmade — LCU expects isCustom+customGameLobby instead of queueId.
 func (lf *Lockfile) CreateCustomLobby(ctx context.Context, queueID int, gameMode, queueName string, mapID int) error {
+	if queueID <= 0 {
+		return fmt.Errorf("queue ID must be positive")
+	}
 	// Preserve the queue catalogue's mode and map. Riot can add event customs
 	// whose map/mode cannot be inferred from CLASSIC versus ARAM.
 	normalizedMode := strings.ToUpper(strings.TrimSpace(gameMode))
@@ -1068,7 +1247,7 @@ func (lf *Lockfile) CreateCustomLobby(ctx context.Context, queueID int, gameMode
 	}
 	if _, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload); err == nil {
 		return nil
-	} else if !isRetryableLCURouteError(err) && !isLobbyExistsError(err) {
+	} else if !isLobbyExistsError(err) {
 		return err
 	}
 	_, _ = lf.DoRequest(ctx, "DELETE", "/lol-lobby/v2/lobby")
@@ -1111,7 +1290,7 @@ func (lf *Lockfile) CreatePracticeToolLobby(ctx context.Context) error {
 	}
 	if _, err := lf.doJSON(ctx, "POST", "/lol-lobby/v2/lobby", payload); err == nil {
 		return nil
-	} else if !isRetryableLCURouteError(err) && !isLobbyExistsError(err) {
+	} else if !isLobbyExistsError(err) {
 		return err
 	}
 	_, _ = lf.DoRequest(ctx, "DELETE", "/lol-lobby/v2/lobby")
@@ -1139,28 +1318,33 @@ func (lf *Lockfile) StartCustomGame(ctx context.Context) error {
 		return fmt.Errorf("custom lobby is unavailable: %w", err)
 	}
 	var lobby struct {
-		CanStartActivity bool `json:"canStartActivity"`
+		CanStartActivity *bool `json:"canStartActivity"`
 		GameConfig       struct {
 			IsCustom bool   `json:"isCustom"`
 			QueueID  int    `json:"queueId"`
 			GameMode string `json:"gameMode"`
 		} `json:"gameConfig"`
-		LocalMember struct {
-			IsLeader             bool `json:"isLeader"`
-			AllowedStartActivity bool `json:"allowedStartActivity"`
+		IsCustom        bool            `json:"isCustom"`
+		CustomGameLobby json.RawMessage `json:"customGameLobby"`
+		LocalMember     struct {
+			IsLeader             *bool `json:"isLeader"`
+			AllowedStartActivity *bool `json:"allowedStartActivity"`
 		} `json:"localMember"`
 	}
 	if err := json.Unmarshal(body, &lobby); err != nil {
 		return fmt.Errorf("could not read custom lobby readiness: %w", err)
 	}
-	isCustom := lobby.GameConfig.IsCustom || lobby.GameConfig.QueueID == PracticeToolQueueID || strings.EqualFold(lobby.GameConfig.GameMode, "PRACTICETOOL")
+	isCustom := lobby.IsCustom || lobby.GameConfig.IsCustom || (len(lobby.CustomGameLobby) > 0 && string(lobby.CustomGameLobby) != "null") || lobby.GameConfig.QueueID == PracticeToolQueueID || strings.EqualFold(lobby.GameConfig.GameMode, "PRACTICETOOL")
 	if !isCustom {
 		return fmt.Errorf("League is currently in a matchmade lobby; create the selected custom lobby first")
 	}
-	if !lobby.LocalMember.IsLeader || !lobby.LocalMember.AllowedStartActivity {
+	if lobby.LocalMember.IsLeader != nil && !*lobby.LocalMember.IsLeader {
 		return fmt.Errorf("only the custom lobby leader can start champion select")
 	}
-	if !lobby.CanStartActivity {
+	if lobby.LocalMember.AllowedStartActivity != nil && !*lobby.LocalMember.AllowedStartActivity {
+		return fmt.Errorf("only the custom lobby leader can start champion select")
+	}
+	if lobby.CanStartActivity != nil && !*lobby.CanStartActivity {
 		return fmt.Errorf("League reports that the custom lobby is not ready to start yet")
 	}
 	_, err = lf.DoRequest(ctx, http.MethodPost, "/lol-lobby/v1/lobby/custom/start-champ-select")
@@ -1201,8 +1385,20 @@ func (lf *Lockfile) AutoSetRoles(ctx context.Context, first, second string) erro
 // isRetryableLCURouteError reports whether an LCU failure may be resolved by
 // trying another route or payload shape (missing route or unsupported schema).
 func isRetryableLCURouteError(err error) bool {
-	message := err.Error()
-	return strings.Contains(message, "lcu 404 ") || strings.Contains(message, "lcu 400 ")
+	if err == nil {
+		return false
+	}
+	var lcuErr *LCUError
+	if !errors.As(err, &lcuErr) {
+		return false
+	}
+	if lcuErr.StatusCode == http.StatusNotFound || lcuErr.StatusCode == http.StatusMethodNotAllowed || lcuErr.StatusCode == http.StatusUnsupportedMediaType {
+		return true
+	}
+	// A few legacy role endpoints return an empty 400 for an unsupported
+	// payload shape. Keep that narrow compatibility fallback without treating
+	// every LCU 400 as a route mismatch.
+	return lcuErr.StatusCode == http.StatusBadRequest && strings.Contains(lcuErr.Path, "position-preferences")
 }
 
 // FetchLCULoot returns raw loot inventory JSON for the player (skin shards, essences).
@@ -1361,7 +1557,7 @@ func (lf *Lockfile) SetAvailability(ctx context.Context, availability string) er
 func (lf *Lockfile) SetStatusMessage(ctx context.Context, msg string) error {
 	for attempt := 0; ; attempt++ {
 		_, err := lf.doJSON(ctx, "PUT", "/lol-chat/v1/me", map[string]string{"statusMessage": msg})
-		if err == nil || attempt >= 1 {
+		if err == nil || attempt >= 1 || !isTransientLCUError(err) {
 			return err
 		}
 		select {
@@ -1370,6 +1566,14 @@ func (lf *Lockfile) SetStatusMessage(ctx context.Context, msg string) error {
 		case <-time.After(1200 * time.Millisecond):
 		}
 	}
+}
+
+func isTransientLCUError(err error) bool {
+	var lcuErr *LCUError
+	if !errors.As(err, &lcuErr) {
+		return false
+	}
+	return lcuErr.StatusCode == http.StatusTooManyRequests || lcuErr.StatusCode >= 500
 }
 
 // SetProfileBackground sets the player's loading screen background skin ID.
@@ -1382,14 +1586,18 @@ func (lf *Lockfile) SetProfileBackground(ctx context.Context, skinID int) error 
 
 // SetProfileIcon changes the player's profile icon.
 func (lf *Lockfile) SetProfileIcon(ctx context.Context, iconID int) error {
-	inventoryToken, _ := lf.FetchInventoryToken(ctx)
-	// Newer LCU schemas require inventoryToken in the request model. An empty
-	// token preserves compatibility with clients that resolve the active
-	// inventory session themselves, while keeping the payload shape current.
-	_, err := lf.doJSON(ctx, "PUT", "/lol-summoner/v1/current-summoner/icon", map[string]any{
-		"profileIconId":  iconID,
-		"inventoryToken": inventoryToken,
-	})
+	inventoryToken, tokenErr := lf.FetchInventoryToken(ctx)
+	payload := map[string]any{"profileIconId": iconID}
+	// Newer LCU schemas require inventoryToken; older clients reject unknown
+	// or empty token fields. Include it only when the live registration route
+	// returned one, letting the server choose the compatible model.
+	if tokenErr == nil && inventoryToken != "" {
+		payload["inventoryToken"] = inventoryToken
+	}
+	_, err := lf.doJSON(ctx, "PUT", "/lol-summoner/v1/current-summoner/icon", payload)
+	if err != nil && tokenErr != nil {
+		slog.Debug("lcu: profile icon request ran without an inventory token", "error", tokenErr)
+	}
 	return err
 }
 
@@ -1620,6 +1828,10 @@ func (lf *Lockfile) GetChampSelectSession(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/session")
 }
 
+// ArenaBraveryChampionID is the LCU sentinel used by Arena's Bravery choice.
+// It is a special pick only; it is not a valid champion or ban ID.
+const ArenaBraveryChampionID = -3
+
 // FetchChampSelectPickable returns the champion ids that the current player
 // may pick in the active champion-select session.
 func (lf *Lockfile) FetchChampSelectPickable(ctx context.Context) ([]byte, error) {
@@ -1632,17 +1844,87 @@ func (lf *Lockfile) FetchChampSelectBannable(ctx context.Context) ([]byte, error
 	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/bannable-champion-ids")
 }
 
+// FetchChampSelectPickOrderSwaps returns the pick-order swap offers and
+// requests currently exposed by League for this champion-select session.
+func (lf *Lockfile) FetchChampSelectPickOrderSwaps(ctx context.Context) ([]byte, error) {
+	return lf.fetchChampSelectSwapList(ctx, "pick-order-swaps")
+}
+
+// FetchChampSelectPositionSwaps returns the role/position swap offers and
+// requests currently exposed by League for this champion-select session.
+func (lf *Lockfile) FetchChampSelectPositionSwaps(ctx context.Context) ([]byte, error) {
+	return lf.fetchChampSelectSwapList(ctx, "position-swaps")
+}
+
+func champSelectSwapRoutePrefixes() []string {
+	return []string{
+		"/lol-champ-select/v1/session/",
+		"/lol-lobby-team-builder/champ-select/v1/session/",
+	}
+}
+
+func (lf *Lockfile) fetchChampSelectSwapList(ctx context.Context, routeKind string) ([]byte, error) {
+	var lastErr error
+	for _, prefix := range champSelectSwapRoutePrefixes() {
+		body, err := lf.DoRequest(ctx, "GET", prefix+routeKind)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		if !isRetryableLCURouteError(err) {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+// UpdateChampSelectSwap performs one of the LCU's explicit swap transitions.
+// These endpoints are undocumented by Riot and are only available when the
+// current queue and draft phase support the requested swap.
+func (lf *Lockfile) UpdateChampSelectSwap(ctx context.Context, kind, action string, id int) error {
+	if id < 0 {
+		return fmt.Errorf("champion-select swap ID must not be negative")
+	}
+	var routeKind string
+	switch kind {
+	case "pick-order":
+		routeKind = "pick-order-swaps"
+	case "position":
+		routeKind = "position-swaps"
+	default:
+		return fmt.Errorf("unsupported champion-select swap kind")
+	}
+	switch action {
+	case "request", "accept", "cancel", "decline":
+	default:
+		return fmt.Errorf("unsupported champion-select swap action")
+	}
+	var lastErr error
+	for _, prefix := range champSelectSwapRoutePrefixes() {
+		_, err := lf.DoRequest(ctx, "POST", fmt.Sprintf("%s%s/%d/%s", prefix, routeKind, id, action))
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isRetryableLCURouteError(err) {
+			break
+		}
+	}
+	return lastErr
+}
+
 // UpdateChampSelectAction selects or locks a champion-select action. League's
 // LCU uses the same PATCH route for hover/selection and lock-in; omitting
 // completed leaves the action unlocked, while completed=true submits it.
+// Arena's Bravery choice is the one supported non-positive sentinel.
 func (lf *Lockfile) UpdateChampSelectAction(ctx context.Context, actionID, championID int, completed bool) error {
 	// Action IDs start at 0 — the very first pick of a draft is a valid,
 	// common target, so only reject clearly impossible negatives.
 	if actionID < 0 {
 		return fmt.Errorf("champion-select action ID must not be negative")
 	}
-	if championID <= 0 {
-		return fmt.Errorf("champion ID must be positive")
+	if championID <= 0 && championID != ArenaBraveryChampionID {
+		return fmt.Errorf("champion ID must be positive or Arena Bravery (-3)")
 	}
 	payload := map[string]any{"championId": championID}
 	if completed {
@@ -1788,6 +2070,7 @@ func (lf *Lockfile) ClaimEventRewards(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("decode active events: %w", err)
 	}
 	claimed := 0
+	var firstErr error
 	for _, event := range events {
 		if event.EventID == "" {
 			continue
@@ -1795,19 +2078,30 @@ func (lf *Lockfile) ClaimEventRewards(ctx context.Context) (int, error) {
 		eventPath := "/lol-event-hub/v1/events/" + url.PathEscape(event.EventID) + "/reward-track"
 		unclaimedBody, err := lf.DoRequest(ctx, "GET", eventPath+"/unclaimed-rewards")
 		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		var unclaimed struct {
 			RewardsCount int `json:"rewardsCount"`
 		}
-		if json.Unmarshal(unclaimedBody, &unclaimed) != nil || unclaimed.RewardsCount <= 0 {
+		if err := json.Unmarshal(unclaimedBody, &unclaimed); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("decode unclaimed rewards for %s: %w", event.EventID, err)
+			}
+			continue
+		}
+		if unclaimed.RewardsCount <= 0 {
 			continue
 		}
 		if _, err := lf.DoRequest(ctx, "POST", eventPath+"/claim-all"); err == nil {
 			claimed += unclaimed.RewardsCount
+		} else if firstErr == nil {
+			firstErr = err
 		}
 	}
-	return claimed, nil
+	return claimed, firstErr
 }
 
 type QoLState struct {

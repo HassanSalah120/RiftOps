@@ -10,7 +10,65 @@ import (
 )
 
 func testLockfile(serverURL string) *Lockfile {
-	return &Lockfile{BaseURL: serverURL, Password: "test-password"}
+	return &Lockfile{BaseURL: serverURL, Password: "test-password", allowInsecure: true}
+}
+
+func TestParseLockfileValidatesFieldsAndPreservesPasswordColons(t *testing.T) {
+	lockfile, err := parseLockfile("LeagueClient:42:12345:secret:with-colon:https")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lockfile.PID != 42 || lockfile.Port != 12345 || lockfile.Password != "secret:with-colon" || lockfile.Protocol != "https" {
+		t.Fatalf("lockfile = %+v", lockfile)
+	}
+	for _, input := range []string{
+		"LeagueClient:not-a-pid:12345:secret:https",
+		"LeagueClient:42:0:secret:https",
+		"LeagueClient:42:12345:secret:http",
+		"LeagueClient:42:12345::https",
+	} {
+		if _, err := parseLockfile(input); err == nil {
+			t.Fatalf("malformed lockfile was accepted: %q", input)
+		}
+	}
+}
+
+func TestProcessCredentialsStayPaired(t *testing.T) {
+	processes := parseProcessSnapshots([]byte(`[{"Name":"RiotClientServices.exe","ProcessId":11,"CommandLine":"RiotClientServices.exe --app-port=1111 --remoting-auth-token=riot-token"},{"Name":"LeagueClientUx.exe","ProcessId":22,"CommandLine":"LeagueClientUx.exe --app-port=2222 --remoting-auth-token=league-token"}]`))
+	if len(processes) != 2 {
+		t.Fatalf("processes = %+v", processes)
+	}
+	lf, ok := lockfileFromProcess(processes[1])
+	if !ok || lf.Source != "league" || lf.Port != 2222 || lf.Password != "league-token" || lf.PID != 22 {
+		t.Fatalf("league credentials were not paired: %+v, ok=%v", lf, ok)
+	}
+}
+
+func TestLobbyCreationDoesNotDeleteOnInvalidBadRequest(t *testing.T) {
+	deletes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deletes++
+			t.Fatal("invalid lobby request deleted the current lobby")
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/lol-lobby/v2/lobby" {
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errorCode":"INVALID_URI_FORMAT","message":"invalid custom lobby configuration"}`))
+	}))
+	defer server.Close()
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	err := testLockfile(server.URL).CreateQueueLobby(context.Background(), 420)
+	if err == nil || !strings.Contains(err.Error(), "invalid custom lobby configuration") {
+		t.Fatalf("error = %v", err)
+	}
+	if deletes != 0 {
+		t.Fatalf("delete count = %d, want 0", deletes)
+	}
 }
 
 func TestSetStatusMessageEncodesJSONAndChecksResponse(t *testing.T) {
@@ -60,6 +118,36 @@ func TestLCUActionReturnsErrorOnNonSuccessStatus(t *testing.T) {
 	}
 }
 
+func TestChampSelectSwapActionUsesValidatedLCURoute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/lol-champ-select/v1/session/position-swaps/12/accept" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	if err := testLockfile(server.URL).UpdateChampSelectSwap(context.Background(), "position", "accept", 12); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		kind, action string
+		id           int
+	}{
+		{kind: "unknown", action: "request", id: 1},
+		{kind: "position", action: "unknown", id: 1},
+		{kind: "position", action: "request", id: -1},
+	} {
+		if err := testLockfile(server.URL).UpdateChampSelectSwap(context.Background(), test.kind, test.action, test.id); err == nil {
+			t.Fatalf("invalid swap was accepted: %+v", test)
+		}
+	}
+}
+
 func TestLCUErrorBodyIsBoundedAndRedacted(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -94,6 +182,13 @@ func TestLCURejectsNonLoopbackBaseURL(t *testing.T) {
 	lf := &Lockfile{BaseURL: "https://example.com", Password: "secret"}
 	if _, err := lf.DoRequest(context.Background(), http.MethodGet, "/lol-test/v1/state"); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("non-loopback LCU base URL was accepted: %v", err)
+	}
+}
+
+func TestLCURejectsPlainHTTPOutsideTests(t *testing.T) {
+	lf := &Lockfile{BaseURL: "http://127.0.0.1:1234", Password: "secret"}
+	if _, err := lf.DoRequest(context.Background(), http.MethodGet, "/lol-test/v1/state"); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("plain HTTP LCU URL was accepted: %v", err)
 	}
 }
 
@@ -335,6 +430,7 @@ func TestQuitCustomSessionUsesEarlyExitForPracticeGame(t *testing.T) {
 func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
 	var actionPayload map[string]any
 	var hoverPayload map[string]any
+	var braveryPayload map[string]any
 	var selectionPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -345,6 +441,10 @@ func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
 		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/actions/0":
 			if err := json.NewDecoder(r.Body).Decode(&hoverPayload); err != nil {
 				t.Fatalf("decode hover: %v", err)
+			}
+		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/actions/2":
+			if err := json.NewDecoder(r.Body).Decode(&braveryPayload); err != nil {
+				t.Fatalf("decode bravery: %v", err)
 			}
 		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/my-selection":
 			if err := json.NewDecoder(r.Body).Decode(&selectionPayload); err != nil {
@@ -376,6 +476,12 @@ func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
 	}
 	if _, exists := hoverPayload["completed"]; exists {
 		t.Fatalf("hover payload must leave completed unset: %#v", hoverPayload)
+	}
+	if err := lf.UpdateChampSelectAction(context.Background(), 2, ArenaBraveryChampionID, true); err != nil {
+		t.Fatalf("Arena Bravery should be accepted: %v", err)
+	}
+	if braveryPayload["championId"] != float64(ArenaBraveryChampionID) || braveryPayload["completed"] != true {
+		t.Fatalf("bravery payload = %#v", braveryPayload)
 	}
 	if err := lf.UpdateChampSelectSelection(context.Background(), 4, 14, 12345); err != nil {
 		t.Fatal(err)
@@ -470,6 +576,9 @@ func TestChampSelectActionValidatesIDs(t *testing.T) {
 	}
 	if err := lf.UpdateChampSelectAction(context.Background(), 1, 0, false); err == nil {
 		t.Fatal("expected champion id validation error")
+	}
+	if err := lf.UpdateChampSelectAction(context.Background(), 1, -4, false); err == nil {
+		t.Fatal("expected unknown special champion id validation error")
 	}
 }
 

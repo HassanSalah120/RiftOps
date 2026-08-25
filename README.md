@@ -50,17 +50,42 @@ xattr -dr com.apple.quarantine /Applications/RiftOps.app
   Play Again actions with phase-aware disabled states.
 - Control a live Champion Select workspace: inspect timer, team, opponent,
   pick/ban actions, lock-in state, and the full ban board.
+- Request, accept, decline, or cancel supported teammate pick-order and role
+  swaps directly from Champion Select (League exposes these only in compatible
+  queues and phases).
 - Search the LCU's pickable and bannable champions, hover a choice, lock it in,
   choose owned skins and summoner spells, switch rune pages, and use ARAM
   rerolls or bench swaps when League exposes them.
 - Configure Play Flow draft policies: act immediately, after a delay, or in the
   last seconds; apply a selected rune page before picking; and automatically
   fall back when a pick or ban is already occupied by the draft.
+- In Arena, optionally choose League's Bravery special pick (`-3`) instead of
+  sending a normal champion ID; the option is guarded so it cannot be used for
+  bans or non-Arena queues.
+- Arena Champion Select also surfaces the live LCU choice pool (including
+  Crowd Favorites when League publishes it), resolves Bravery into the actual
+  champion before skin selection, and keeps the post-resolution skin step
+  explicit instead of guessing a champion.
+- Keep local six-item reference plans for both the primary and fallback pick;
+  RiftOps uses them as a planning aid and does not silently mutate League's
+  item inventory.
 - Follow one canonical **Live Session** page from queue and ready check through
   Champion Select, loading, active game, reconnecting, and immediate post-game.
+- When a match is running, Live Session can read the documented League Game
+  Client Data API for live players, KDA/CS, items, active-player stats, game
+  time, and objective events. This is read-only; RiftOps never injects input
+  into the game client.
+- Arena Live Session and Match History show event, round, teams remaining,
+  placement, fame, partner, and augment fields when the current League payload
+  exposes them. Missing Arena fields remain labelled unavailable rather than
+  being inferred by RiftOps.
 - Search and filter a reconnecting League friend list from the Social area.
 - Use Loot Workshop for live resource balances, League-backed crafting
-  recipes, and recent inventory changes.
+  recipes, explicit reroll/disenchant/open/upgrade labels when League exposes
+  them, and recent inventory changes.
+- If LCU match history is unavailable and public Riot API authentication is
+  configured, Match History can fall back to Match-V5 data. Set the optional
+  `riftops.riot.region` local preference to your platform code when needed.
 - Open the command palette with `Ctrl+K` (Windows) or `Cmd+K` (macOS), or use
   `Alt+1` through `Alt+9` to switch desktop workspaces.
 - Use tray controls, diagnostics, update checks, and Windows startup settings.
@@ -81,8 +106,8 @@ and the phone talks directly to the desktop over the local network.
 5. Keep the resulting page open for the phone-safe League workflow: current
    client state, lobby and queue controls, ready check, friends, reversible LCU
    presence, Champion Select, existing rune-page selection, match history, and
-   a read-only skin catalogue. Phone permissions are enforced by the server,
-   not only hidden in the interface.
+   a read-only skin catalogue and the read-only Active Game dashboard. Phone
+   permissions are enforced by the server, not only hidden in the interface.
 
 Desktop settings, saved-login/profile data, Riot Client paths, update checks,
 autostart, automation-policy editing, loot and crafting, rune-page editing,
@@ -104,6 +129,11 @@ The mobile dashboard loads League artwork from Riot Data Dragon and the local
 CommunityDragon fallback catalogue. The phone therefore needs normal internet
 access for those external images; the RiftOps API itself remains on the local
 LAN listener.
+
+The Live Session scoreboard uses Riot's documented Game Client Data API on the
+local game client port (2999). It may be temporarily unavailable during loading,
+reconnect, or when League has not started its game data service; RiftOps keeps
+the last phase visible and does not invent missing statistics.
 
 ## League QoL quick guide
 
@@ -174,11 +204,11 @@ go install fyne.io/tools/cmd/fyne@v1.7.2
 Build a native package:
 
 ```powershell
-./scripts/build-windows.ps1 -Version 2.6.1 -Build 1
+./scripts/build-windows.ps1 -Version 2.7.0 -Build 1
 ```
 
 ```sh
-bash ./scripts/build-macos.sh 2.6.1 1
+bash ./scripts/build-macos.sh 2.7.0 1
 ```
 
 Outputs are `dist/RiftOps-windows-amd64.exe` and
@@ -189,7 +219,13 @@ still require platform signing and macOS Developer ID notarization.
 
 If Windows reports that the standard executable is in use, close RiftOps and
 build again. The script safely writes a versioned fallback such as
-`dist/RiftOps-windows-amd64-v2.6.1.exe` instead of replacing a running file.
+`dist/RiftOps-windows-amd64-v2.7.0.exe` instead of replacing a running file.
+
+The desktop dashboard prefers loopback port `24080`. If another local service
+or a Windows excluded-port policy blocks it, RiftOps tries `24081` through
+`24089`, then asks Windows for a free loopback port automatically. The selected
+port is remembered for the single-instance “show RiftOps” action and is removed
+when the app exits.
 
 ## League Quality of Life controls
 
@@ -207,8 +243,8 @@ League session.
   validated primary/secondary role preferences from a lobby.
 - **Champion Select:** pick, ban, and lock champions through the LCU action
   queue; change spells, owned skin, and rune page; use ARAM rerolls/bench
-  swaps; configure timing and safe fallback picks/bans; and dodge only during
-  champion select.
+  swaps; configure timing, safe fallback picks/bans, and Arena Bravery; and
+  dodge only during champion select.
 - **End of Game:** return to the lobby, submit an honor vote, and claim
   available event-track rewards using current League Client routes.
 

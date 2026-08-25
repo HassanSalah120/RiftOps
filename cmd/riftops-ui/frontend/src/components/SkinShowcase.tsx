@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { fetchLCUSkins, fetchLCULoot } from '../api';
+import { fetchLCUSkins, fetchLCULoot, fetchLCUProfile } from '../api';
 import {
   Sparkles,
   Loader2,
@@ -149,8 +149,12 @@ function skinOwnership(raw: any) {
   return { isOwned, isRental };
 }
 
-const SKIN_CACHE_KEY = 'riftops-skin-cache-v2';
-const SKIN_CACHE_UPDATED_KEY = 'riftops-skin-cache-v2-updated';
+const SKIN_CACHE_PREFIX = 'riftops-skin-cache-v3:';
+
+function skinCacheKeys(puuid: string) {
+  const suffix = encodeURIComponent(puuid);
+  return { data: `${SKIN_CACHE_PREFIX}${suffix}`, updated: `${SKIN_CACHE_PREFIX}${suffix}:updated` };
+}
 
 function skinKey(skin: any) {
   return String(skin.id);
@@ -276,17 +280,26 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   };
 
   const loadData = useCallback(async () => {
-    const cached = readPreference<any[]>(SKIN_CACHE_KEY, []);
-    if (!warmedFromCacheRef.current && cached.length > 0) {
-      warmedFromCacheRef.current = true;
-      setAllSkins(cached);
-      setUsingCachedCatalog(true);
-      const cachedAt = readPreference<string | null>(SKIN_CACHE_UPDATED_KEY, null);
-      setLastUpdated(cachedAt ? new Date(cachedAt) : null);
-    }
-    setLoading(cached.length === 0);
+    let cached: any[] = [];
+    let cacheKeys: ReturnType<typeof skinCacheKeys> | null = null;
+    setLoading(true);
     setError(null);
     try {
+      // Cache by PUUID so a signed-out/switching account can never display
+      // another account's ownership state while the LCU is reconnecting.
+      const profile = await fetchLCUProfile().catch(() => null);
+      const puuid = String(profile?.summoner?.puuid || '').trim();
+      if (puuid) {
+        cacheKeys = skinCacheKeys(puuid);
+        cached = readPreference<any[]>(cacheKeys.data, []);
+        if (!warmedFromCacheRef.current && cached.length > 0) {
+          warmedFromCacheRef.current = true;
+          setAllSkins(cached);
+          setUsingCachedCatalog(true);
+          const cachedAt = readPreference<string | null>(cacheKeys.updated, null);
+          setLastUpdated(cachedAt ? new Date(cachedAt) : null);
+        }
+      }
       const [ownedRaw, lootRaw, skinsDb, champsSummary] = await Promise.all([
         fetchLCUSkins(),
         remoteReadOnly ? Promise.resolve([]) : fetchLCULoot().catch(() => []),
@@ -390,17 +403,18 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
       setUsingCachedCatalog(false);
       setAllSkins(parsedSkins);
       try {
-        localStorage.setItem(SKIN_CACHE_KEY, JSON.stringify(parsedSkins));
-        localStorage.setItem(SKIN_CACHE_UPDATED_KEY, new Date().toISOString());
+        if (cacheKeys) {
+          localStorage.setItem(cacheKeys.data, JSON.stringify(parsedSkins));
+          localStorage.setItem(cacheKeys.updated, new Date().toISOString());
+        }
       } catch {
         // A full localStorage quota should not make the LCU refresh fail.
       }
     } catch (err: any) {
-      const cached = readPreference<any[]>(SKIN_CACHE_KEY, []);
       if (cached.length > 0) {
         setAllSkins(cached);
         setUsingCachedCatalog(true);
-        const cachedAt = readPreference<string | null>(SKIN_CACHE_UPDATED_KEY, null);
+        const cachedAt = cacheKeys ? readPreference<string | null>(cacheKeys.updated, null) : null;
         setLastUpdated(cachedAt ? new Date(cachedAt) : null);
         setError(null);
       } else {

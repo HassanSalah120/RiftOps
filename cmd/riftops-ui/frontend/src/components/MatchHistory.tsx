@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog } from '../api';
+import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog, fetchLCUProfile, fetchRiotMatchIDs, fetchRiotMatch } from '../api';
 import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download, Coins, Crosshair, Target, Trophy, Users } from 'lucide-react';
 import PageHeader from './PageHeader';
 import { RiotAssetImage } from '../riotAssets';
+import { normalizeArenaMatch } from '../arenaTelemetry';
 
 type AssetEntry = { id: number; name: string; iconPath?: string; inStore?: boolean; displayInItemSets?: boolean; specialRecipe?: number; from?: number[] | string[]; to?: number[] | string[] };
 type MatchAssets = { items: Map<number, AssetEntry>; spells: Map<number, AssetEntry>; perks: Map<number, AssetEntry>; styles: Map<number, AssetEntry> };
@@ -12,6 +13,22 @@ const EMPTY_ASSETS: MatchAssets = { items: new Map(), spells: new Map(), perks: 
 function matchRows(data: any): any[] {
   if (Array.isArray(data)) return data;
   return Array.isArray(data?.games?.games) ? data.games.games : [];
+}
+
+function normalizeRiotMatch(match: any, puuid: string): any {
+  const info = match?.info || {};
+  const participants = Array.isArray(info.participants) ? info.participants : [];
+  const local = participants.find((participant: any) => participant?.puuid === puuid) || participants[0] || {};
+  return {
+    gameId: match?.metadata?.matchId || match?.gameId,
+    gameCreation: info.gameCreation,
+    gameDuration: info.gameDuration,
+    queueId: info.queueId,
+    gameMode: info.gameMode,
+    mapId: info.mapId,
+    participants: [local, ...participants.filter((participant: any) => participant !== local)],
+    _source: 'riot-api',
+  };
 }
 
 function catalogueMap(raw: any): Map<number, AssetEntry> {
@@ -50,6 +67,7 @@ const QUEUE_MAP: Record<number, string> = {
   450: 'ARAM',
   1300: 'Swiftplay',
   1700: 'Arena',
+  1710: 'Arena',
 };
 
 const TRINKET_IDS = new Set([3340, 3363, 3364, 2055, 3013]);
@@ -92,6 +110,29 @@ function participantName(participant: any, names: Record<number, string>, fallba
     || names[participant?.participantId]
     || names[participant?.participantIdentityId]
     || fallback;
+}
+
+function isArenaMatch(match: any): boolean {
+  return normalizeArenaMatch(match).isArena;
+}
+
+function ArenaMatchSummary({ match, detail }: { match: any; detail: any }) {
+  const detailSource = detail && typeof detail === 'object' && Object.keys(detail).length ? detail : match;
+  const telemetry = normalizeArenaMatch(detailSource);
+  if (!telemetry.isArena) return null;
+  const fields = [
+    ['EVENT', telemetry.eventLabel],
+    ['ROUND', telemetry.round === null ? 'Not exposed' : telemetry.round],
+    ['PLACEMENT', telemetry.placement === null ? 'In progress' : `#${telemetry.placement}`],
+    ['TEAMS LEFT', telemetry.teamsRemaining === null ? 'Not exposed' : telemetry.teamsRemaining],
+    ['FAME', telemetry.fame === null ? 'Not exposed' : telemetry.fame.toLocaleString()],
+  ];
+  return <section className="arena-match-summary" aria-label="Arena progress">
+    <header><div><small>ARENA PROGRESS</small><strong>Round and event context</strong></div><span>{telemetry.source}</span></header>
+    <div className="arena-match-summary__grid">{fields.map(([label, value]) => <div key={label}><small>{label}</small><strong>{value}</strong></div>)}</div>
+    {telemetry.partnerName && <p>Partner · <strong>{telemetry.partnerName}</strong></p>}
+    <div className="arena-match-summary__augments"><small>AUGMENTS</small>{telemetry.augments.length ? telemetry.augments.map((augment, index) => <span key={`${augment.id || augment.name}-${index}`} title={augment.description || augment.name}>{augment.name}</span>) : <em>League did not expose augment details for this match.</em>}</div>
+  </section>;
 }
 
 function ParticipantLoadout({ participant, assets }: { participant: any; assets: MatchAssets }) {
@@ -144,6 +185,8 @@ function MatchDetails({ match, detail, loading, player, queueName, championName,
         <div><small>DURATION</small><strong>{durationLabel(match?.gameDuration || detail?.gameDuration)}</strong><span>Game {match?.gameId || detail?.gameId || '—'}</span></div>
         <div className="match-analysis__champion"><img src={`/lol-game-data/assets/v1/champion-icons/${localParticipant?.championId || player?.championId || 0}.png`} alt="" width="72" height="72" /><span><small>YOUR PICK</small><strong>{championName}</strong><em>{positionLabel(localParticipant)}</em></span></div>
       </header>
+
+      <ArenaMatchSummary match={match} detail={detail} />
 
       <section className="match-performance" aria-label="Your performance">
         <div className="match-analysis__section-title"><Crosshair /><span><small>PLAYER PERFORMANCE</small><strong>Your match at a glance</strong></span></div>
@@ -212,14 +255,35 @@ export default function MatchHistory() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [paginationError, setPaginationError] = useState('');
+  const [dataSource, setDataSource] = useState<'LCU' | 'Riot API'>('LCU');
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     setPaginationError('');
     try {
-      const [data, champions, items, spells, runeCatalog] = await Promise.all([
-        fetchLCUMatchHistory(0, 50),
+      let data: any;
+      try {
+        data = await fetchLCUMatchHistory(0, 50);
+        setDataSource('LCU');
+      } catch (lcuError) {
+        // Public Match-V5 is an explicit fallback for users who configured a
+        // Riot API key. We reuse the currently connected PUUID when possible
+        // and preserve the original LCU error if public auth is unavailable.
+        try {
+          const profile = await fetchLCUProfile();
+          const region = localStorage.getItem('riftops.riot.region') || 'EUW';
+          const ids = await fetchRiotMatchIDs(region, profile.summoner.puuid, 0, 20);
+          const rawMatches = await Promise.all(ids.matchIds.map((id) => fetchRiotMatch(region, id).catch(() => null)));
+          const normalized = rawMatches.filter(Boolean).map((match) => normalizeRiotMatch(match, profile.summoner.puuid));
+          if (!normalized.length) throw lcuError;
+          data = { games: { games: normalized } };
+          setDataSource('Riot API');
+        } catch {
+          throw lcuError;
+        }
+      }
+      const [champions, items, spells, runeCatalog] = await Promise.all([
         fetch('/lol-game-data/assets/v1/champion-summary.json').then((response) => response.ok ? response.json() : []).catch(() => []),
         fetch('/lol-game-data/assets/v1/items.json').then((response) => response.ok ? response.json() : []).catch(() => []),
         fetch('/lol-game-data/assets/v1/summoner-spells.json').then((response) => response.ok ? response.json() : []).catch(() => []),
@@ -365,6 +429,12 @@ export default function MatchHistory() {
   const avgGold = totalGames > 0 ? Math.round(totalGold / totalGames) : 0;
   const avgVis = totalGames > 0 ? (totalVis / totalGames).toFixed(1) : '0';
   const streakText = streakDirection > 0 ? `W${streak}` : streakDirection < 0 ? `L${streak}` : '-';
+  const arenaMatches = filteredMatches.filter(isArenaMatch);
+  const arenaTelemetry = arenaMatches.map((match) => normalizeArenaMatch(match));
+  const arenaPlacements = arenaTelemetry.map((telemetry) => telemetry.placement).filter((placement): placement is number => placement !== null);
+  const arenaFame = arenaTelemetry.map((telemetry) => telemetry.fame).filter((fame): fame is number => fame !== null);
+  const arenaAveragePlacement = arenaPlacements.length ? (arenaPlacements.reduce((sum, placement) => sum + placement, 0) / arenaPlacements.length).toFixed(1) : '—';
+  const arenaAverageFame = arenaFame.length ? Math.round(arenaFame.reduce((sum, fame) => sum + fame, 0) / arenaFame.length).toLocaleString() : '—';
   const trend = filteredMatches.slice(0, 12).reverse().map((match) => {
     const participant = match.participants?.[0] || match.participantIdentities?.[0] || {};
     const stats = participant.stats || match.stats || {};
@@ -409,7 +479,7 @@ export default function MatchHistory() {
         eyebrow="MATCH INTELLIGENCE"
         title="Match history"
         description="Review the last games, spot trends, and open a match for the full scoreboard."
-        meta={<span className="page-header__badge">{filteredMatches.length} matches</span>}
+        meta={<span className="page-header__badge">{filteredMatches.length} matches · {dataSource}</span>}
         actions={headerActions}
       />
 
@@ -451,6 +521,14 @@ export default function MatchHistory() {
           </div>
         </div>
       )}
+      {!loading && !error && arenaMatches.length > 0 && (
+        <section className="arena-history-summary" aria-label="Arena history summary">
+          <div><small>ARENA HISTORY</small><strong>{arenaMatches.length} games</strong><span>Filtered selection</span></div>
+          <div><small>AVG PLACEMENT</small><strong>{arenaAveragePlacement === '—' ? arenaAveragePlacement : `#${arenaAveragePlacement}`}</strong><span>Only exposed placements</span></div>
+          <div><small>AVG FAME</small><strong>{arenaAverageFame}</strong><span>League data when available</span></div>
+          <div><small>DETAILS</small><strong>Open a game</strong><span>Round, partner, and augments</span></div>
+        </section>
+      )}
 
       {/* Filter Toolbar */}
       <div className="page-toolbar page-toolbar--history flex items-center justify-between gap-2 overflow-x-auto pb-1">
@@ -463,6 +541,7 @@ export default function MatchHistory() {
             { id: 440, label: 'Ranked Flex' },
             { id: 450, label: 'ARAM' },
             { id: 400, label: 'Draft' },
+            { id: 1700, label: 'Arena' },
           ].map((q) => (
             <button
               key={q.id.toString()}

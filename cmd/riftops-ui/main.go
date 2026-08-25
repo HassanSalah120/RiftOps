@@ -51,8 +51,10 @@ var appPng []byte
 var (
 	backendEngine *engine.Engine
 	qolManager    *qol.Manager
-	port          = 24080
+	preferredPort = 24080
+	port          = preferredPort
 	clientURL     = fmt.Sprintf("http://127.0.0.1:%d", port)
+	portFileName  = "ui-port"
 
 	httpServer *http.Server
 
@@ -238,6 +240,55 @@ func logFatalStartup(title, message string) {
 	showStartupError(title, message)
 }
 
+// listenDashboard keeps 24080 as the stable/default port, but a stale process,
+// another local development service, or a Windows excluded-port policy should
+// not prevent RiftOps from opening. The final :0 fallback asks the OS for a
+// free loopback port instead of guessing through a reserved range.
+func listenDashboard() (net.Listener, int, error) {
+	var lastErr error
+	for candidate := preferredPort; candidate <= preferredPort+9; candidate++ {
+		listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", candidate))
+		if err == nil {
+			return listener, candidate, nil
+		}
+		lastErr = err
+	}
+	if listener, err := net.Listen("tcp4", "127.0.0.1:0"); err == nil {
+		selectedPort, ok := listener.Addr().(*net.TCPAddr)
+		if ok && selectedPort.Port > 0 {
+			return listener, selectedPort.Port, nil
+		}
+		_ = listener.Close()
+		lastErr = fmt.Errorf("OS returned an invalid loopback port")
+	} else {
+		lastErr = fmt.Errorf("fixed ports and OS-assigned loopback port failed: %w", err)
+	}
+	return nil, 0, fmt.Errorf("dashboard ports %d-%d and OS-assigned loopback port are unavailable: %w", preferredPort, preferredPort+9, lastErr)
+}
+
+func dashboardPortPath(dataDir string) string {
+	return filepath.Join(dataDir, portFileName)
+}
+
+func writeDashboardPort(dataDir string, selectedPort int) error {
+	if selectedPort < 1 || selectedPort > 65535 {
+		return fmt.Errorf("invalid dashboard port %d", selectedPort)
+	}
+	return os.WriteFile(dashboardPortPath(dataDir), []byte(strconv.Itoa(selectedPort)+"\n"), 0o600)
+}
+
+func readDashboardPort(dataDir string) int {
+	raw, err := os.ReadFile(dashboardPortPath(dataDir))
+	if err != nil || len(raw) > 32 {
+		return preferredPort
+	}
+	selectedPort, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || selectedPort < 1 || selectedPort > 65535 {
+		return preferredPort
+	}
+	return selectedPort
+}
+
 func shutdownHTTPServer() {
 	remoteAccess.shutdown()
 	if httpServer != nil {
@@ -247,10 +298,11 @@ func shutdownHTTPServer() {
 	}
 }
 
-func notifyExistingInstance() {
+func notifyExistingInstance(dataDir string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, clientURL+"/api/show", nil)
+	instanceURL := fmt.Sprintf("http://127.0.0.1:%d", readDashboardPort(dataDir))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, instanceURL+"/api/show", nil)
 	if err != nil {
 		return
 	}
@@ -293,7 +345,7 @@ func main() {
 	instance, err := singleinstance.Acquire(filepath.Join(path, "lock"))
 	if err != nil {
 		if errors.Is(err, singleinstance.ErrAlreadyRunning) {
-			notifyExistingInstance()
+			notifyExistingInstance(path)
 			return
 		}
 		logFatalStartup("RiftOps could not start", err.Error())
@@ -358,13 +410,20 @@ func main() {
 			return context.Background()
 		},
 	}
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	listener, selectedPort, err := listenDashboard()
 	if err != nil {
-		logFatalStartup("Port conflict", fmt.Sprintf("Port %d is already in use.", port))
+		logFatalStartup("RiftOps could not open its dashboard", err.Error())
 		return
 	}
+	port = selectedPort
+	clientURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	if err := writeDashboardPort(path, port); err != nil {
+		slog.Warn("Could not persist dashboard port", "error", err)
+	} else {
+		defer os.Remove(dashboardPortPath(path))
+	}
 	go func() {
-		slog.Info("Starting Web UI Server", "url", clientURL)
+		slog.Info("Starting Web UI Server", "url", clientURL, "preferredPort", preferredPort, "port", port)
 		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("Failed to start web server", "error", err)
 		}
@@ -1164,6 +1223,58 @@ func riotCurrentGameHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(game)
 }
 
+func riotMatchIDsHandler(w http.ResponseWriter, r *http.Request) {
+	region := r.URL.Query().Get("region")
+	puuid := strings.TrimSpace(r.URL.Query().Get("puuid"))
+	if puuid == "" {
+		httpError(w, "puuid required", http.StatusBadRequest)
+		return
+	}
+	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+	count, _ := strconv.Atoi(r.URL.Query().Get("count"))
+	ids, err := riotapi.GetMatchIDs(region, puuid, start, count)
+	if err != nil {
+		httpError(w, "Failed to fetch Riot match IDs", http.StatusBadGateway)
+		slog.Error("riotMatchIDsHandler", "error", err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"source": "riot-api", "matchIds": ids, "start": max(0, start), "count": len(ids)})
+}
+
+func riotMatchHandler(w http.ResponseWriter, r *http.Request) {
+	region := r.URL.Query().Get("region")
+	matchID := strings.TrimSpace(r.URL.Query().Get("matchId"))
+	if matchID == "" {
+		httpError(w, "matchId required", http.StatusBadRequest)
+		return
+	}
+	match, err := riotapi.GetMatch(region, matchID)
+	if err != nil {
+		httpError(w, "Failed to fetch Riot match", http.StatusBadGateway)
+		slog.Error("riotMatchHandler", "error", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(match)
+}
+
+func riotMatchTimelineHandler(w http.ResponseWriter, r *http.Request) {
+	region := r.URL.Query().Get("region")
+	matchID := strings.TrimSpace(r.URL.Query().Get("matchId"))
+	if matchID == "" {
+		httpError(w, "matchId required", http.StatusBadRequest)
+		return
+	}
+	timeline, err := riotapi.GetMatchTimeline(region, matchID)
+	if err != nil {
+		httpError(w, "Failed to fetch Riot match timeline", http.StatusBadGateway)
+		slog.Error("riotMatchTimelineHandler", "error", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(timeline)
+}
+
 func riotStatusHandler(w http.ResponseWriter, r *http.Request) {
 	region := r.URL.Query().Get("region")
 	if region == "" {
@@ -1236,6 +1347,11 @@ type lcuOverviewResponse struct {
 	// in every phase, and the UI must never invent live-game details.
 	Session          json.RawMessage `json:"gameflowSession,omitempty"`
 	SessionAvailable *bool           `json:"gameflowSessionAvailable,omitempty"`
+	// ActiveGame is sourced from the documented read-only Game Client Data API
+	// when League is loading or in a match. It is optional because that API is
+	// only listening after the game client has started.
+	ActiveGame          *riotclient.GameClientData `json:"activeGame,omitempty"`
+	ActiveGameAvailable *bool                      `json:"activeGameAvailable,omitempty"`
 }
 
 // lcuOverviewHandler serves the frequently refreshed client state in one
@@ -1296,12 +1412,37 @@ func lcuOverviewHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		response.SessionAvailable = &available
+		activeGameAvailable := false
+		if activeGame, activeGameErr := riotclient.FetchActiveGame(ctx); activeGameErr == nil && activeGame != nil && activeGame.Available {
+			activeGameAvailable = true
+			response.ActiveGame = activeGame
+		}
+		response.ActiveGameAvailable = &activeGameAvailable
 	}
 	process := riotclient.GetLeagueProcessInfo()
 	response.Health.Uptime = process.UptimeSec
 	response.Health.MemoryMB = process.MemoryMB
 	response.Health.CPUPercent = process.CPUPercent
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+// lcuActiveGameHandler exposes the same normalized read-only game snapshot as
+// the overview endpoint for clients that need a direct refresh (for example a
+// phone opening the Live Session page after a backgrounded tab resumes).
+func lcuActiveGameHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	ctx, cancel := context.WithTimeout(r.Context(), 1200*time.Millisecond)
+	defer cancel()
+	activeGame, err := riotclient.FetchActiveGame(ctx)
+	if err != nil || activeGame == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"available": false,
+			"detail":    "The League game client is not serving live data yet.",
+		})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(activeGame)
 }
 
 func lcuStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -1671,6 +1812,10 @@ func lcuCreateLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid lobby request", http.StatusBadRequest)
+		return
+	}
+	if !body.PracticeTool && body.QueueID <= 0 {
+		httpError(w, "A valid game mode is required", http.StatusBadRequest)
 		return
 	}
 	if !requireLCUPhase(w, r, lf, "None", "Lobby") {
@@ -2217,6 +2362,18 @@ func lcuChampSelectSkinsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func lcuChampSelectPickOrderSwapsHandler(w http.ResponseWriter, r *http.Request) {
+	lcuChampSelectReadHandler(w, r, "Pick-order swaps are unavailable", func(lf *riotclient.Lockfile, ctx context.Context) ([]byte, error) {
+		return lf.FetchChampSelectPickOrderSwaps(ctx)
+	})
+}
+
+func lcuChampSelectPositionSwapsHandler(w http.ResponseWriter, r *http.Request) {
+	lcuChampSelectReadHandler(w, r, "Role swaps are unavailable", func(lf *riotclient.Lockfile, ctx context.Context) ([]byte, error) {
+		return lf.FetchChampSelectPositionSwaps(ctx)
+	})
+}
+
 func champSelectLockfile(w http.ResponseWriter, r *http.Request) *riotclient.Lockfile {
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
@@ -2227,6 +2384,53 @@ func champSelectLockfile(w http.ResponseWriter, r *http.Request) *riotclient.Loc
 		return nil
 	}
 	return lf
+}
+
+// validateChampSelectActionPayload catches stale phone/desktop requests before
+// they reach the LCU mutation. League's action IDs are the authority; this
+// guard only rejects an ID that disappeared/completed or a champion that is
+// already occupied by another pick/ban. If an older client returns an unknown
+// session shape, the LCU remains the final authority.
+func validateChampSelectActionPayload(payload []byte, actionID, championID int) error {
+	var session struct {
+		Actions [][]struct {
+			ID         *int   `json:"id"`
+			ChampionID int    `json:"championId"`
+			Completed  bool   `json:"completed"`
+			Type       string `json:"type"`
+		} `json:"actions"`
+	}
+	if err := json.Unmarshal(payload, &session); err != nil {
+		return nil
+	}
+	if len(session.Actions) == 0 {
+		return nil
+	}
+	found := false
+	for _, turn := range session.Actions {
+		for _, action := range turn {
+			if action.ID == nil {
+				continue
+			}
+			if *action.ID == actionID {
+				found = true
+				if championID == riotclient.ArenaBraveryChampionID && action.Type != "pick" {
+					return fmt.Errorf("Arena Bravery is only valid for a pick action")
+				}
+				if action.Completed {
+					return fmt.Errorf("champion-select action %d is already complete", actionID)
+				}
+				continue
+			}
+			if championID > 0 && action.ChampionID == championID && !action.Completed && (action.Type == "pick" || action.Type == "ban") {
+				return fmt.Errorf("champion %d is already occupied by the draft", championID)
+			}
+		}
+	}
+	if !found {
+		return fmt.Errorf("champion-select action %d is no longer available", actionID)
+	}
+	return nil
 }
 
 func lcuChampSelectActionHandler(w http.ResponseWriter, r *http.Request) {
@@ -2250,6 +2454,12 @@ func lcuChampSelectActionHandler(w http.ResponseWriter, r *http.Request) {
 	if body.ActionID == nil || body.ChampionID == nil {
 		httpError(w, "Champion-select actionId and championId are required", http.StatusBadRequest)
 		return
+	}
+	if current, currentErr := lf.GetChampSelectSession(r.Context()); currentErr == nil {
+		if validationErr := validateChampSelectActionPayload(current, *body.ActionID, *body.ChampionID); validationErr != nil {
+			httpError(w, validationErr.Error(), http.StatusConflict)
+			return
+		}
 	}
 	if err := lf.UpdateChampSelectAction(r.Context(), *body.ActionID, *body.ChampionID, body.Completed); err != nil {
 		slog.Warn("League rejected champion-select action", "actionID", *body.ActionID, "championID", *body.ChampionID, "completed", body.Completed, "error", err)
@@ -2329,6 +2539,44 @@ func lcuChampSelectBenchSwapHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuChampSelectSwapHandler(w http.ResponseWriter, r *http.Request, kind string) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	lf := champSelectLockfile(w, r)
+	if lf == nil {
+		return
+	}
+	var body struct {
+		ID     *int   `json:"id"`
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid champion-select swap", http.StatusBadRequest)
+		return
+	}
+	if body.ID == nil {
+		httpError(w, "Champion-select swap id is required", http.StatusBadRequest)
+		return
+	}
+	if err := lf.UpdateChampSelectSwap(r.Context(), kind, strings.ToLower(strings.TrimSpace(body.Action)), *body.ID); err != nil {
+		slog.Warn("League rejected champion-select swap", "kind", kind, "id", *body.ID, "action", body.Action, "error", err)
+		httpError(w, "League rejected the swap. It may be unavailable in this queue or the request may have expired.", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func lcuChampSelectPickOrderSwapHandler(w http.ResponseWriter, r *http.Request) {
+	lcuChampSelectSwapHandler(w, r, "pick-order")
+}
+
+func lcuChampSelectPositionSwapHandler(w http.ResponseWriter, r *http.Request) {
+	lcuChampSelectSwapHandler(w, r, "position")
 }
 
 func lcuChampSelectRunesHandler(w http.ResponseWriter, r *http.Request) {

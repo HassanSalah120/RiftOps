@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Ban, BookOpen, Check, CheckCircle2, CircleStop, Clock3, GitBranch, Loader2, Play,
-  Pencil, RefreshCw, Rocket, Search, ShieldCheck, Square, Swords, Users, WifiOff, X, Zap,
+  Pencil, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, Square, Swords, Users, WifiOff, X, Zap,
 } from 'lucide-react';
 import {
   ddChampionIcon, createLCULobby, createPracticeToolLobby, fetchDDChampions,
@@ -9,7 +9,7 @@ import {
   fetchLCULobby, fetchLCUChampSelect, fetchLCUChampSelectBannable,
   fetchLCUChampSelectPickable, fetchLCURunePages, launchGame, launchLCULeague,
   lcuAutoAccept, lcuAutoRequeue, lcuAutoRoles, lcuCustomStart, lcuStopQueue,
-  selectLCURunePage, submitLCUChampSelectAction,
+  selectLCURunePage, submitLCUChampSelectAction, updateLCUChampSelectSelection,
 } from '../api';
 import type { DDChampion, DDChampionList, LCUAvailableQueue, LCULobby, LCURunePage } from '../api';
 import {
@@ -20,14 +20,19 @@ import {
   flattenChampSelectActions,
   hasChampSelectActionID,
   liveLocalChampSelectAction,
+  localAssignedPosition,
   occupiedChampSelectChampionIDs,
   runePageForPick,
 } from '../champSelectFlow';
 import type { ChampSelectSession, DraftTimingMode } from '../champSelectFlow';
 import PageHeader from './PageHeader';
 import RunePageEditor from './RunePageEditor';
+import BuildPlanner from './BuildPlanner';
 import { ActionFeedback, type FeedbackState } from './DesignPrimitives';
 import { PRACTICE_TOOL_QUEUE_ID, queueStartMode } from '../playFlowQueue';
+import { recommendedRoleQuestSpells, roleQuestPlan } from '../roleQuest';
+import { ARENA_BRAVERY_CHAMPION_ID, shouldUseArenaBravery } from '../arenaBravery';
+import { arenaEventKey, arenaEventLabel } from '../arenaTelemetry';
 
 type ToastFn = (message: string, type?: 'info' | 'success' | 'error') => void;
 
@@ -81,6 +86,8 @@ type FlowPrefs = {
   autoBan: boolean;
   autoPick: boolean;
   instantLock: boolean;
+  autoRoleQuestLoadout: boolean;
+  arenaBraveryPick: boolean;
 };
 
 function loadPrefs(): FlowPrefs {
@@ -91,6 +98,7 @@ function loadPrefs(): FlowPrefs {
     banTimingMode: 'immediate', banTimingSeconds: 2,
     selectedQueue: 0,
     autoRoles: true, autoQueue: true, autoAccept: true, autoBan: true, autoPick: true, instantLock: false,
+    autoRoleQuestLoadout: false, arenaBraveryPick: false,
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -123,7 +131,7 @@ function findQueue(queueId: number, queues: LCUAvailableQueue[]): LCUAvailableQu
 
 function lobbyIsCustom(lobby: LCULobby | null): boolean {
   const queueID = Number(lobby?.gameConfig?.queueId || 0);
-  return Boolean(lobby?.gameConfig?.isCustom || queueID === PRACTICE_TOOL_QUEUE_ID || String(lobby?.gameConfig?.gameMode || '').toUpperCase() === 'PRACTICETOOL');
+  return Boolean(lobby?.isCustom || lobby?.gameConfig?.isCustom || lobby?.customGameLobby || queueID === PRACTICE_TOOL_QUEUE_ID || String(lobby?.gameConfig?.gameMode || '').toUpperCase() === 'PRACTICETOOL');
 }
 
 function createConfiguredLobby(queueID: number, queues: LCUAvailableQueue[]): Promise<unknown> {
@@ -247,6 +255,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const [draftStatus, setDraftStatus] = useState('Waiting for Champion Select.');
   const [draftTone, setDraftTone] = useState<DraftTone>('idle');
   const [feedback, setFeedback] = useState<FeedbackState>(null);
+  const [detectedRole, setDetectedRole] = useState<string | null>(null);
 
   const showToast = useCallback<ToastFn>((message, type = 'info') => {
     setFeedback({ tone: type === 'success' ? 'success' : type === 'error' ? 'error' : 'info', message });
@@ -264,6 +273,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const draftRef = useRef<DraftAttempt | null>(null);
   const availabilityRef = useRef<Record<'pick' | 'ban', { ids: number[]; at: number } | undefined>>({ pick: undefined, ban: undefined });
   const draftNoticeRef = useRef<{ key: string; at: number }>({ key: '', at: 0 });
+  const roleLoadoutRef = useRef('');
+  const detectedRoleRef = useRef<string | null>(null);
   const tickingRef = useRef(false);
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
@@ -312,13 +323,22 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   useEffect(() => {
     if (!connected) return;
     let cancelled = false;
-    void fetchLCURunePages().then((pages) => {
-      if (!cancelled) setRunePages(pages);
-    }).catch(() => {
-      if (!cancelled) setRunePages([]);
-    });
-    return () => { cancelled = true; };
-  }, [connected]);
+    const refreshRunes = () => {
+      void fetchLCURunePages().then((pages) => {
+        if (!cancelled) setRunePages(pages);
+      }).catch(() => {
+        // Keep the last known pages. The LCU briefly returns 404 while
+        // switching phases and clearing the dropdown makes fallback picks
+        // look unconfigured even though the pages still exist.
+      });
+    };
+    refreshRunes();
+    const interval = window.setInterval(refreshRunes, phase === 'ChampSelect' ? 5000 : 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [connected, phase]);
 
   useEffect(() => {
     void (async () => {
@@ -347,6 +367,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
       actionSeenRef.current = {};
       draftRef.current = null;
       availabilityRef.current = { pick: undefined, ban: undefined };
+      roleLoadoutRef.current = '';
     }
   }, []);
 
@@ -398,6 +419,26 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     }
   }, [showToast]);
 
+  const applyRoleQuestLoadout = useCallback(async (notify = true, roleOverride?: string | null): Promise<boolean> => {
+    const role = roleOverride || detectedRoleRef.current || prefsRef.current.primaryRole;
+    const spells = recommendedRoleQuestSpells(role);
+    if (!spells) {
+      if (notify) showToast('RiftOps needs a confirmed Top lane assignment before applying Flash + Teleport.', 'info');
+      return false;
+    }
+    if (notify) setActing('role-quest');
+    try {
+      await updateLCUChampSelectSelection({ spell1Id: spells.spell1Id, spell2Id: spells.spell2Id });
+      if (notify) showToast(`Role quest loadout ready: ${spells.spell1Name} + ${spells.spell2Name}.`, 'success');
+      return true;
+    } catch (reason: any) {
+      if (notify) showToast(reason?.message || 'League rejected the role quest spell loadout.', 'error');
+      return false;
+    } finally {
+      if (notify) setActing('');
+    }
+  }, [showToast]);
+
   const handleChampSelectTick = useCallback(async () => {
     const config = prefsRef.current;
     let session: ChampSelectSession;
@@ -410,9 +451,23 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
       return;
     }
 
-    resetCycle(champSelectSessionKey(session));
-    const allActions = flattenChampSelectActions(session);
+    const sessionKey = champSelectSessionKey(session);
+    resetCycle(sessionKey);
     const now = Date.now();
+    const assignedRole = localAssignedPosition(session);
+    detectedRoleRef.current = assignedRole;
+    setDetectedRole((previous) => previous === assignedRole ? previous : assignedRole);
+    const questSpells = recommendedRoleQuestSpells(assignedRole);
+    const questLoadoutKey = `${sessionKey}:${String(assignedRole || '').toUpperCase()}`;
+    if (config.autoRoleQuestLoadout && assignedRole === 'TOP' && questSpells && roleLoadoutRef.current !== questLoadoutKey && roleLoadoutRef.current !== `${questLoadoutKey}:failed`) {
+      setDraftTone('working');
+      setDraftStatus(`Preparing ${questSpells.spell1Name} + ${questSpells.spell2Name} for the Top role quest…`);
+      const applied = await applyRoleQuestLoadout(false, assignedRole);
+      roleLoadoutRef.current = applied ? questLoadoutKey : `${questLoadoutKey}:failed`;
+      if (applied) showToast('Top role quest loadout applied. League will grant the Teleport reward after quest completion.', 'success');
+      else setDraftStatus('Could not prepare the Top role quest loadout. Use the manual button below and continue drafting.');
+    }
+    const allActions = flattenChampSelectActions(session);
 
     // A mutation is successful only after the next LCU session confirms it.
     // Missing actions are also confirmation: League removes completed turns in
@@ -455,12 +510,14 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     const primaryChampionId = actionType === 'ban' ? config.banChampionId : config.pickChampionId;
     const fallbackChampionId = actionType === 'ban' ? config.fallbackBanChampionId : config.fallbackPickChampionId;
     const enabled = actionType === 'ban' ? config.autoBan : config.autoPick;
+    const arenaBravery = actionType === 'pick'
+      && shouldUseArenaBravery(config.arenaBraveryPick, findQueue(config.selectedQueue, queuesRef.current), session);
     if (!enabled) {
       setDraftTone('idle');
       setDraftStatus(`Auto-${actionType} is off. Use League or Live Client Control for this turn.`);
       return;
     }
-    if (!primaryChampionId && !fallbackChampionId) {
+    if (!arenaBravery && !primaryChampionId && !fallbackChampionId) {
       setDraftTone('blocked');
       setDraftStatus(`Choose a champion to ${actionType} in Auto mode setup.`);
       return;
@@ -475,9 +532,11 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
 
     const conflicts = occupiedChampSelectChampionIDs(session, actionID);
     const candidates = [primaryChampionId, fallbackChampionId];
-    const available = await fetchAvailableChampions(actionType);
-    const selectedChampionId = chooseChampSelectChampion(candidates, conflicts, available);
-    if (!selectedChampionId) {
+    const available = arenaBravery ? null : await fetchAvailableChampions(actionType);
+    const selectedChampionId = arenaBravery
+      ? ARENA_BRAVERY_CHAMPION_ID
+      : chooseChampSelectChampion(candidates, conflicts, available);
+    if (!selectedChampionId && !arenaBravery) {
       const primaryBlocked = primaryChampionId > 0 && conflicts.has(primaryChampionId);
       setDraftTone('blocked');
       setDraftStatus(primaryBlocked
@@ -486,8 +545,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
       return;
     }
 
-    const fallbackUsed = selectedChampionId !== primaryChampionId;
-    const championName = champions[selectedChampionId]?.name || `Champion ${selectedChampionId}`;
+    const fallbackUsed = !arenaBravery && selectedChampionId !== primaryChampionId;
+    const championName = arenaBravery ? 'Bravery (Arena)' : champions[selectedChampionId]?.name || `Champion ${selectedChampionId}`;
     const fallbackPrefix = fallbackUsed ? `Primary unavailable — using fallback ${championName}. ` : '';
     const attemptKey = `${actionType}:${actionID}:${selectedChampionId}`;
     let attempt = draftRef.current;
@@ -597,7 +656,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     setDraftTone('working');
     setDraftStatus(`${fallbackPrefix}Sending ${championName} hover to League…`);
     await runDraftMutation(`draft-hover:${attemptKey}`, () => submitLCUChampSelectAction(actionID, selectedChampionId, false));
-  }, [fetchAvailableChampions, champions, resetCycle, runePages, runDraftMutation, showToast]);
+  }, [applyRoleQuestLoadout, fetchAvailableChampions, champions, resetCycle, runePages, runDraftMutation, showToast]);
 
   const tick = useCallback(async () => {
     if (tickingRef.current) return;
@@ -711,18 +770,25 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const selectedStartMode = queueStartMode(prefs.selectedQueue, queues);
   const isCustomSelection = selectedStartMode === 'custom';
   const isCustomLobby = lobbyIsCustom(lobby);
-  const mayStartCustom = phase === 'Lobby' && isCustomLobby && lobby?.localMember?.isLeader === true
-    && lobby?.localMember?.allowedStartActivity === true && lobby?.canStartActivity === true;
+  const mayStartCustom = phase === 'Lobby' && isCustomLobby
+    && lobby?.localMember?.isLeader !== false
+    && lobby?.localMember?.allowedStartActivity !== false
+    && lobby?.canStartActivity !== false;
   const customStartHint = phase !== 'Lobby'
     ? 'Wait until League is in a custom lobby.'
     : !isCustomLobby
       ? 'Create the selected custom lobby first.'
-      : lobby?.localMember?.isLeader !== true || lobby?.localMember?.allowedStartActivity !== true
+      : lobby?.localMember?.isLeader === false || lobby?.localMember?.allowedStartActivity === false
         ? 'Only the custom lobby leader can start.'
-        : lobby?.canStartActivity !== true
+        : lobby?.canStartActivity === false
           ? 'League says this lobby is not ready yet.'
           : 'Custom lobby ready.';
-  const enabledRuleCount = [prefs.autoRoles, prefs.autoQueue, prefs.autoAccept, prefs.autoPick, prefs.autoBan, prefs.instantLock].filter(Boolean).length;
+  const isArenaSelection = shouldUseArenaBravery(true, selectedQueue);
+  const selectedArenaEvent = isArenaSelection ? arenaEventLabel(arenaEventKey(selectedQueue || prefs.selectedQueue)) : '';
+  const enabledRuleCount = [prefs.autoRoles, prefs.autoQueue, prefs.autoAccept, prefs.autoPick, prefs.autoBan, prefs.instantLock, prefs.autoRoleQuestLoadout, prefs.arenaBraveryPick].filter(Boolean).length;
+  const selectedRoleQuest = roleQuestPlan(detectedRole || prefs.primaryRole);
+  const selectedRoleQuestSpells = recommendedRoleQuestSpells(detectedRole || prefs.primaryRole);
+  const champSelectLive = connected && phase === 'ChampSelect';
   const editableRunePages = runePages.filter((page) => page.isEditable !== false);
   const currentRunePage = runePages.find((page) => page.current || page.isActive)
     || runePages.find((page) => page.id === prefs.pickRunePageId)
@@ -877,11 +943,54 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         </div>
       </section>
 
+      <section className="glass-card play-flow__role-quest" aria-labelledby="role-quest-title">
+        <div className="play-flow__role-quest-header">
+          <div className="play-flow__role-quest-mark"><ShieldCheck /></div>
+          <div>
+            <small>SEASON SYSTEM</small>
+            <h3 id="role-quest-title">Role Quest assistant</h3>
+            <p>{selectedRoleQuest ? `${selectedRoleQuest.label} lane · ${selectedRoleQuest.progress} to unlock the reward.${detectedRole ? ' Live assignment confirmed.' : ' Waiting for live lane assignment.'}` : 'Choose a queued role to preview its League Role Quest.'}</p>
+          </div>
+          <span className="play-flow__section-badge">League-owned progress</span>
+        </div>
+        {selectedRoleQuest ? (
+          <div className="play-flow__role-quest-body">
+            <div className="play-flow__role-quest-reward">
+              <span>Reward</span>
+              <strong>{selectedRoleQuest.reward}</strong>
+              <small>{selectedRoleQuest.details}</small>
+            </div>
+            <div className="play-flow__role-quest-action">
+              <p>{selectedRoleQuest.assistant}</p>
+              {selectedRoleQuestSpells ? (
+                <button
+                  type="button"
+                  disabled={!champSelectLive || acting === 'role-quest' || detectedRole !== 'TOP'}
+                  onClick={() => void (async () => {
+                    const applied = await applyRoleQuestLoadout(true);
+                    if (applied) roleLoadoutRef.current = 'manual';
+                  })()}
+                  className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40"
+                  title={champSelectLive ? (detectedRole === 'TOP' ? 'Set Flash + Teleport in the live Champion Select session' : 'RiftOps will only apply this when League confirms Top') : 'Open Champion Select to change summoner spells'}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${acting === 'role-quest' ? 'animate-spin' : ''}`} />
+                  {champSelectLive && detectedRole === 'TOP' ? 'Apply Flash + Teleport' : champSelectLive ? 'Waiting for Top assignment' : 'Available in Champ Select'}
+                </button>
+              ) : (
+                <span className="play-flow__role-quest-note">No RiftOps loadout change is needed for this role.</span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="play-flow__role-quest-empty">Role quests are assigned by League from your queued position. Fill and custom modes may not receive the lane quest.</div>
+        )}
+      </section>
+
       {!remoteClient && <section className="glass-card play-flow__automation">
         <div className="play-flow__section-heading">
           <span className="play-flow__section-icon is-automation"><Zap /></span>
           <div><small>AUTOMATION DECK</small><h3>Queue-to-draft rules</h3><p>Choose what RiftOps may do, then define a safe pick and ban route.</p></div>
-          <span className="play-flow__section-badge">{enabledRuleCount} of 6 on</span>
+          <span className="play-flow__section-badge">{enabledRuleCount} of 8 on</span>
         </div>
 
         <div className="play-flow__toggle-grid">
@@ -909,6 +1018,14 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
             <input type="checkbox" checked={prefs.instantLock} onChange={(event) => update('instantLock', event.target.checked)} />
             <span><strong>Instant lock</strong><small>Skip the 2.5 second hover delay</small></span>
           </label>
+          <label className="play-flow__toggle">
+            <input type="checkbox" checked={prefs.autoRoleQuestLoadout} onChange={(event) => update('autoRoleQuestLoadout', event.target.checked)} disabled={!selectedRoleQuestSpells || (champSelectLive && detectedRole !== 'TOP')} />
+            <span><strong>Top quest loadout</strong><small>{detectedRole === 'TOP' ? 'League confirmed Top · apply Flash + Teleport' : selectedRoleQuestSpells ? 'Waiting for League to confirm Top before applying' : 'Select Top to enable this helper'}</small></span>
+          </label>
+          <label className="play-flow__toggle">
+            <input type="checkbox" checked={prefs.arenaBraveryPick} onChange={(event) => update('arenaBraveryPick', event.target.checked)} disabled={!isArenaSelection} />
+            <span><strong>Arena Bravery pick</strong><small>{isArenaSelection ? 'Choose League’s random Bravery pick instead of a champion' : 'Select the Arena queue to enable this helper'}</small></span>
+          </label>
         </div>
 
         <div className="play-flow__policy">
@@ -916,6 +1033,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
           <div className="play-flow__policy-columns">
             <section className="play-flow__policy-lane">
               <div className="play-flow__policy-lane-heading"><span>Pick path</span><small>Choose the first available champion, then the fallback.</small></div>
+              {isArenaSelection && prefs.arenaBraveryPick && <div className="play-flow__policy-note"><Zap /> Arena Bravery is armed. RiftOps will send League’s special Bravery pick (-3) and will not invent a champion or ban it.</div>}
+              {isArenaSelection && <div className="play-flow__policy-note"><Sparkles /> {selectedArenaEvent}. The champion grid will use League’s live Arena choice pool; RiftOps never invents Crowd Favorites or sends a normal champion outside that pool.</div>}
               <div className="play-flow__policy-pair">
                 <ChampionPicker value={prefs.pickChampionId} query={pickQuery} onQuery={setPickQuery} onSelect={(id) => update('pickChampionId', id)} label="Primary pick" version={version} champions={champions} />
                 <ChampionPicker value={prefs.fallbackPickChampionId} query={fallbackPickQuery} onQuery={setFallbackPickQuery} onSelect={(id) => update('fallbackPickChampionId', id)} label="Fallback pick" version={version} champions={champions} />
@@ -942,6 +1061,14 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                 </div>
               </div>
               {!editableRunePages.length && <small className="play-flow__policy-note">Connect to League Client and create a custom rune page to enable this loadout.</small>}
+              <BuildPlanner
+                championId={prefs.pickChampionId}
+                championName={champions[prefs.pickChampionId]?.name || ''}
+                fallbackChampionId={prefs.fallbackPickChampionId}
+                fallbackChampionName={champions[prefs.fallbackPickChampionId]?.name || ''}
+                role={detectedRole || prefs.primaryRole}
+                onNotice={showToast}
+              />
             </section>
             <section className="play-flow__policy-lane">
               <div className="play-flow__policy-lane-heading"><span>Ban path</span><small>Keep a backup ban ready if the first target is unavailable.</small></div>

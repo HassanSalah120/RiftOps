@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowRight, Check, CircleStop, Clipboard, Clock3, Gamepad2, Loader2,
-  Play, RefreshCw, RotateCcw, ShieldAlert, Swords, Users, Wifi, WifiOff, X,
+  Play, RefreshCw, RotateCcw, ShieldAlert, Sparkles, Swords, Trophy, Users, Wifi, WifiOff, X,
 } from 'lucide-react';
 import {
   launchLCULeague, lcuAutoAccept, lcuDeclineReady, lcuPlayAgain, lcuQuitCustomSession, lcuStopQueue,
   type LCUGameflowSession,
+  type GameClientData,
 } from '../api';
+import { isArenaQueue } from '../arenaBravery';
+import { normalizeArenaTelemetry } from '../arenaTelemetry';
 import { formatElapsed, isActiveLivePhase, livePhaseDescription, livePhaseLabel, normalizeLivePhase, type LiveSessionPhase } from '../liveSession';
 import { useLCUConnection } from './lcuConnectionContext';
 import ChampSelectWorkspace from './ChampSelectWorkspace';
@@ -58,6 +61,60 @@ function sessionPhase(session: LCUGameflowSession | null): string {
   return readString(value);
 }
 
+function formatScore(value: unknown): string {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString() : '—';
+}
+
+function formatKDA(player: NonNullable<GameClientData['players']>[number]): string {
+  const scores = player.scores || {};
+  return `${formatScore(scores.kills)} / ${formatScore(scores.deaths)} / ${formatScore(scores.assists)}`;
+}
+
+function ArenaLiveCard({ data }: { data: GameClientData }) {
+  const telemetry = normalizeArenaTelemetry({ gameData: data.gameData, arena: data.arena, activePlayer: data.activePlayer, events: data.events });
+  if (!telemetry.isArena) return null;
+  const fields = [
+    ['EVENT', telemetry.eventLabel],
+    ['ROUND', telemetry.round === null ? 'League has not exposed it' : String(telemetry.round)],
+    ['TEAMS LEFT', telemetry.teamsRemaining === null ? 'League has not exposed it' : String(telemetry.teamsRemaining)],
+    ['PLACEMENT', telemetry.placement === null ? 'In progress' : `#${telemetry.placement}`],
+    ['FAME', telemetry.fame === null ? 'League has not exposed it' : telemetry.fame.toLocaleString()],
+    ['PARTNER', telemetry.partnerName || 'League has not exposed it'],
+  ];
+  return <section className="active-game-dashboard__arena" aria-label="Arena match status">
+    <div className="active-game-dashboard__arena-heading"><div><span className="live-session__eyebrow">ARENA TELEMETRY</span><h3>Round-by-round status</h3><p>Only values exposed by League are shown. RiftOps does not infer placements or augment choices.</p></div><span className="active-game-dashboard__arena-pill"><Sparkles /> ARENA</span></div>
+    <div className="active-game-dashboard__arena-grid">{fields.map(([label, value]) => <div key={label}><small>{label}</small><strong>{value}</strong></div>)}</div>
+    <div className="active-game-dashboard__arena-augments"><div className="active-game-dashboard__team-head"><span><Trophy /> AUGMENTS</span><small>{telemetry.augments.length ? `${telemetry.augments.length} exposed` : 'Waiting for League data'}</small></div>{telemetry.augments.length ? <div className="active-game-dashboard__augment-list">{telemetry.augments.map((augment, index) => <span key={`${augment.id || augment.name}-${index}`} title={augment.description || augment.name}>{augment.name}{augment.tier ? ` · ${augment.tier}` : ''}</span>)}</div> : <p className="active-game-dashboard__empty">Arena augments are not present in the current local game payload. Match history may expose them after the game.</p>}</div>
+  </section>;
+}
+
+function ActiveGameDashboard({ data }: { data: GameClientData }) {
+  const players = data.players || [];
+  const active = data.activePlayer;
+  const allies = players.filter((player) => String(player.team || '').toUpperCase() === 'ORDER');
+  const opponents = players.filter((player) => String(player.team || '').toUpperCase() === 'CHAOS');
+  const recentEvents = (data.events || []).slice(-4).reverse();
+  const championStats = active?.championStats || {};
+  return <div className="active-game-dashboard">
+    <div className="active-game-dashboard__head">
+      <div><span className="live-session__eyebrow">GAME CLIENT TELEMETRY</span><h3>Live match dashboard</h3><p>Read-only data from League’s local game client. RiftOps never sends gameplay input.</p></div>
+      <div className="active-game-dashboard__status"><span />LIVE</div>
+    </div>
+    <ArenaLiveCard data={data} />
+    <div className="active-game-dashboard__summary">
+      <div><small>PLAYER</small><strong>{active?.summonerName || 'You'}</strong><span>{active?.championName || 'Champion unavailable'} · Level {formatScore(active?.level)}</span></div>
+      <div><small>GAME TIME</small><strong>{formatElapsed(Number(data.gameData?.gameTime) || 0)}</strong><span>{data.gameData?.gameMode || 'League match'}</span></div>
+      <div><small>GOLD</small><strong>{formatScore(active?.currentGold)}</strong><span>Current gold</span></div>
+      <div><small>STATS</small><strong>{formatScore(championStats.attackDamage)} AD</strong><span>{formatScore(championStats.abilityPower)} AP · {formatScore(championStats.moveSpeed)} MS</span></div>
+    </div>
+    <div className="active-game-dashboard__columns">
+      {[['YOUR TEAM', allies], ['OPPONENTS', opponents]].map(([label, team]) => <div className="active-game-dashboard__team" key={String(label)}><div className="active-game-dashboard__team-head"><span>{label as string}</span><small>{(team as typeof players).length} players</small></div>{(team as typeof players).length === 0 ? <p className="active-game-dashboard__empty">Team data is still loading.</p> : (team as typeof players).map((player, index) => <div className={`active-game-dashboard__player ${player.isDead ? 'is-dead' : ''}`} key={`${player.summonerName || player.championName || 'player'}-${index}`}><div><strong>{player.championName || 'Champion unavailable'}</strong><span>{player.summonerName || 'Summoner unavailable'}{player.position ? ` · ${player.position}` : ''}</span><em>{(player.items || []).filter((item) => item.displayName || item.itemID || item.id).slice(0, 4).map((item) => item.displayName || `Item ${item.itemID || item.id}`).join(' · ') || 'Items unavailable'}</em></div><b>{formatKDA(player)}</b><small>CS {formatScore(player.scores?.creepScore)}{player.isDead ? ' · DEAD' : ''}</small></div>)}</div>)}
+    </div>
+    <div className="active-game-dashboard__events"><div className="active-game-dashboard__team-head"><span>RECENT EVENTS</span><small>{recentEvents.length ? 'Game client feed' : 'Waiting for events'}</small></div>{recentEvents.length === 0 ? <p className="active-game-dashboard__empty">Objective and combat events will appear here.</p> : recentEvents.map((event, index) => <div className="active-game-dashboard__event" key={`${event.eventId || event.eventName || 'event'}-${index}`}><span /> <strong>{event.eventName || 'Game event'}</strong><time>{formatElapsed(Number(event.eventTime) || 0)}</time></div>)}</div>
+  </div>;
+}
+
 function readyCheckNumber(value: unknown): number | null {
   const result = Number(value);
   return Number.isFinite(result) && result >= 0 ? result : null;
@@ -91,11 +148,12 @@ export default function LiveSessionPage({ onOpenPlayFlow, onOpenCommandCenter, s
   showToast: Toast;
   remoteClient?: boolean;
 }) {
-  const { qol, status, health, connected, loading, stale, error, lastUpdated, gameflowSession, gameflowSessionAvailable, refresh } = useLCUConnection();
+  const { qol, status, health, connected, loading, stale, error, lastUpdated, gameflowSession, gameflowSessionAvailable, activeGame, activeGameAvailable, refresh } = useLCUConnection();
   const [busy, setBusy] = useState('');
   const [now, setNow] = useState(() => Date.now());
   const phaseStarted = useRef(Date.now());
   const previousPhase = useRef<LiveSessionPhase>('IDLE');
+  const latestGameEvent = useRef('');
   const readyAnchor = useRef<{ seconds: number | null; at: number }>({ seconds: null, at: Date.now() });
   const [lastActivePhase, setLastActivePhase] = useState<LiveSessionPhase>('IDLE');
   const [feedback, setFeedback] = useState<FeedbackState>(null);
@@ -108,6 +166,7 @@ export default function LiveSessionPage({ onOpenPlayFlow, onOpenCommandCenter, s
   const livePayloadLost = (normalized === 'LOADING' || normalized === 'IN_GAME') && gameflowSessionAvailable === false;
   const phase = (stale && isActiveLivePhase(lastActivePhase)) || livePayloadLost ? 'RECONNECTING' : normalized;
   const data = useMemo(() => gameData(gameflowSession), [gameflowSession]);
+  const arenaMode = isArenaQueue(qol?.queueId) || normalizeArenaTelemetry({ gameData: data, arena: activeGame?.arena }).isArena;
   const roster = useMemo(() => participants(data), [data]);
   const elapsed = Math.floor((now - phaseStarted.current) / 1000);
   const gameId = readString(data.gameId || data.gameID || data.id);
@@ -140,6 +199,22 @@ export default function LiveSessionPage({ onOpenPlayFlow, onOpenCommandCenter, s
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'IN_GAME' || !activeGame?.available || !activeGame.events?.length) return;
+    const event = activeGame.events[activeGame.events.length - 1];
+    const key = `${event.eventId || ''}:${event.eventName || ''}:${event.eventTime || ''}`;
+    if (!latestGameEvent.current) {
+      latestGameEvent.current = key;
+      return;
+    }
+    if (latestGameEvent.current === key) return;
+    latestGameEvent.current = key;
+    const name = String(event.eventName || '');
+    if (/dragon|baron|rift herald|turret|inhibitor|ace|game end/i.test(name)) {
+      publishToast(`Game event: ${name}`, 'info');
+    }
+  }, [activeGame, phase, publishToast]);
 
   const run = useCallback(async (key: string, success: string, action: () => Promise<unknown>) => {
     setBusy(key);
@@ -220,12 +295,12 @@ export default function LiveSessionPage({ onOpenPlayFlow, onOpenCommandCenter, s
         <div className="live-session__ready-actions"><ActionButton busy={busy === 'accept'} icon={Check} onClick={() => void run('accept', 'Ready check accepted.', lcuAutoAccept)}>Accept ready check</ActionButton><ActionButton busy={busy === 'decline'} icon={X} tone="quiet" onClick={() => void run('decline', 'Ready check declined.', lcuDeclineReady)}>Decline</ActionButton></div>
       </section>}
 
-      {phase === 'CHAMP_SELECT' && <section className="live-session__panel live-session__champ-select-panel"><div className="live-session__panel-heading"><div><span className="live-session__eyebrow">DRAFT</span><h2>Champion Select</h2><p>Pick, ban, load out, and rune controls stay synchronized with the LCU session.</p></div></div><ChampSelectWorkspace connected={connected} active remoteClient={remoteClient} onToast={showToast} />{customSession && <div className="live-session__panel-actions"><ActionButton busy={busy === 'quit-custom'} icon={CircleStop} tone="danger" onClick={leaveCustomSession}>Quit custom game</ActionButton></div>}</section>}
+      {phase === 'CHAMP_SELECT' && <section className="live-session__panel live-session__champ-select-panel"><div className="live-session__panel-heading"><div><span className="live-session__eyebrow">DRAFT</span><h2>{arenaMode ? 'Arena Champion Select' : 'Champion Select'}</h2><p>{arenaMode ? 'League controls the Arena event pool. Pick Bravery or one of the Crowd Favorites currently exposed by the client.' : 'Pick, ban, load out, and rune controls stay synchronized with the LCU session.'}</p></div></div><ChampSelectWorkspace connected={connected} active arenaMode={arenaMode} remoteClient={remoteClient} onToast={showToast} />{customSession && <div className="live-session__panel-actions"><ActionButton busy={busy === 'quit-custom'} icon={CircleStop} tone="danger" onClick={leaveCustomSession}>Quit custom game</ActionButton></div>}</section>}
 
       {(phase === 'LOADING' || phase === 'IN_GAME' || phase === 'POST_GAME' || phase === 'RECONNECTING') && <section className="live-session__panel is-game">
         <div className="live-session__panel-heading"><div><span className="live-session__eyebrow">{phase === 'IN_GAME' ? 'ACTIVE MATCH' : livePhaseLabel(phase).toUpperCase()}</span><h2>{phase === 'IN_GAME' ? 'Your game is live' : livePhaseLabel(phase)}</h2><p>{sessionPhase(gameflowSession) || livePhaseDescription(phase)}</p></div>{gameId && <button type="button" className="live-session__game-id" onClick={() => void copyGameId()}><Clipboard /> <span>Game {gameId}</span></button>}</div>
         <div className="live-session__facts"><div><small>GAME MODE</small><strong>{formatGameMode(data)}</strong></div><div><small>QUEUE</small><strong>{formatQueue(data)}</strong></div><div><small>MAP</small><strong>{formatMap(data)}</strong></div><div><small>ELAPSED</small><strong>{gameLength !== null ? formatElapsed(gameLength) : formatElapsed(elapsed)}</strong></div></div>
-        {roster.length > 0 ? <div className="live-session__roster"><div className="live-session__roster-heading"><Users /><span>Participants available from LCU</span></div><div className="live-session__roster-grid">{roster.slice(0, 10).map((player, index) => <div className="live-session__player" key={`${readString(player.summonerId || player.playerId)}-${index}`}><span>{readString(player.championId || player.championName) || 'Champion unavailable'}</span><small>{readString(player.summonerName || player.displayName) || 'Summoner unavailable'}</small></div>)}</div></div> : <div className="live-session__unavailable"><WifiOff /><span>Detailed live scoreboard is not exposed by the current LCU session payload. RiftOps will keep this page honest and will not fabricate KDA, CS, items, or objective data.</span></div>}
+        {phase === 'IN_GAME' && activeGame?.available ? <ActiveGameDashboard data={activeGame} /> : roster.length > 0 ? <div className="live-session__roster"><div className="live-session__roster-heading"><Users /><span>Participants available from LCU</span></div><div className="live-session__roster-grid">{roster.slice(0, 10).map((player, index) => <div className="live-session__player" key={`${readString(player.summonerId || player.playerId)}-${index}`}><span>{readString(player.championId || player.championName) || 'Champion unavailable'}</span><small>{readString(player.summonerName || player.displayName) || 'Summoner unavailable'}</small></div>)}</div></div> : <div className="live-session__unavailable"><WifiOff /><span>{phase === 'IN_GAME' && activeGameAvailable === false ? 'League has not exposed the live game data feed yet. RiftOps is retrying without fabricating KDA, CS, items, or objective data.' : 'Detailed live scoreboard is unavailable until the game client exposes its read-only data feed.'}</span></div>}
         <div className="live-session__panel-actions">{(phase === 'LOADING' || phase === 'IN_GAME' || phase === 'RECONNECTING') && customSession && <ActionButton busy={busy === 'quit-custom'} icon={CircleStop} tone="danger" onClick={leaveCustomSession}>Quit custom game</ActionButton>}{phase === 'POST_GAME' && <ActionButton busy={busy === 'again'} icon={RotateCcw} onClick={() => void run('again', 'Returning to the lobby.', lcuPlayAgain)}>Play Again</ActionButton>}{phase === 'RECONNECTING' && <ActionButton busy={busy === 'refresh'} icon={RefreshCw} onClick={() => void run('refresh', 'League state refreshed.', refresh)}>Reconnect</ActionButton>}{phase !== 'POST_GAME' && <ActionButton busy={false} icon={ArrowRight} tone="quiet" onClick={onOpenCommandCenter}>Command Center</ActionButton>}</div>
       </section>}
 

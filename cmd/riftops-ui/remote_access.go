@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -362,7 +363,8 @@ var remoteCapabilities = []remoteCapability{
 		"/api/snapshot": {http.MethodGet}, "/api/events": {http.MethodGet}, "/api/remote/status": {http.MethodGet},
 		"/api/ddragon/version": {http.MethodGet}, "/api/ddragon/champions": {http.MethodGet}, "/api/ddragon/profile-icons": {http.MethodGet},
 		"/api/lcu/status": {http.MethodGet}, "/api/lcu/overview": {http.MethodGet}, "/api/lcu/profile": {http.MethodGet},
-		"/api/lcu/friends": {http.MethodGet}, "/api/lcu/health": {http.MethodGet}, "/api/lcu/server-status": {http.MethodGet},
+		"/api/lcu/active-game": {http.MethodGet},
+		"/api/lcu/friends":     {http.MethodGet}, "/api/lcu/health": {http.MethodGet}, "/api/lcu/server-status": {http.MethodGet},
 	}},
 	{ID: "match_history_read", Routes: map[string][]string{
 		"/api/lcu/match-history": {http.MethodGet}, "/api/lcu/game-detail": {http.MethodGet}, "/api/lcu/champ-select/runes/catalog": {http.MethodGet},
@@ -381,8 +383,10 @@ var remoteCapabilities = []remoteCapability{
 	{ID: "champion_select", Routes: map[string][]string{
 		"/api/lcu/gameflow-phase": {http.MethodGet}, "/api/lcu/champ-select": {http.MethodGet},
 		"/api/lcu/champ-select/pickable": {http.MethodGet}, "/api/lcu/champ-select/bannable": {http.MethodGet}, "/api/lcu/champ-select/skins": {http.MethodGet},
+		"/api/lcu/champ-select/pick-order-swaps": {http.MethodGet}, "/api/lcu/champ-select/position-swaps": {http.MethodGet},
 		"/api/lcu/champ-select/action": {http.MethodPost}, "/api/lcu/champ-select/selection": {http.MethodPatch, http.MethodPost},
-		"/api/lcu/champ-select/reroll": {http.MethodPost}, "/api/lcu/champ-select/bench/swap": {http.MethodPost}, "/api/lcu/dodge": {http.MethodPost},
+		"/api/lcu/champ-select/reroll": {http.MethodPost}, "/api/lcu/champ-select/bench/swap": {http.MethodPost},
+		"/api/lcu/champ-select/pick-order-swap": {http.MethodPost}, "/api/lcu/champ-select/position-swap": {http.MethodPost}, "/api/lcu/dodge": {http.MethodPost},
 	}},
 	{ID: "rune_select", Routes: map[string][]string{
 		"/api/lcu/champ-select/runes": {http.MethodGet}, "/api/lcu/champ-select/runes/select": {http.MethodPost},
@@ -436,7 +440,11 @@ func remoteRouteScope(next http.Handler) http.Handler {
 			return
 		}
 		if strings.HasPrefix(path, "/lol-game-data/") {
-			if r.Method != http.MethodGet {
+			if r.Method != http.MethodGet || !remoteAssetPathAllowed(path) {
+				if r.Method == http.MethodGet {
+					http.Error(w, "This asset is not available to paired phones.", http.StatusForbidden)
+					return
+				}
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
@@ -454,6 +462,18 @@ func remoteRouteScope(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func remoteAssetPathAllowed(path string) bool {
+	if len(path) > 512 || !strings.HasPrefix(path, "/lol-game-data/assets/") || strings.Contains(path, "\\") || strings.Contains(path, "..") {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".json", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg":
+		return true
+	default:
+		return false
+	}
 }
 
 func remoteSecurityHeaders(next http.Handler) http.Handler {

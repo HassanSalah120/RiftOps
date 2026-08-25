@@ -13,6 +13,8 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
   const [qol, setQol] = useState<QoLState | null>(null);
   const [gameflowSession, setGameflowSession] = useState<import('../api').LCUGameflowSession | null>(null);
   const [gameflowSessionAvailable, setGameflowSessionAvailable] = useState<boolean | null>(null);
+  const [activeGame, setActiveGame] = useState<import('../api').GameClientData | null>(null);
+  const [activeGameAvailable, setActiveGameAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,8 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
         setQol(overview.qol || null);
         setGameflowSession(overview.gameflowSession || null);
         setGameflowSessionAvailable(typeof overview.gameflowSessionAvailable === 'boolean' ? overview.gameflowSessionAvailable : null);
+        setActiveGame(overview.activeGame || null);
+        setActiveGameAvailable(typeof overview.activeGameAvailable === 'boolean' ? overview.activeGameAvailable : null);
         setLastUpdated(new Date(now));
         lastPublishedAt.current = now;
       } else if (now - lastPublishedAt.current >= 30000) {
@@ -127,6 +131,8 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
     qol,
     gameflowSession,
     gameflowSessionAvailable,
+    activeGame,
+    activeGameAvailable,
     connected: Boolean(status?.leagueReady),
     leagueReady: Boolean(status?.leagueReady),
     loading,
@@ -139,7 +145,7 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
     pollInterval,
     realtimeInterval,
     refresh,
-  }), [status, health, qol, gameflowSession, gameflowSessionAvailable, loading, stale, error, lastUpdated, performanceMode, setPerformanceMode, pageVisible, pollInterval, realtimeInterval, refresh]);
+  }), [status, health, qol, gameflowSession, gameflowSessionAvailable, activeGame, activeGameAvailable, loading, stale, error, lastUpdated, performanceMode, setPerformanceMode, pageVisible, pollInterval, realtimeInterval, refresh]);
 
   return <LCUConnectionContext.Provider value={value}>{children}</LCUConnectionContext.Provider>;
 }

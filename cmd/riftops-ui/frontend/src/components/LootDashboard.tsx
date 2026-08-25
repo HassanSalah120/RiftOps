@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Clock3, Gem, Hammer, Loader2, PackageOpen, RefreshCw, XCircle } from 'lucide-react';
 import { craftLCULootRecipe, fetchLCULoot, fetchLCULootRecipes, fetchLCUWallet } from '../api';
+import { recipeActionLabel } from '../lootActions';
 import type { ConfirmAction } from '../types';
 import ConfirmModal from './ConfirmModal';
 import { ActionFeedback, ContextPanel, EmptyState, type FeedbackState, StatusBadge, WorkspaceSection } from './DesignPrimitives';
@@ -40,6 +41,7 @@ const RESOURCE_DEFS = [
 function itemName(item: LootItem): string {
   return String(item.itemDesc || item.localizedName || item.lootId || 'League loot');
 }
+
 
 function GameAsset({ item, fallback, icon }: { item?: LootItem; fallback: string; icon?: string }) {
   const candidates = [icon || '', item?.asset || '', item ? `/lol-game-data/assets/v1/loot/${encodeURIComponent(item.lootId)}.png` : ''].filter(Boolean);
@@ -153,7 +155,8 @@ export default function LootDashboard() {
             {selectedItem && !recipesLoading && recipes.length === 0 && <EmptyState icon={Gem} title="No recipe available" description="This material cannot be crafted through the current League inventory state." />}
             {recipes.map((recipe, index) => {
               const label = recipe.contextMenuText || recipe.name || recipe.type || recipe.recipeName || `Recipe ${index + 1}`;
-              return <article className="loot-recipe" key={recipe.recipeName || `${label}-${index}`}><div><strong>{label}</strong><span>{recipe.type || 'League crafting recipe'} · {(recipe.outputs || []).length || 1} output</span></div><button type="button" disabled={!recipe.recipeName || crafting !== ''} onClick={() => setConfirmAction({ open: true, title: `Craft ${label}?`, message: 'League will consume the recipe inputs immediately. This inventory action cannot be undone.', actionLabel: 'Craft item', danger: false, onConfirm: () => { setConfirmAction(null); void runCraft(recipe); } })}>{crafting === recipe.recipeName ? <Loader2 className="animate-spin" /> : <Hammer />}Craft</button></article>;
+              const actionLabel = recipeActionLabel(recipe);
+              return <article className="loot-recipe" key={recipe.recipeName || `${label}-${index}`}><div><strong>{label}</strong><span>{recipe.type || 'League crafting recipe'} · {(recipe.outputs || []).length || 1} output</span></div><button type="button" disabled={!recipe.recipeName || crafting !== ''} onClick={() => setConfirmAction({ open: true, title: `${actionLabel} ${label}?`, message: 'League will consume the recipe inputs immediately. This inventory action cannot be undone.', actionLabel: `${actionLabel} item`, danger: false, onConfirm: () => { setConfirmAction(null); void runCraft(recipe); } })}>{crafting === recipe.recipeName ? <Loader2 className="animate-spin" /> : <Hammer />}{actionLabel}</button></article>;
             })}
           </ContextPanel>
         </div>

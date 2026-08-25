@@ -360,7 +360,7 @@ export default function QoLPanel() {
   const postGame = phase === 'EndOfGame' || phase === 'PreEndOfGame' || phase === 'WaitingForStats';
   const customSession = Boolean(state?.isCustom || state?.queueId === 3140);
   const customQuitAvailable = customSession && ['Lobby', 'Matchmaking', 'ChampSelect', 'GameStart', 'Loading', 'InProgress', 'Reconnect'].includes(phase);
-  const automationCount = [preferences.autoAccept, preferences.autoPlayAgain, preferences.autoHonor, preferences.autoStartQueue, preferences.autoClaimRewards].filter(Boolean).length;
+  const automationCount = [preferences.autoAccept, preferences.autoPlayAgain, preferences.autoHonor, preferences.autoStartQueue, preferences.autoClaimRewards, preferences.grindMode].filter(Boolean).length;
   const nextMove = !connected
     ? 'Launch League Client to reconnect the control deck.'
     : readyCheck
@@ -444,7 +444,7 @@ export default function QoLPanel() {
         <div className="qol-command-deck__metrics">
           <div><span>PHASE</span><strong>{phase}</strong><small>{connected ? 'LCU detected' : 'Waiting for LCU'}</small></div>
           <div><span>QUEUE</span><strong>{state?.queueState || (connected ? 'Idle' : '—')}</strong><small>{inQueue ? 'Searching now' : 'Current search state'}</small></div>
-          <div><span>AUTOMATION</span><strong>{automationCount}/5</strong><small>{automationCount ? 'Rules active' : 'No rules enabled'}</small></div>
+          <div><span>AUTOMATION</span><strong>{automationCount}/6</strong><small>{automationCount ? 'Rules active' : 'No rules enabled'}</small></div>
         </div>
       </section>
 

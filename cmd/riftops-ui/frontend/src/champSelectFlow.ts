@@ -9,10 +9,47 @@ export type ChampSelectAction = {
   type?: string;
 };
 
+// LCU exposes pick-order and position swaps as small, versioned objects. The
+// client has changed field names between League releases, so keep the shape
+// intentionally permissive and resolve the useful fields at the UI boundary.
+export type ChampSelectSwap = {
+  id?: number;
+  cellId?: number;
+  requesterCellId?: number;
+  requestingCellId?: number;
+  targetCellId?: number;
+  otherCellId?: number;
+  state?: string;
+  [key: string]: unknown;
+};
+
 export type ChampSelectSession = {
   actions?: ChampSelectAction[][];
+  pickOrderSwaps?: ChampSelectSwap[];
+  positionSwaps?: ChampSelectSwap[];
   localPlayerCellId?: number;
   gameId?: number | string;
+  queueId?: number | string;
+  gameMode?: string;
+  gameType?: string;
+  mapId?: number | string;
+  myTeam?: Array<{
+    cellId?: number;
+    championId?: number;
+    championPickIntent?: number;
+    championName?: string;
+    summonerId?: string | number;
+    summonerName?: string;
+    displayName?: string;
+    selectedSkinId?: number;
+    selectedSkinIndex?: number;
+    spell1Id?: number;
+    spell2Id?: number;
+    assignedPosition?: string;
+    assignedRole?: string;
+    position?: string;
+    role?: string;
+  }>;
   timer?: {
     phase?: string;
     timeLeft?: number;
@@ -20,6 +57,19 @@ export type ChampSelectSession = {
     isInfinite?: boolean;
   };
 };
+
+export function localAssignedPosition(session: ChampSelectSession | null | undefined): string | null {
+  const localCell = session?.localPlayerCellId;
+  const member = localCell === undefined ? session?.myTeam?.[0] : session?.myTeam?.find((entry) => entry.cellId === localCell);
+  const value = String(member?.assignedPosition || member?.assignedRole || member?.position || member?.role || '').trim().toUpperCase();
+  if (!value || value === 'FILL' || value === 'NONE' || value === 'UNASSIGNED') return null;
+  if (value === 'MID' || value === 'MIDDLE') return 'MIDDLE';
+  if (value === 'BOT' || value === 'BOTTOM' || value === 'ADC') return 'BOTTOM';
+  if (value === 'SUPPORT' || value === 'UTILITY' || value === 'SUP') return 'UTILITY';
+  if (value === 'TOP') return 'TOP';
+  if (value === 'JUNGLE' || value === 'JG') return 'JUNGLE';
+  return null;
+}
 
 export type DraftTimingMode = 'immediate' | 'last-second' | 'after';
 

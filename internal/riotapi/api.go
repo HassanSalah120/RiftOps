@@ -6,7 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,11 +17,9 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/riotclient"
 )
 
-// API key is resolved in this priority:
-//  1. LCU RSO access token (if Riot Client is running) — Bearer auth
-//
-// LCU is re-checked on every call (it's cached internally for 5min),
-// so launching the Riot Client later will be picked up automatically.
+// API-key authentication uses the developer portal's X-Riot-Token header.
+// When no key is configured, RiftOps can fall back to the local LCU RSO
+// bearer token for endpoints that accept it.
 
 // resolveAuth returns credentials for the public Riot API. A developer-portal
 // key set via RIOT_API_KEY takes priority; otherwise RiftOps tries the local
@@ -27,20 +27,26 @@ import (
 // endpoints). The LCU is re-checked on every call so launching the client
 // later is picked up automatically.
 func resolveAuth() string {
+	key, _ := resolveAuthWithSource()
+	return key
+}
+
+func resolveAuthWithSource() (string, string) {
 	if key := strings.TrimSpace(os.Getenv("RIOT_API_KEY")); key != "" {
-		return key
+		return key, "api-key"
 	}
 	// Try LCU RSO token first (cached for 5min inside GetRSOAccessToken)
 	if token, ok := riotclient.GetRSOAccessToken(); ok {
 		slog.Debug("riotapi: auth via LCU RSO token")
-		return token
+		return token, "lcu"
 	}
-	return ""
+	return "", "none"
 }
 
 // IsUsingLCU returns true when local Riot Client authentication is available.
 func IsUsingLCU() bool {
-	return resolveAuth() != ""
+	_, source := resolveAuthWithSource()
+	return source == "lcu"
 }
 
 // ClearAuthCache forces local-token re-resolution on the next call.
@@ -156,13 +162,21 @@ var (
 	rlLast time.Time
 )
 
+func parseRetryAfter(value string) time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || seconds < 0 || seconds > 300 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 const (
 	maxRiotAPIResponseBytes = 8 << 20
 	maxRiotAPIErrorBytes    = 8 << 10
 )
 
 func doRequest(url string) ([]byte, error) {
-	key := resolveAuth()
+	key, authSource := resolveAuthWithSource()
 	if key == "" {
 		return nil, fmt.Errorf("Riot Client authentication is unavailable; launch Riot Client and sign in")
 	}
@@ -181,7 +195,11 @@ func doRequest(url string) ([]byte, error) {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+key)
+	if authSource == "api-key" {
+		req.Header.Set("X-Riot-Token", key)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -209,6 +227,11 @@ func doRequest(url string) ([]byte, error) {
 		}
 		if truncated {
 			detail += "… [truncated]"
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if retryAfter := parseRetryAfter(resp.Header.Get("Retry-After")); retryAfter > 0 {
+				return nil, fmt.Errorf("riot API %d: %s (retry after %s)", resp.StatusCode, detail, retryAfter.Round(time.Second))
+			}
 		}
 		return nil, fmt.Errorf("riot API %d: %s", resp.StatusCode, detail)
 	}
@@ -328,6 +351,75 @@ func GetCurrentGame(regionCode, puuid string) (*CurrentGameInfo, error) {
 	return &g, nil
 }
 
+// GetMatchIDs returns Riot Match-V5 IDs for a PUUID. This is an opt-in public
+// API path; it is not used as an undocumented LCU substitute and may require a
+// developer API key depending on the account/token source.
+func GetMatchIDs(regionCode, puuid string, start, count int) ([]string, error) {
+	puuid = strings.TrimSpace(puuid)
+	if puuid == "" {
+		return nil, fmt.Errorf("puuid is required")
+	}
+	if start < 0 {
+		start = 0
+	}
+	if count <= 0 || count > 100 {
+		count = 20
+	}
+	endpoint := matchV5Endpoint(regionCode, fmt.Sprintf("matches/by-puuid/%s/ids?start=%d&count=%d", url.PathEscape(puuid), start, count))
+	body, err := doRequest(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	if err := json.Unmarshal(body, &ids); err != nil {
+		return nil, fmt.Errorf("decode match ids: %w", err)
+	}
+	return ids, nil
+}
+
+// GetMatch fetches one Match-V5 DTO as raw JSON so the frontend can retain
+// patch-specific fields without RiftOps having to mirror Riot's entire schema.
+func GetMatch(regionCode, matchID string) (json.RawMessage, error) {
+	matchID = strings.TrimSpace(matchID)
+	if matchID == "" {
+		return nil, fmt.Errorf("match id is required")
+	}
+	endpoint := matchV5Endpoint(regionCode, fmt.Sprintf("matches/%s", url.PathEscape(matchID)))
+	body, err := doRequest(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("Riot returned invalid match data")
+	}
+	return json.RawMessage(body), nil
+}
+
+// GetMatchTimeline fetches the optional timeline DTO for one Match-V5 game.
+func GetMatchTimeline(regionCode, matchID string) (json.RawMessage, error) {
+	matchID = strings.TrimSpace(matchID)
+	if matchID == "" {
+		return nil, fmt.Errorf("match id is required")
+	}
+	endpoint := matchV5Endpoint(regionCode, fmt.Sprintf("matches/%s/timeline", url.PathEscape(matchID)))
+	body, err := doRequest(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("Riot returned invalid match timeline")
+	}
+	return json.RawMessage(body), nil
+}
+
+func matchV5Endpoint(regionCode, suffix string) string {
+	routing, ok := Regions[normalizedRegion(regionCode)]
+	if !ok {
+		routing = "americas"
+	}
+	return fmt.Sprintf("https://%s.api.riotgames.com/lol/match/v5/%s", routing, strings.TrimLeft(suffix, "/"))
+}
+
 // GetRegionStatus fetches the League of Legends service status for a region.
 func GetRegionStatus(regionCode string) ([]RegionStatus, error) {
 	platform, ok := Platform[normalizedRegion(regionCode)]
@@ -374,10 +466,8 @@ func IsConfigured() bool {
 
 // AuthSource returns where authentication was sourced from.
 func AuthSource() string {
-	if resolveAuth() != "" {
-		return "lcu"
-	}
-	return "none"
+	_, source := resolveAuthWithSource()
+	return source
 }
 
 // GetLCUAvailability returns nil if LCU is not reachable, or the lockfile if it is.
