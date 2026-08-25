@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.7.0",
+    [string]$Version = "",
     [int]$Build = 1,
     [switch]$SkipTests
 )
@@ -7,6 +7,12 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $Root = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = (Get-Content -Raw -LiteralPath (Join-Path $Root "VERSION")).Trim()
+}
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    throw "VERSION is empty. Pass -Version explicitly."
+}
 $Fyne = (Get-Command fyne -ErrorAction SilentlyContinue).Source
 if (-not $Fyne) {
     $Fyne = Join-Path $env:USERPROFILE "go\bin\fyne.exe"

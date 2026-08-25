@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-2.7.0}"
-build="${2:-1}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
+version="${1:-$(tr -d '\r\n' < "$root/VERSION")}"
+build="${2:-1}"
 cd "$root"
+
+if [[ -z "$version" ]]; then
+  echo "VERSION is empty. Pass a version explicitly." >&2
+  exit 1
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This packaging script must run on macOS." >&2

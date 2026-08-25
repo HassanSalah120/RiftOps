@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -42,6 +43,39 @@ func TestProcessCredentialsStayPaired(t *testing.T) {
 	if !ok || lf.Source != "league" || lf.Port != 2222 || lf.Password != "league-token" || lf.PID != 22 {
 		t.Fatalf("league credentials were not paired: %+v, ok=%v", lf, ok)
 	}
+}
+
+func TestLeagueLockfileCandidatesIncludeDirectInstallFolder(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "League of Legends")
+	paths := leagueLockfileCandidates([]string{base})
+	want := filepath.Join(base, "lockfile")
+	for _, path := range paths {
+		if path == want {
+			return
+		}
+	}
+	t.Fatalf("league lockfile candidates %v do not include direct install path %q", paths, want)
+}
+
+func TestInstallBasesFromMetadataWalksNestedPaths(t *testing.T) {
+	leagueDir := filepath.Join(t.TempDir(), "League of Legends")
+	data := []byte(`{"associated_client":{"` + filepath.ToSlash(leagueDir) + `/":"C:/Riot Games/Riot Client/RiotClientServices.exe"}}`)
+	bases := installBasesFromMetadata(data)
+	if !containsPath(bases, leagueDir) {
+		t.Fatalf("bases = %v, want executable directory %q", bases, leagueDir)
+	}
+	if !containsPath(bases, filepath.Dir(leagueDir)) {
+		t.Fatalf("bases = %v, want parent directory %q", bases, filepath.Dir(leagueDir))
+	}
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, path := range paths {
+		if path == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLobbyCreationDoesNotDeleteOnInvalidBadRequest(t *testing.T) {

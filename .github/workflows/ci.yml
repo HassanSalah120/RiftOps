@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-2025
+          - macos-14
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cmd/riftops-ui/frontend/package-lock.json
+
+      - name: Install MinGW for the desktop-tagged Windows build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install mingw --no-progress -y
+
+      - name: Install locked frontend dependencies
+        working-directory: cmd/riftops-ui/frontend
+        run: npm ci --ignore-scripts
+
+      - name: Lint frontend
+        working-directory: cmd/riftops-ui/frontend
+        run: npm run lint
+
+      - name: Test frontend
+        working-directory: cmd/riftops-ui/frontend
+        run: npm test
+
+      - name: Build frontend
+        working-directory: cmd/riftops-ui/frontend
+        run: npm run build
+
+      - name: Test Go desktop build with race detector
+        run: go test -race -tags desktop ./...
+
+      - name: Vet Go desktop build
+        run: go vet -tags desktop ./...

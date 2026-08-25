@@ -97,7 +97,11 @@ var (
 	lockfilePaths = []string{
 		// League Client lockfile checked first — it has summoner/league/mastery endpoints.
 		// Falls back to Riot Client lockfile (RSO auth only) when League isn't running.
+		// The direct `lockfile` form is used when Riot's install metadata points at
+		// the League folder itself (including custom drives and folders).
+		`lockfile`,
 		`League of Legends\lockfile`,
+		`Config\lockfile`,
 		`Riot Games\Riot Client\Config\lockfile`,
 	}
 
@@ -171,26 +175,52 @@ func riotInstallBases() []string {
 	if err != nil {
 		return nil
 	}
-	var installs map[string]any
-	if json.Unmarshal(data, &installs) != nil {
+	return installBasesFromMetadata(data)
+}
+
+// installBasesFromMetadata extracts absolute install paths from Riot's
+// RiotClientInstalls.json. Riot has used a few different schemas over time
+// (flat product->path maps and nested objects/arrays), so walk the JSON tree
+// instead of relying on one key name. Include both the path itself and its
+// parent: metadata may point at either an executable or an install folder.
+func installBasesFromMetadata(data []byte) []string {
+	var root any
+	if json.Unmarshal(data, &root) != nil {
 		return nil
 	}
 	var bases []string
-	for _, raw := range installs {
-		path, ok := raw.(string)
-		if !ok || strings.TrimSpace(path) == "" {
-			continue
+	var visit func(any)
+	visit = func(value any) {
+		switch item := value.(type) {
+		case string:
+			path := strings.Trim(strings.TrimSpace(item), "\"'")
+			if path == "" || !filepath.IsAbs(path) {
+				return
+			}
+			path = filepath.Clean(filepath.FromSlash(path))
+			if strings.EqualFold(filepath.Ext(path), ".exe") {
+				path = filepath.Dir(path)
+			}
+			bases = append(bases, path)
+			if parent := filepath.Dir(path); parent != path {
+				bases = append(bases, parent)
+			}
+		case []any:
+			for _, child := range item {
+				visit(child)
+			}
+		case map[string]any:
+			for key, child := range item {
+				// The current Riot schema stores League install folders as
+				// object keys under `associated_client` and the shared Riot
+				// executable as the value. Visit both sides of the map.
+				visit(key)
+				visit(child)
+			}
 		}
-		path = filepath.Clean(filepath.FromSlash(path))
-		if strings.EqualFold(filepath.Ext(path), ".exe") {
-			path = filepath.Dir(path)
-		}
-		if strings.EqualFold(filepath.Base(path), "Riot Client") {
-			path = filepath.Dir(path)
-		}
-		bases = append(bases, path)
 	}
-	return bases
+	visit(root)
+	return uniquePaths(bases)
 }
 
 func uniquePaths(paths []string) []string {
@@ -289,6 +319,7 @@ func leagueLockfileCandidates(bases []string) []string {
 	for _, base := range bases {
 		if base != "" {
 			paths = append(paths,
+				filepath.Join(base, "lockfile"),
 				filepath.Join(base, "League of Legends", "lockfile"),
 				filepath.Join(base, "Riot Games", "League of Legends", "lockfile"),
 			)
@@ -311,6 +342,7 @@ func riotClientLockfileCandidates(bases []string) []string {
 	for _, base := range bases {
 		if base != "" {
 			paths = append(paths,
+				filepath.Join(base, "Config", "lockfile"),
 				filepath.Join(base, "Riot Client", "Config", "lockfile"),
 				filepath.Join(base, "Riot Games", "Riot Client", "Config", "lockfile"),
 			)

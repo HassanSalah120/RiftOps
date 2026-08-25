@@ -1,8 +1,30 @@
 # RiftOps whole-project audit
 
-**Audit date:** 2026-08-23
+**Audit date:** 2026-08-25
 **Scope:** Go desktop host and League integrations, embedded React UI, LAN phone control, packaging/release automation, tests, diagnostics, and documentation.
 **Confidence:** High for source/config/test findings; medium for runtime behavior. A live League Client, firewall, clean-machine, and browser smoke test was not performed. The local Browser Use URL was intentionally not opened.
+
+> **Current-status addendum (2026-08-25).** The findings and checklist below preserve
+> the original audit evidence, but several entries are historical because the
+> source has moved on. The current baseline is v2.7.1: custom League install
+> discovery and Riot Client product launch are implemented, both platform release
+> workflows run the same frontend and desktop Go gates, and the local verification
+> suite passes (`npm run lint`, 30 frontend tests, production build,
+> `go test -race -tags desktop ./...`, and `go vet -tags desktop ./...`). A new
+> pull-request CI workflow runs those checks on Windows and macOS. The canonical
+> release version is kept in `VERSION`, and packaging scripts use it when no
+> version is supplied.
+>
+> The remaining release gates are not solved by splitting the oversized modules:
+> live League/phone/firewall/clean-machine smoke tests, Developer ID signing and
+> notarization, and ownership of the inherited Deceive-compatible TLS hostname and
+> certificate. The LAN phone transport remains explicitly HTTP and trusted-LAN
+> only. Saved session vaults use Windows DPAPI; macOS does not advertise account
+> switching until a native Keychain implementation is added. These are explicit
+> product/release constraints, not hidden failures.
+
+The operator-facing release procedure is maintained in
+[`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
 
 ## Remediation status — 2026-08-23
 
@@ -18,15 +40,15 @@ The source-addressable release blockers from this audit have now been implemente
 
 The remaining gates are environment-owned validation, not missing implementation: a real phone/firewall flow, a live League lobby-to-post-game smoke test, clean Windows/macOS startup, platform signing/notarization, and responsive visual browser checks. The prohibited local Browser Use URL was not opened.
 
-## Executive decision
+## Executive decision (historical baseline; see current-status addendum above)
 
 RiftOps has a solid desktop foundation and a credible LAN pairing design, but it is **not release-ready as a full phone companion yet**. The phone boundary is now enforced by the named, deny-by-default capability manifest in `remote_access.go`; the remaining blockers are live device/firewall validation, platform packaging, and a complete game smoke test.
 
 The next release should ship only after these gates are closed:
 
 1. Enforce a server-side mobile capability profile; CSS-hidden navigation is not authorization.
-2. Fix the settings/profile data race found by `go test -race`.
-3. Add Windows CI/release packaging and make macOS CI run the same `desktop`-tagged tests.
+2. Fix the settings/profile data race found by `go test -race`. **Completed; retain the race gate.**
+3. Add Windows CI/release packaging and make macOS CI run the same `desktop`-tagged tests. **Completed in the current baseline; retain as a regression gate.**
 4. Add route-contract, remote-UI, responsive-layout, and clean-machine smoke coverage.
 5. Consolidate LCU state into one query/event store instead of independent polling from every panel.
 6. Publish the phone security limitation clearly: LAN HTTP is not encrypted and must never be exposed to the internet.
@@ -36,13 +58,13 @@ The next release should ship only after these gates are closed:
 | Layer | Current implementation | Assessment |
 |---|---|---|
 | Desktop shell | Fyne native host with a local HTTP server and embedded React/Vite assets | Good cross-platform shape; Windows WebView2 and macOS WebKit need separate runtime validation. |
-| Core engine | `internal/engine`, settings/profile persistence, launch and presence state | Broad feature coverage; concurrent settings writes are not race-safe. |
+| Core engine | `internal/engine`, settings/profile persistence, launch and presence state | Broad feature coverage; settings writes are serialized and race-tested. |
 | League integration | `internal/riotclient` discovers the local lockfile and calls the LCU over loopback HTTPS; `internal/riotapi` handles Data Dragon/catalogue data | Correct trust model for a local client; response-size/error handling needs hardening. |
 | Presence/chat | `internal/presence`, `internal/chatproxy`, `internal/configproxy`, XMPP framing | Useful differentiator; must stay isolated from remote phone permissions. |
 | Desktop UI | `cmd/riftops-ui/frontend/src`, shared `App.tsx`, pages for command center, play flow, live session, history, skins, loot, QoL, settings | Feature-rich but duplicated: QoL, Play Flow, Live Session, and Loot/Profile Studio overlap. |
 | Phone UI | The same SPA served by the LAN listener; QR creates a separate in-memory cookie session | Pairing/session primitives are good; there is no first-class `isRemote` capability in the React app. |
 | Diagnostics | `watchdog.go`, logger, timestamped reports under the user config directory | Useful crash/hang evidence; retention, privacy scrubbing, and macOS UI probing are incomplete. |
-| Releases | Local Windows PowerShell script; GitHub Actions only for macOS | No reproducible Windows release job; scripts do not share identical verification gates. |
+| Releases | Local Windows/macOS packaging scripts plus GitHub Actions release and PR CI workflows | Packaging is reproducible at the source level; signing, notarization, and clean-machine startup remain release-owner gates. |
 
 ## 2. What is working well
 
@@ -58,7 +80,7 @@ The next release should ship only after these gates are closed:
 
 ## 3. Release-blocking findings
 
-### P0 — Phone permissions are not enforced as a product boundary
+### Historical P0 — Phone permissions were not enforced as a product boundary
 
 **Evidence**
 
@@ -81,23 +103,22 @@ Introduce an explicit server capability bootstrap, for example `desktop` versus 
 3. The server has a strict phone route manifest; unknown or desktop-only methods remain forbidden regardless of UI.
 4. Add a test that enumerates every registered API route and asserts its intended phone policy.
 
-### P0 — No complete cross-platform release gate
+### Historical P0 — No complete cross-platform release gate
 
-**Evidence**
+**Evidence (superseded by the current baseline)**
 
-- `.github/workflows` contains only `release-macos.yml`.
-- Windows packaging exists only in `scripts/build-windows.ps1` and requires local Fyne/MinGW.
-- `scripts/build-macos.sh` runs `go test ./...` and `go vet ./...`, while the Windows script runs `go test -tags desktop ./...` and `go vet -tags desktop ./...`. Remote tests are tagged `desktop` and are therefore omitted by the macOS script.
-- Neither release workflow runs frontend lint or the frontend test suite; the frontend package only exposes two pure-test files (`cmd/riftops-ui/frontend/package.json`).
+- The original audit predated the Windows release workflow and cross-platform CI workflow.
+- Local Windows packaging still requires Fyne/MinGW; hosted packaging installs those tools in its Windows runner.
+- Both platform scripts and `.github/workflows/ci.yml` now run the same frontend lint/test/build plus `go test -race -tags desktop ./...` and `go vet -tags desktop ./...` gates.
 - The macOS workflow explicitly produces ad-hoc signing only; Developer ID signing/notarization remains a release-owner step (`scripts/build-macos.sh`, `.github/workflows/release-macos.yml`).
 
-**Required fix**
+**Required fix (completed; retain as a regression gate)**
 
-Create one Windows build/release workflow and make both platforms run the same matrix: frontend install, lint, tests, production build, `go test -race -tags desktop ./...`, `go vet -tags desktop ./...`, package validation, checksums, and artifact upload. Keep signing/notarization as explicit release gates rather than implied completion.
+The source-level implementation is complete: the Windows and macOS release workflows package artifacts, and `.github/workflows/ci.yml` runs the shared frontend and desktop-Go matrix on both platforms. Keep signing/notarization, package validation, and clean-machine startup as explicit release gates rather than implied completion.
 
-### P1 — Race detector finds a real settings persistence race
+### Historical P1 — Race detector found a real settings persistence race
 
-`go test -race -tags desktop ./...` fails in `internal/engine.TestConcurrentPreferenceWritesPersistLatestState`. The race is between `Settings.syncActiveProfile()` (`internal/settings/profile.go:179-200`) and `Settings.Validate`/JSON persistence (`internal/settings/settings.go:69-84`, `Store.Save`).
+The original audit reported a race in `internal/engine.TestConcurrentPreferenceWritesPersistLatestState`. The current race-enabled desktop suite passes; keep that test in CI so this regression cannot return.
 
 Normal tests pass, but concurrent actions can persist a partially updated active profile or produce nondeterministic settings. Guard settings snapshots and profile synchronization with one lock or serialize all engine mutations through one writer; add a regression test that repeatedly verifies the final persisted state.
 
@@ -166,9 +187,9 @@ The existing allowlist is a useful starting point but mixes three different clas
 
 Replace panel polling with one backend snapshot/event stream and one frontend query cache/store. Panels subscribe to slices, and only the Live Session controller increases cadence while an action timer is active.
 
-### LCU response bodies are unbounded — P1
+### Historical P1 — LCU response bodies were unbounded
 
-`internal/riotclient/lcu.go:401` uses `io.ReadAll(resp.Body)` without a size limit, and error construction can include the entire response body. Add a bounded reader (for example, a documented upper limit per endpoint class), truncate diagnostic text, and never include headers, lockfile values, or tokens in user-facing errors.
+The original audit reported unbounded reads at `internal/riotclient/lcu.go:401`. The current client uses bounded readers and redacted/truncated error text, with regression coverage in `internal/riotclient/lcu_test.go`. Keep those limits in place when adding endpoints.
 
 The loopback LCU uses `InsecureSkipVerify` with `ServerName=127.0.0.1` (`internal/riotclient/lcu.go:79-81`). This is an intentional self-signed loopback compatibility decision, but keep it narrowly scoped to the loopback client and test that remote URLs cannot enter this client.
 
@@ -176,9 +197,9 @@ The loopback LCU uses `InsecureSkipVerify` with `ServerName=127.0.0.1` (`interna
 
 Windows has a WebView2 message-loop probe; macOS and unsupported platforms return `false` from `pumpUIThread` (`cmd/riftops-ui/webview_darwin.go:22-25`, `webview_other.go:21-22`). The macOS watchdog therefore tests the local API but not native UI responsiveness. Add a macOS WebKit heartbeat or document the reduced guarantee.
 
-### Diagnostics need retention/privacy policy — P2
+### Historical P2 — Diagnostics needed retention/privacy policy
 
-`watchdog.go` writes timestamped reports containing runtime state and goroutine stacks. Add bounded retention/rotation, explicit redaction of paths, request headers, query strings, and LCU errors, and platform-appropriate private permissions. Keep report listing desktop-only and never add a remote report-download route.
+The original audit requested retention and privacy controls. The current diagnostics implementation rotates logs, scrubs authorization/query/path material, applies private permissions where supported, retains at most 20 reports for 30 days, and keeps report listing desktop-only. Keep this behavior covered when report fields change.
 
 ## 7. UI/UX and mobile audit
 
@@ -195,16 +216,16 @@ The mobile layout is thoughtfully started (safe-area bottom dock, hidden desktop
 
 ## 8. Test and coverage audit
 
-### Commands run
+### Commands run (current baseline)
 
 | Command | Result |
 |---|---|
 | `go test -tags desktop ./...` | Pass |
 | `go vet -tags desktop ./...` | Pass |
-| `go test -race -tags desktop ./...` | **Fail**: settings/profile persistence race in `internal/engine.TestConcurrentPreferenceWritesPersistLatestState` |
+| `go test -race -tags desktop ./...` | Pass |
 | `go test -cover -tags desktop ./...` | Pass; notable coverage: UI 11.8%, engine 22.6%, LCU 29.7%, Riot API 6.7% |
 | `npm run lint` | Pass |
-| `npm test -- --run` | Pass, 12 pure logic tests |
+| `npm test` | Pass, 30 frontend tests |
 | `npm run build` | Pass; Vite output ~467 kB JS / ~248 kB CSS before compression |
 
 ### Missing coverage
@@ -215,16 +236,16 @@ The mobile layout is thoughtfully started (safe-area bottom dock, hidden desktop
 - No end-to-end LCU test against a fake lockfile/client for pick, ban, hover, rune select, quit, and stale-action behavior.
 - No LAN/firewall/QR scan/8-hour expiry/foreign-origin test across a real phone browser.
 - No clean Windows WebView2 or macOS WebKit startup test, no clean-machine install/uninstall test, and no notarized Gatekeeper test.
-- Only macOS has a GitHub release workflow; Windows packaging is not CI-reproducible.
+- Live League, phone/firewall, clean-machine, and signed/notarized startup checks remain environment-owned release gates.
 
 ## 9. Recommended implementation order
 
 ### Phase 0 — release safety
 
-1. Fix the settings/profile lock and make `go test -race -tags desktop ./...` clean.
-2. Add bounded LCU response reads and safe error redaction.
-3. Align macOS and Windows scripts on tags and frontend checks.
-4. Add Windows CI, artifact checksums, and a release checklist.
+1. Keep the settings/profile lock and race-enabled desktop suite green.
+2. Keep bounded LCU response reads and safe error redaction covered by tests.
+3. Keep macOS and Windows scripts on the same frontend and desktop-Go gates.
+4. Close environment-owned signing, live smoke, and inherited TLS-domain gates before a public release.
 
 ### Phase 1 — phone boundary
 
@@ -250,8 +271,8 @@ The mobile layout is thoughtfully started (safe-area bottom dock, hidden desktop
 
 ## 10. Release acceptance checklist
 
-- [ ] `go test -race -tags desktop ./...` passes on Windows and macOS.
-- [ ] `go vet -tags desktop ./...`, frontend lint/test/build pass in CI.
+- [x] `go test -race -tags desktop ./...` and `go vet -tags desktop ./...` pass locally and are required in CI.
+- [x] Frontend lint/test/build pass locally and are required in CI.
 - [ ] Windows and macOS artifacts are attached to the same release with SHA-256 checksums.
 - [ ] Windows WebView2 and macOS WebKit start on clean machines without a console window.
 - [ ] macOS Developer ID signing/notarization and Gatekeeper acceptance are verified.

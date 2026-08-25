@@ -2,7 +2,9 @@
 
 RiftOps is a desktop hub for Riot games, with League presence controls and
 local League Client quality-of-life tools. Native downloads are available for
-Windows and macOS.
+Windows and macOS. The canonical release version is stored in the root
+`VERSION` file; the local packaging scripts read it when `-Version`/the version
+argument is omitted.
 
 ## Start here
 
@@ -13,6 +15,14 @@ Windows and macOS.
 4. For League tools, open and sign in to the League Client first. In RiftOps,
    select **Quality of Life** from the sidebar.
 
+League does not have to be inside the Riot Client folder. On Windows, RiftOps
+also reads Riot's install registry and checks the registered League folder
+directly, including custom drives such as `D:\Games\League of Legends`. If a
+friend's PC still shows **Client unavailable**, update to the latest release,
+start League and sign in once, then use the refresh button in the RiftOps
+health card; do not copy or share the League `lockfile` because it contains a
+temporary local credential.
+
 On macOS, RiftOps checks both `/Applications/League of Legends.app` and
 `~/Applications`. If League is installed elsewhere, open **Settings → Riot
 Client location**, then use **Browse**, **Auto-detect**, or paste the `.app`
@@ -21,6 +31,11 @@ path. RiftOps validates the selection and stores the resolved executable in
 
 There is no Riot password field in RiftOps. Riot Client handles your normal
 sign-in and remembers your session as usual.
+
+RiftOps does not currently provide a cross-platform account/session switcher.
+The saved-session vault is Windows-only and protected by Windows DPAPI; macOS
+does not persist Riot credentials or session tokens. On every platform, normal
+authentication remains owned by Riot Client.
 
 ### macOS first launch
 
@@ -181,8 +196,8 @@ champions**.
 - League friend list, client health/server status, dedicated Remote Access,
   settings, diagnostics, keyboard command palette, and release update checks
 
-See [FEATURE_PARITY.md](FEATURE_PARITY.md) for verification evidence and release
-gates.
+See [FEATURE_PARITY.md](FEATURE_PARITY.md) for feature evidence and
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the public-release gates.
 
 ## Development
 
@@ -204,11 +219,11 @@ go install fyne.io/tools/cmd/fyne@v1.7.2
 Build a native package:
 
 ```powershell
-./scripts/build-windows.ps1 -Version 2.7.0 -Build 1
+./scripts/build-windows.ps1 -Build 1
 ```
 
 ```sh
-bash ./scripts/build-macos.sh 2.7.0 1
+bash ./scripts/build-macos.sh
 ```
 
 Outputs are `dist/RiftOps-windows-amd64.exe` and
@@ -219,7 +234,7 @@ still require platform signing and macOS Developer ID notarization.
 
 If Windows reports that the standard executable is in use, close RiftOps and
 build again. The script safely writes a versioned fallback such as
-`dist/RiftOps-windows-amd64-v2.7.0.exe` instead of replacing a running file.
+`dist/RiftOps-windows-amd64-v2.7.1.exe` instead of replacing a running file.
 
 The desktop dashboard prefers loopback port `24080`. If another local service
 or a Windows excluded-port policy blocks it, RiftOps tries `24081` through
@@ -259,8 +274,10 @@ compatible settings from the previous `Deceive` directory on first launch.
 
 The current TLS compatibility defaults still use the predecessor's loopback DNS
 and certificate endpoint. They are isolated as build-time variables in
-`internal/engine` and must remain until a RiftOps-owned domain resolves to
-`127.0.0.1` and provides a trusted matching certificate.
+`internal/engine` and are a release gate: do not replace them with
+`localhost`/`127.0.0.1` unless RiftOps has an owned domain resolving to loopback
+and a trusted matching certificate. A rename alone would make the Riot chat
+proxy fail TLS validation.
 
 RiftOps does not expose account switching or store Riot credentials in its
 dashboard. It keeps normal launch and presence preferences locally, while Riot
