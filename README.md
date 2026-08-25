@@ -15,6 +15,12 @@ argument is omitted.
 4. For League tools, open and sign in to the League Client first. In RiftOps,
    select **Quality of Life** from the sidebar.
 
+Windows release trust: the v2.7.2 binary predates the Kingof30 Authenticode
+signing pipeline and may show a SmartScreen “Unknown publisher” prompt. Verify
+the downloaded file against its `.sha256` checksum before running it. The
+release workflow now refuses to publish future Windows binaries unless they
+are signed with the configured Kingof30 certificate and timestamped.
+
 League does not have to be inside the Riot Client folder. On Windows, RiftOps
 also reads Riot's install registry and checks the registered League folder
 directly, including custom drives such as `D:\Games\League of Legends`. If a

@@ -55,6 +55,24 @@ jobs:
         shell: pwsh
         run: ./scripts/build-windows.ps1 -Version "${{ steps.release.outputs.version }}" -Build ${{ github.run_number }}
 
+      - name: Sign Windows executable (Kingof30)
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_PFX_PASSWORD)) {
+            throw "Windows release signing is not configured. Add WINDOWS_SIGNING_PFX_BASE64 and WINDOWS_SIGNING_PFX_PASSWORD GitHub Secrets for the Kingof30 certificate before publishing."
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "riftops-kingof30-signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX_BASE64))
+            ./scripts/sign-windows.ps1 -Path "dist/RiftOps-windows-amd64.exe" -CertificatePath $pfxPath -CertificatePassword $env:WINDOWS_SIGNING_PFX_PASSWORD -ExpectedPublisher "Kingof30"
+          }
+          finally {
+            Remove-Item -Force -LiteralPath $pfxPath -ErrorAction SilentlyContinue
+          }
+
       - name: Preserve Windows release files as a workflow artifact
         uses: actions/upload-artifact@v4
         with:

@@ -23,7 +23,11 @@ League Client.
    `bash ./scripts/build-macos.sh`.
 4. Confirm each artifact has a matching `.sha256` file and verify the hash on a
    separate machine before uploading it to the GitHub Release.
-5. Attach Windows and macOS artifacts to the same release tag. Do not claim
+5. Configure the `WINDOWS_SIGNING_PFX_BASE64` and
+   `WINDOWS_SIGNING_PFX_PASSWORD` GitHub Secrets for the Kingof30 certificate.
+   The Windows release workflow signs with SHA-256 and an RFC 3161 timestamp,
+   verifies the Authenticode subject, then regenerates the checksum.
+6. Attach Windows and macOS artifacts to the same release tag. Do not claim
    macOS Gatekeeper compatibility until Developer ID signing and notarization
    have completed.
 
@@ -31,6 +35,8 @@ League Client.
 
 - [ ] Clean Windows startup has no console window and works with League outside
       the Riot Client directory.
+- [ ] `Get-AuthenticodeSignature` reports `Valid` and the signer subject contains
+      `Kingof30` for the published Windows executable.
 - [ ] Clean macOS startup opens `RiftOps.app`; the app is signed/notarized for
       the intended distribution channel.
 - [ ] League Client discovery, launch, lockfile refresh, friend list, and LCU
