@@ -8,7 +8,7 @@ argument is omitted.
 
 ## Start here
 
-1. Download the latest `RiftOps-windows-amd64.exe` from the
+1. Download the latest `RiftOps-<version>-win-x64.exe` from the
    [GitHub Releases page](https://github.com/HassanSalah120/RiftOps/releases).
 2. Put the file in a permanent folder, such as `C:\RiftOps`.
 3. Start **RiftOps**, choose the game you want, then press **Launch**.
@@ -232,7 +232,7 @@ Build a native package:
 bash ./scripts/build-macos.sh
 ```
 
-Outputs are `dist/RiftOps-windows-amd64.exe` and
+Outputs are `dist/RiftOps-<version>-win-x64.exe` and
 `dist/RiftOps-macOS.zip`, each with a matching `.sha256` checksum. The Windows
 and macOS release workflows run the same locked frontend install, lint, tests,
 production build, race-enabled desktop Go tests, and vet gates. Public releases
@@ -240,7 +240,7 @@ still require platform signing and macOS Developer ID notarization.
 
 If Windows reports that the standard executable is in use, close RiftOps and
 build again. The script safely writes a versioned fallback such as
-`dist/RiftOps-windows-amd64-v2.7.2.exe` instead of replacing a running file.
+`dist/RiftOps-<version>-win-x64-copy.exe` instead of replacing a running file.
 
 The desktop dashboard prefers loopback port `24080`. If another local service
 or a Windows excluded-port policy blocks it, RiftOps tries `24081` through

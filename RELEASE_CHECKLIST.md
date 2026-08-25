@@ -31,6 +31,10 @@ League Client.
    macOS Gatekeeper compatibility until Developer ID signing and notarization
    have completed.
 
+Windows portable artifacts use the release-facing name
+`RiftOps-<version>-win-x64.exe`; do not rename the file after signing because
+the checksum and Authenticode verification must describe the published bytes.
+
 ## Runtime acceptance
 
 - [ ] Clean Windows startup has no console window and works with League outside

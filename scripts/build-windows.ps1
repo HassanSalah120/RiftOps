@@ -97,11 +97,13 @@ try {
     if (-not (Test-Path -LiteralPath "cmd/riftops-ui/RiftOps.exe")) {
         throw "Fyne completed without producing cmd/riftops-ui/RiftOps.exe."
     }
-    $OutputPath = "dist/RiftOps-windows-amd64.exe"
+    # This is a portable desktop app, not an installer. Use a release-facing
+    # filename so downloads read like a product rather than a compiler target.
+    $OutputPath = "dist/RiftOps-$Version-win-x64.exe"
     try {
         Copy-Item -Force -LiteralPath cmd/riftops-ui/RiftOps.exe -Destination $OutputPath -ErrorAction Stop
     } catch [System.IO.IOException] {
-        $OutputPath = "dist/RiftOps-windows-amd64-v$Version.exe"
+        $OutputPath = "dist/RiftOps-$Version-win-x64-copy.exe"
         Copy-Item -Force -LiteralPath cmd/riftops-ui/RiftOps.exe -Destination $OutputPath -ErrorAction Stop
         Write-Warning "The standard output executable is in use. Created $OutputPath instead."
     }

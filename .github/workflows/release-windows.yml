@@ -67,7 +67,7 @@ jobs:
           $pfxPath = Join-Path $env:RUNNER_TEMP "riftops-kingof30-signing.pfx"
           try {
             [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX_BASE64))
-            ./scripts/sign-windows.ps1 -Path "dist/RiftOps-windows-amd64.exe" -CertificatePath $pfxPath -CertificatePassword $env:WINDOWS_SIGNING_PFX_PASSWORD -ExpectedPublisher "Kingof30"
+            ./scripts/sign-windows.ps1 -Path "dist/RiftOps-${{ steps.release.outputs.version }}-win-x64.exe" -CertificatePath $pfxPath -CertificatePassword $env:WINDOWS_SIGNING_PFX_PASSWORD -ExpectedPublisher "Kingof30"
           }
           finally {
             Remove-Item -Force -LiteralPath $pfxPath -ErrorAction SilentlyContinue
@@ -78,8 +78,8 @@ jobs:
         with:
           name: RiftOps-Windows-${{ steps.release.outputs.tag }}
           path: |
-            dist/RiftOps-windows-amd64*.exe
-            dist/RiftOps-windows-amd64*.exe.sha256
+            dist/RiftOps-*-win-x64*.exe
+            dist/RiftOps-*-win-x64*.exe.sha256
           if-no-files-found: error
 
       - name: Attach Windows files to GitHub Release
@@ -87,6 +87,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          [string[]]$assets = Get-ChildItem -Path "dist/RiftOps-windows-amd64*.exe", "dist/RiftOps-windows-amd64*.exe.sha256" | ForEach-Object FullName
+          [string[]]$assets = Get-ChildItem -Path "dist/RiftOps-*-win-x64*.exe", "dist/RiftOps-*-win-x64*.exe.sha256" | ForEach-Object FullName
           if ($assets.Count -eq 0) { throw "No Windows release assets were produced." }
           gh release upload "${{ steps.release.outputs.tag }}" @assets --clobber --repo "${{ github.repository }}"
