@@ -62,9 +62,12 @@ the checksum and Authenticode verification must describe the published bytes.
 
 ## Chat proxy acceptance
 
-- [ ] Client config rewrites chat to `127.0.0.1` and enables Riot's local
-      bad-certificate compatibility mode.
-- [ ] RiftOps generates and caches a private certificate for `127.0.0.1`; no
-      external DNS record or certificate download is required.
+- [ ] Client config rewrites chat to `riftops.backloop.dev`; every resolved
+      address is loopback and both proxy legs remain TLS encrypted.
+- [ ] The backloop.dev bundle passes public-chain, hostname, matching-key, and
+      validity checks, is cached privately, and its BSD-3-Clause notice ships.
+- [ ] Block or reject the loopback certificate during a smoke test and confirm
+      RiftOps automatically relaunches with untouched Riot chat; friends/chat
+      work while presence masking is clearly unavailable for that run.
 - [ ] Confirm chat, friends, lobby presence, and in-game notifications on a
       real League Client after a clean first start.

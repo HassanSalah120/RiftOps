@@ -22,12 +22,11 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
-// Riot's client-config service is rewritten to a loopback-only chat endpoint.
-// The chat proxy uses a locally generated certificate and the
-// rewritten config explicitly enables Riot's local bad-certificate mode. This
-// keeps RiftOps independent of a predecessor-owned DNS record or certificate
-// download service.
-const LocalhostDomain = "127.0.0.1"
+// Riot's client-config service is rewritten to a publicly trusted hostname
+// whose DNS records resolve only to loopback. This is the same trust model as
+// the original Deceive proxy, without relying on the predecessor's domain or
+// certificate service.
+const LocalhostDomain = "riftops.backloop.dev"
 
 type Phase string
 
@@ -388,9 +387,6 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		e.emit(Snapshot{Phase: PhaseIdle, Status: finalConfig.Status, Enabled: finalConfig.Enabled, Game: game, Detail: "Ready to launch"})
 	}()
 	e.emit(e.phaseSnapshot(PhasePreflight, game, "Checking Riot Client and local networking"))
-	if err := ensureLoopbackEndpoint(ctx, LocalhostDomain); err != nil {
-		return e.fail(game, status, err)
-	}
 
 	adapter := platform.New()
 	e.mu.Lock()
@@ -440,18 +436,27 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	}
 
 	e.emit(e.phaseSnapshot(PhasePreparingProxy, game, "Preparing secure local chat proxy"))
+	if err := ensureLoopbackEndpoint(ctx, LocalhostDomain); err != nil {
+		slog.Warn("public loopback hostname is unavailable; using native Riot chat", "error", err)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
+	}
 	chatListener, err := chatproxy.Listen("127.0.0.1:0")
 	if err != nil {
-		return e.fail(game, status, err)
+		slog.Warn("local chat listener is unavailable; using native Riot chat", "error", err)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
 	}
 	chatPort := chatListener.Addr().(*net.TCPAddr).Port
-	cachePath, err := certificate.DefaultCachePath()
+	cachePath, err := certificate.DefaultPublicBundleCachePath()
 	if err != nil {
-		return e.fail(game, status, err)
+		_ = chatListener.Close()
+		slog.Warn("public certificate cache is unavailable; using native Riot chat", "error", err)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
 	}
-	serverCertificate, err := (certificate.Provider{CachePath: cachePath, Hostname: LocalhostDomain}).Load(ctx)
+	serverCertificate, err := (certificate.PublicProvider{CachePath: cachePath, Hostname: LocalhostDomain}).Load(ctx)
 	if err != nil {
-		return e.fail(game, status, err)
+		_ = chatListener.Close()
+		slog.Warn("public loopback certificate is unavailable; using native Riot chat", "error", err)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
 	}
 
 	e.mu.RLock()
@@ -468,6 +473,11 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		e.commandMu.Lock()
 		defer e.commandMu.Unlock()
 		e.handleCommand(context.Background(), command)
+	})
+	proxy.SetSessionHandler(func() {
+		snapshot := e.phaseSnapshot(PhaseActive, game, "League chat proxy connected")
+		snapshot.ChatPort = chatPort
+		e.emit(snapshot)
 	})
 	var connectedNotification sync.Once
 	proxy.SetRosterHandler(func() {
@@ -490,15 +500,18 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		LocalChatHost: LocalhostDomain, LocalChatPort: chatPort,
 		OnEndpoint: func(value configproxy.Endpoint) {
 			endpoint.set(value)
-			snapshot := e.phaseSnapshot(PhaseActive, game, "Presence masking is active")
+			snapshot := e.phaseSnapshot(PhaseWaiting, game, "Riot chat endpoint found; completing secure handshake")
 			snapshot.ChatPort = chatPort
 			e.emit(snapshot)
 		},
 	})
 	if err != nil {
+		_ = chatListener.Close()
 		return e.fail(game, status, err)
 	}
 	defer configServer.Close(context.Background())
+	proxyCtx, stopProxy := context.WithCancel(ctx)
+	defer stopProxy()
 	go func() {
 		if err := configServer.Run(); err != nil {
 			slog.Error("config proxy stopped", "error", err)
@@ -506,7 +519,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		}
 	}()
 	go func() {
-		if err := proxy.Run(ctx); err != nil {
+		if err := proxy.Run(proxyCtx); err != nil {
 			slog.Error("chat proxy stopped", "error", err)
 			cancel()
 		}
@@ -525,6 +538,75 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	waiting := e.phaseSnapshot(PhaseWaiting, game, "Waiting for Riot chat connection")
 	waiting.ConfigURL, waiting.ChatPort, waiting.StartedAt = configServer.URL(), chatPort, launching.StartedAt
 	e.emit(waiting)
+
+	processDone := make(chan error, 1)
+	go func() { processDone <- process.Wait() }()
+	select {
+	case <-ctx.Done():
+		_ = process.Kill()
+		return nil
+	case handshakeErr := <-proxy.TLSFailures():
+		slog.Warn("Riot rejected the local presence proxy; restarting with native Riot chat", "error", handshakeErr)
+		fallback := e.phaseSnapshot(PhaseLaunching, game, "Riot rejected presence proxy; restoring native friends and chat")
+		fallback.Enabled = false
+		e.emit(fallback)
+		stopProxy()
+		_ = configServer.Close(context.Background())
+		stopCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		if stopErr := adapter.StopKnownProcesses(stopCtx); stopErr != nil {
+			stop()
+			return e.fail(game, status, fmt.Errorf("stop Riot Client for native-chat fallback: %w", stopErr))
+		}
+		if stopErr := waitForNoRiotProcesses(stopCtx, adapter); stopErr != nil {
+			stop()
+			return e.fail(game, status, stopErr)
+		}
+		stop()
+		e.mu.Lock()
+		e.proxy = nil
+		e.policy = nil
+		e.mu.Unlock()
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
+	case err := <-processDone:
+		if err != nil {
+			slog.Debug("launched Riot process exited", "error", err)
+		}
+		return waitForRiotShutdown(ctx, adapter)
+	}
+}
+
+func (e *Engine) runWithDirectChat(ctx context.Context, cancel context.CancelFunc, adapter platform.Adapter, executable string, game model.Game, options RunOptions) error {
+	e.mu.Lock()
+	e.proxy = nil
+	e.policy = nil
+	e.mu.Unlock()
+
+	configServer, err := configproxy.NewServer(configproxy.ServerOptions{PassThroughChat: true})
+	if err != nil {
+		return e.fail(game, e.Snapshot().Status, err)
+	}
+	defer configServer.Close(context.Background())
+	go func() {
+		if runErr := configServer.Run(); runErr != nil {
+			slog.Error("native chat config forwarder stopped", "error", runErr)
+			cancel()
+		}
+	}()
+
+	launching := e.phaseSnapshot(PhaseLaunching, game, "Launching Riot Client with native friends and chat")
+	launching.ConfigURL, launching.StartedAt = configServer.URL(), time.Now()
+	launching.Enabled = false
+	e.emit(launching)
+	process, err := adapter.Launch(ctx, platform.LaunchRequest{
+		Executable: executable, ConfigURL: configServer.URL(), Game: game, Patchline: options.Patchline,
+		RiotClientArgs: options.RiotClientArgs, GameArgs: options.GameArgs,
+	})
+	if err != nil {
+		return e.fail(game, e.Snapshot().Status, err)
+	}
+	active := e.phaseSnapshot(PhaseActive, game, "Native Riot friends and chat active; presence masking unavailable")
+	active.ConfigURL, active.StartedAt, active.Enabled = configServer.URL(), launching.StartedAt, false
+	e.emit(active)
 
 	processDone := make(chan error, 1)
 	go func() { processDone <- process.Wait() }()
@@ -566,6 +648,10 @@ func (e *Engine) SetStatus(ctx context.Context, status model.Status) error {
 		return fmt.Errorf("invalid status %q", status)
 	}
 	e.mu.Lock()
+	if e.running && e.proxy == nil {
+		e.mu.Unlock()
+		return errors.New("presence masking is unavailable while Riot friends and chat use native compatibility mode")
+	}
 	e.config.UpdateActiveRuntime(true, status)
 	policy, proxy := e.policy, e.proxy
 	e.snapshot.Status, e.snapshot.Enabled = status, true
@@ -589,6 +675,10 @@ func (e *Engine) SetStatus(ctx context.Context, status model.Status) error {
 
 func (e *Engine) SetEnabled(ctx context.Context, enabled bool) error {
 	e.mu.Lock()
+	if enabled && e.running && e.proxy == nil {
+		e.mu.Unlock()
+		return errors.New("presence masking is unavailable while Riot friends and chat use native compatibility mode")
+	}
 	e.config.UpdateActiveRuntime(enabled, e.config.Status)
 	config, policy, proxy := e.config, e.policy, e.proxy
 	e.snapshot.Enabled = enabled
@@ -853,12 +943,15 @@ func ensureLoopbackEndpoint(ctx context.Context, hostname string) error {
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", hostname, err)
 	}
+	if len(addresses) == 0 {
+		return fmt.Errorf("%s did not resolve to an address", hostname)
+	}
 	for _, address := range addresses {
-		if address.IP.IsLoopback() {
-			return nil
+		if !address.IP.IsLoopback() {
+			return fmt.Errorf("%s resolved to non-loopback address %s", hostname, address.IP)
 		}
 	}
-	return fmt.Errorf("%s does not resolve to a loopback address", hostname)
+	return nil
 }
 
 func waitForRiotShutdown(ctx context.Context, adapter platform.Adapter) error {

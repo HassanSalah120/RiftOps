@@ -300,10 +300,16 @@ The Go module and release updater use <https://github.com/HassanSalah120/RiftOps
 RiftOps stores data under the `RiftOps` user configuration directory and imports
 compatible settings from the previous `Deceive` directory on first launch.
 
-RiftOps rewrites Riot chat to `127.0.0.1` and generates a private local
-certificate for the chat proxy. The rewritten client configuration enables
-Riot's local bad-certificate compatibility mode, so RiftOps no longer depends
-on a predecessor-owned DNS record or remote certificate download service.
+RiftOps rewrites Riot chat to `riftops.backloop.dev`, which resolves only to the
+local machine, and keeps both the local and upstream XMPP legs TLS encrypted.
+It downloads and privately caches the current public-CA certificate bundle from
+the open-source [backloop.dev](https://github.com/perki/backloop.dev) service,
+then verifies its hostname, chain, validity window, matching key, and loopback
+DNS records before use. If that certificate cannot be obtained or Riot rejects
+its TLS handshake, RiftOps automatically restarts once with Riot's untouched
+chat configuration so friends and chat work normally; presence masking and
+RiftOps chat notifications are unavailable for that compatibility run. This
+does not use the predecessor's domain/service or modify the machine trust store.
 
 RiftOps does not expose account switching or store Riot credentials in its
 dashboard. It keeps normal launch and presence preferences locally, while Riot
@@ -338,5 +344,7 @@ only an explicit, named mobile capability manifest. A route inventory test
 ensures phone permissions cannot reference an unregistered endpoint, and new
 desktop APIs remain remote-denied by default. The config proxy forwards only
 Riot's required headers, the outgoing chat connection verifies Riot's TLS
-hostname, RiftOps-generated certificates are cached with hostname/validity
-checks, and diagnostics exclude tokens and chat content.
+hostname, downloaded loopback certificate material is accepted only after
+public-chain, hostname, key, validity, and loopback-DNS checks, and diagnostics
+exclude tokens and chat content. Third-party licensing is recorded in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

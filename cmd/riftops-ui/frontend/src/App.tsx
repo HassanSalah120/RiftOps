@@ -30,6 +30,7 @@ import { GAMES, gameLabel } from './types';
 import { ActionFeedback, type FeedbackState } from './components/DesignPrimitives';
 import { ALL_TABS, availableTabs, tabAvailable } from './clientCapabilities';
 import PhoneCompanionPanel from './components/PhoneCompanionPanel';
+import FriendsPanel from './components/FriendsPanel';
 
 function phaseLabel(phase: string): string {
   switch (phase) {
@@ -346,7 +347,11 @@ export default function App() {
       }
       setSnapshot(res);
       setLaunchStage('ready');
-      showToast('Engine Launched', `Presence set to ${res.Status}`, 'success');
+      showToast(
+        res.Enabled ? 'Presence shield active' : 'Riot chat connected',
+        res.Enabled ? `Presence set to ${res.Status}` : res.Detail,
+        res.Enabled ? 'success' : 'info',
+      );
     } catch (err: any) {
       const message = (err?.message || '').trim() || 'RiftOps could not start the selected game.';
       setLaunchStage('idle');
@@ -421,6 +426,10 @@ export default function App() {
   };
 
   const handleSetStatus = async (status: string) => {
+    if (!presenceControlsAvailable) {
+      showToast('Native Riot chat active', 'Presence masking is unavailable for this run so friends and chat can stay connected.', 'info');
+      return;
+    }
     try {
       await api.setStatus(status);
       const snap = await api.fetchSnapshot();
@@ -432,6 +441,10 @@ export default function App() {
   };
 
   const handleToggleMasking = async (enabled: boolean) => {
+    if (enabled && !presenceControlsAvailable) {
+      showToast('Native Riot chat active', 'Presence masking is unavailable for this run so friends and chat can stay connected.', 'info');
+      return;
+    }
     try {
       await api.toggleMasking(enabled);
       const snap = await api.fetchSnapshot();
@@ -490,6 +503,7 @@ export default function App() {
 
   const isIdle = snapshot.Phase === 'idle' || snapshot.Phase === 'error';
   const isLive = snapshot.Phase !== 'idle' && snapshot.Phase !== 'error';
+  const presenceControlsAvailable = isIdle || snapshot.ChatPort > 0;
   const gameInfo = GAMES.find((g) => g.value === selectedGame);
   const gameImg = GAME_IMGS[selectedGame];
 
@@ -655,11 +669,12 @@ export default function App() {
                           <span className="dashboard-section__icon"><Shield /></span>
                           <span><small>PRESENCE SHIELD</small><strong>Control what friends see</strong></span>
                           <label className="toggle">
-                            <input type="checkbox" checked={snapshot.Enabled} onChange={(e) => handleToggleMasking(e.target.checked)} />
+                            <input type="checkbox" checked={snapshot.Enabled} disabled={!presenceControlsAvailable} onChange={(e) => handleToggleMasking(e.target.checked)} />
                             <span className="slider" />
                           </label>
                         </div>
-                        <StatusSelector current={snapshot.Status} onChange={handleSetStatus} />
+                        <StatusSelector current={snapshot.Status} onChange={handleSetStatus} disabled={!presenceControlsAvailable} />
+                        {!presenceControlsAvailable && <p className="text-[10px] leading-relaxed text-text-dim">Riot rejected the secure presence proxy. RiftOps restored native friends and chat for this run.</p>}
                       </section>
                     </div>
                   </section>
@@ -669,6 +684,10 @@ export default function App() {
                   <div className="dashboard-section__kicker">LEAGUE NOW</div>
                   <ClientControlRoom remoteClient={remoteClient} onOpenQoL={() => setActiveTab(remoteClient ? 'live' : 'qol')} onOpenLive={() => setActiveTab('live')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
                 </section>
+                {!remoteClient && <section className="dashboard-section dashboard-section--friends" aria-label="League friends">
+                  <div className="dashboard-section__kicker">SOCIAL</div>
+                  <FriendsPanel id="dashboard-friends" connected={lcuConnected} />
+                </section>}
                 {remoteClient && <PhoneCompanionPanel showToast={(message, type = 'info') => showToast('League Client', message, type)} />}
 
                 {snapshot.StartedAt && (

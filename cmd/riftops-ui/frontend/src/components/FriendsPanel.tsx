@@ -6,6 +6,8 @@ import { useLCUConnection } from './lcuConnectionContext';
 type Friend = {
   id?: string;
   name?: string;
+  summonerName?: string;
+  displayName?: string;
   gameName?: string;
   tagLine?: string;
   availability?: string;
@@ -18,7 +20,50 @@ type Friend = {
 
 function displayName(friend: Friend): string {
   if (friend.gameName) return friend.tagLine ? `${friend.gameName}#${friend.tagLine}` : friend.gameName;
-  return friend.name || 'Unnamed friend';
+  return friend.name || friend.summonerName || friend.displayName || 'Unnamed friend';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function numberValue(value: unknown): number | undefined {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function normalizeFriend(value: unknown): Friend | null {
+  if (!isRecord(value)) return null;
+  const nested = isRecord(value.summoner) ? value.summoner : isRecord(value.player) ? value.player : {};
+  const getString = (...keys: string[]) => keys.map((key) => value[key] ?? nested[key]).find((item): item is string => typeof item === 'string' && item.trim() !== '')?.trim();
+  const friend: Friend = {
+    id: getString('id', 'summonerId', 'jid'),
+    name: getString('name'),
+    summonerName: getString('summonerName'),
+    displayName: getString('displayName'),
+    gameName: getString('gameName'),
+    tagLine: getString('tagLine', 'tagline'),
+    availability: getString('availability', 'status', 'presence'),
+    productName: getString('productName'),
+    product: getString('product'),
+    puuid: getString('puuid', 'playerUuid'),
+    profileIconId: numberValue(value.profileIconId ?? value.summonerIconId ?? nested.profileIconId),
+    iconId: numberValue(value.iconId ?? nested.iconId),
+  };
+  return Object.values(friend).some((item) => item !== undefined && item !== '') ? friend : null;
+}
+
+function normalizeFriendsPayload(body: unknown): Friend[] {
+  if (Array.isArray(body)) return body.flatMap((item) => normalizeFriendsPayload(item));
+  if (!isRecord(body)) return [];
+
+  for (const key of ['friends', 'items', 'entries', 'data']) {
+    if (Array.isArray(body[key])) return normalizeFriendsPayload(body[key]);
+  }
+
+  const direct = normalizeFriend(body);
+  if (direct) return [direct];
+  return Object.values(body).flatMap((item) => normalizeFriendsPayload(item));
 }
 
 function statusLabel(availability: string | undefined): string {
@@ -63,8 +108,7 @@ export default function FriendsPanel({ connected, id }: { connected: boolean; id
     setLoading(true);
     try {
       const body = await fetchLCUFriends();
-      const values = Array.isArray(body) ? body : Object.values((body || {}) as Record<string, unknown>);
-      setFriends(values.filter((friend): friend is Friend => Boolean(friend && typeof friend === 'object')));
+      setFriends(normalizeFriendsPayload(body));
       setError('');
     } catch (reason: any) {
       setError(reason?.message || 'Friends are unavailable.');

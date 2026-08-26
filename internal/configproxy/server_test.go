@@ -91,3 +91,36 @@ func TestServerPassesThroughSuccessfulNonChatConfig(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 }
+
+func TestServerPassThroughChatPreservesRiotEndpoint(t *testing.T) {
+	const body = `{"chat.host":"eun1.chat.si.riotgames.com","chat.port":5223,"chat.affinities":{"eun1":"eun1.chat.si.riotgames.com"}}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer upstream.Close()
+
+	server, err := NewServer(ServerOptions{PassThroughChat: true, Upstream: upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Run() }()
+	defer server.Close(context.Background())
+
+	response, err := http.Get(server.URL() + "/api/v1/config/player")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	got, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("chat config changed: %s", got)
+	}
+	select {
+	case endpoint := <-server.Endpoints():
+		t.Fatalf("unexpected rewritten endpoint: %+v", endpoint)
+	case <-time.After(50 * time.Millisecond):
+	}
+}

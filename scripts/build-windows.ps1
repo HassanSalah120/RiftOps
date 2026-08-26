@@ -83,13 +83,34 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Vet failed." }
     }
 
-    $Icon = (Resolve-Path -LiteralPath "cmd/riftops-ui/app.png").Path
+	$Icon = (Resolve-Path -LiteralPath "cmd/riftops-ui/app.png").Path
     $Manifest = "cmd/riftops-ui/riftops-ui.exe.manifest"
     Copy-Item -Force -LiteralPath "packaging/windows/app.manifest" -Destination $Manifest
 	Write-Host "[6/8] Compiling and packaging the desktop host..."
-    & $Fyne package --os windows --src cmd/riftops-ui --release --tags desktop `
-        --name RiftOps --app-id io.github.hassansalah120.riftops --app-version $Version `
-        --app-build $Build --icon $Icon
+    # Fyne uses the Go toolchain under the hood. Inject the release version
+    # into buildinfo so update checks compare against the actual package
+    # version instead of the source default.
+    $PreviousGoFlags = $env:GOFLAGS
+    try {
+        $versionLdFlag = "-ldflags=-X=github.com/HassanSalah120/RiftOps/internal/buildinfo.Version=$Version"
+        $env:GOFLAGS = if ([string]::IsNullOrWhiteSpace($PreviousGoFlags)) {
+            $versionLdFlag
+        }
+        else {
+            "$PreviousGoFlags $versionLdFlag"
+        }
+        & $Fyne package --os windows --src cmd/riftops-ui --release --tags desktop `
+            --name RiftOps --app-id io.github.hassansalah120.riftops --app-version $Version `
+            --app-build $Build --icon $Icon
+    }
+    finally {
+        if ($null -eq $PreviousGoFlags) {
+            Remove-Item Env:GOFLAGS -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:GOFLAGS = $PreviousGoFlags
+        }
+    }
     if ($LASTEXITCODE -ne 0) { throw "Windows packaging failed." }
 
 	Write-Host "[7/8] Moving and validating the packaged executable..."

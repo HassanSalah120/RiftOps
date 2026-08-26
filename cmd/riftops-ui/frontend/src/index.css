@@ -1787,6 +1787,8 @@ html[data-performance='quiet'] .control-room__glow { animation: none !important;
 .dashboard-launch-history strong { color: #d8dfdb; }
 .dashboard-launch-history__game { margin-left: auto; color: #5d707d; font-size: 8px; }
 .dashboard-section--logs .glass-card { border-color: rgba(255,255,255,.07); }
+.dashboard-section--friends { min-width: 0; }
+.dashboard-section--friends .friends-panel { width: 100%; }
 .dashboard-page__hero { height: 190px!important; min-height: 190px; }
 .dashboard-page__hero-copy { padding: 17px 20px!important; }
 .dashboard-page__launch-row { display: grid!important; grid-template-columns: minmax(180px,.7fr) minmax(330px,1.25fr) auto; align-items: end!important; gap: 16px; }

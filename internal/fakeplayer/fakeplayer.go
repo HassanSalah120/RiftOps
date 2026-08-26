@@ -79,7 +79,15 @@ func InjectRoster(raw []byte) ([]byte, bool, error) {
 			break
 		}
 		if err != nil {
-			return nil, false, fmt.Errorf("parse roster: %w", err)
+			// Riot occasionally adds extension payloads that are accepted by its
+			// XML stream parser but rejected by encoding/xml (for example, a
+			// control character in a legacy extension). A malformed optional
+			// extension must never tear down the whole chat connection: fall back
+			// to a byte-preserving insertion at the roster query opening tag.
+			if modified, inserted := injectRosterAfterOpeningTag(raw); inserted {
+				return modified, true, nil
+			}
+			return raw, false, nil
 		}
 		switch value := token.(type) {
 		case xml.StartElement:
@@ -109,7 +117,58 @@ func InjectRoster(raw []byte) ([]byte, bool, error) {
 			depth--
 		}
 	}
+	if modified, inserted := injectRosterAfterOpeningTag(raw); inserted {
+		return modified, true, nil
+	}
 	return raw, false, nil
+}
+
+// injectRosterAfterOpeningTag is deliberately conservative. It only looks at
+// an IQ stanza's opening query tag and inserts the control item immediately
+// after it, preserving every byte Riot sent (including unknown extensions).
+// This mirrors the tolerant behavior of the original Deceive proxy while the
+// structured path above handles well-formed stanzas safely.
+func injectRosterAfterOpeningTag(raw []byte) ([]byte, bool) {
+	if !bytes.Contains(raw, []byte("<iq")) {
+		return raw, false
+	}
+	for offset := 0; offset < len(raw); {
+		relative := bytes.IndexByte(raw[offset:], '<')
+		if relative < 0 {
+			return raw, false
+		}
+		start := offset + relative
+		end := bytes.IndexByte(raw[start:], '>')
+		if end < 0 {
+			return raw, false
+		}
+		end += start
+		tag := raw[start : end+1]
+		name := rosterTagName(tag)
+		if name == "query" && bytes.Contains(tag, []byte(rosterNamespace)) && !bytes.HasSuffix(bytes.TrimSpace(tag[:len(tag)-1]), []byte("/")) {
+			modified := make([]byte, 0, len(raw)+len(rosterItemXML))
+			modified = append(modified, raw[:end+1]...)
+			modified = append(modified, rosterItemXML...)
+			modified = append(modified, raw[end+1:]...)
+			return modified, true
+		}
+		offset = end + 1
+	}
+	return raw, false
+}
+
+func rosterTagName(tag []byte) string {
+	text := strings.TrimSpace(string(tag))
+	text = strings.TrimPrefix(text, "<")
+	text = strings.TrimSpace(strings.TrimSuffix(text, ">"))
+	text = strings.TrimPrefix(text, "/")
+	if index := strings.IndexAny(text, " \t\r\n/"); index >= 0 {
+		text = text[:index]
+	}
+	if index := strings.LastIndexByte(text, ':'); index >= 0 {
+		text = text[index+1:]
+	}
+	return text
 }
 
 func ChatMessage(message string, now time.Time) ([]byte, error) {

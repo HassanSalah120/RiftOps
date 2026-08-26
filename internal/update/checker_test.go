@@ -63,3 +63,13 @@ func TestSemanticPrereleaseOrdering(t *testing.T) {
 		}
 	}
 }
+
+func TestSameVersionIsNotNewer(t *testing.T) {
+	newer, err := IsNewer("2.7.3", "v2.7.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newer {
+		t.Fatal("the current release was reported as newer than itself")
+	}
+}

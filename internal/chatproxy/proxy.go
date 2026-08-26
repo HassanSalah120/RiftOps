@@ -22,6 +22,7 @@ type Proxy struct {
 	endpoint       EndpointProvider
 	policy         PolicyProvider
 	maxFrame       int
+	tlsFailures    chan error
 	commandHandler CommandHandler
 	sessionHandler func()
 	rosterHandler  func()
@@ -53,6 +54,11 @@ func (p *Proxy) SetRosterHandler(handler func()) {
 	p.mu.Unlock()
 }
 
+// TLSFailures reports a local Riot handshake rejection. The engine uses the
+// first failure to restart with Riot's native chat configuration so friends
+// and chat remain available even if Riot's trust store changes.
+func (p *Proxy) TLSFailures() <-chan error { return p.tlsFailures }
+
 func Listen(address string) (net.Listener, error) {
 	if address == "" {
 		address = "127.0.0.1:0"
@@ -71,7 +77,8 @@ func Listen(address string) (net.Listener, error) {
 
 func NewProxy(listener net.Listener, certificate tls.Certificate, endpoint EndpointProvider, policy PolicyProvider) *Proxy {
 	return &Proxy{listener: listener, certificate: certificate, endpoint: endpoint,
-		policy: policy, maxFrame: 1 << 20, sessions: make(map[*Session]struct{})}
+		policy: policy, maxFrame: 1 << 20, tlsFailures: make(chan error, 1),
+		sessions: make(map[*Session]struct{})}
 }
 
 func (p *Proxy) Run(ctx context.Context) error {
@@ -100,6 +107,10 @@ func (p *Proxy) serve(ctx context.Context, raw net.Conn) {
 	_ = incoming.SetDeadline(time.Now().Add(20 * time.Second))
 	if err := incoming.HandshakeContext(ctx); err != nil {
 		slog.Warn("local Riot chat TLS handshake failed", "error", err)
+		select {
+		case p.tlsFailures <- err:
+		default:
+		}
 		incoming.Close()
 		return
 	}

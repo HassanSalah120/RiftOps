@@ -40,6 +40,9 @@ go test -race -tags desktop ./...
 echo "[5/8] Running go vet..."
 go vet -tags desktop ./...
 echo "[6/8] Packaging the macOS app..."
+# Fyne invokes the Go toolchain itself, so pass the release version through
+# GOFLAGS to keep runtime update checks aligned with app metadata.
+GOFLAGS="${GOFLAGS:+$GOFLAGS }-ldflags=-X=github.com/HassanSalah120/RiftOps/internal/buildinfo.Version=${version}" \
 fyne package --os darwin --src cmd/riftops-ui --release --tags desktop \
   --name RiftOps --app-id io.github.hassansalah120.riftops --app-version "$version" \
   --app-build "$build" --icon "$root/cmd/riftops-ui/app.png"

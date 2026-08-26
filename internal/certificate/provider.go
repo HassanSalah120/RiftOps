@@ -47,24 +47,56 @@ func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
 	return cert, nil
 }
 
-// generateSelfSigned creates an ECDSA self-signed certificate as a last-resort fallback.
-// It caches the result so subsequent starts are fast.
+// generateSelfSigned creates a short-lived local CA and an ECDSA leaf
+// certificate signed by that CA. Riot's current chat stack requires a valid
+// CA chain and does not accept a self-signed server leaf, even when the
+// compatibility flag is present.
 func (p Provider) generateSelfSigned() (tls.Certificate, error) {
 	hostname := p.Hostname
 	if hostname == "" {
 		hostname = "127.0.0.1"
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate self-signed key: %w", err)
+		return tls.Certificate{}, fmt.Errorf("generate local chat CA key: %w", err)
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	caSerial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate serial: %w", err)
+		return tls.Certificate{}, fmt.Errorf("generate local chat CA serial: %w", err)
 	}
 	now := time.Now()
-	template := &x509.Certificate{
-		SerialNumber: serial,
+	caTemplate := &x509.Certificate{
+		SerialNumber: caSerial,
+		Subject: pkix.Name{
+			Organization: []string{"RiftOps"},
+			CommonName:   "RiftOps Local Chat CA",
+		},
+		NotBefore:             now.Add(-24 * time.Hour),
+		NotAfter:              now.Add(5 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		MaxPathLenZero:        true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("create local chat CA: %w", err)
+	}
+	caCertificate, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("parse local chat CA: %w", err)
+	}
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate local chat leaf key: %w", err)
+	}
+	leafSerial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate local chat leaf serial: %w", err)
+	}
+	leafTemplate := &x509.Certificate{
+		SerialNumber: leafSerial,
 		Subject: pkix.Name{
 			Organization: []string{"RiftOps"},
 			CommonName:   hostname,
@@ -74,26 +106,29 @@ func (p Provider) generateSelfSigned() (tls.Certificate, error) {
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		DNSNames:              []string{hostname},
+		AuthorityKeyId:        caCertificate.SubjectKeyId,
 	}
 	if ip := net.ParseIP(hostname); ip != nil {
-		template.IPAddresses = []net.IP{ip}
+		leafTemplate.IPAddresses = []net.IP{ip}
+	} else {
+		leafTemplate.DNSNames = []string{hostname}
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	certDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCertificate, &leafKey.PublicKey, caKey)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("create self-signed cert: %w", err)
+		return tls.Certificate{}, fmt.Errorf("create local chat leaf: %w", err)
 	}
 	leaf, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("parse self-signed cert: %w", err)
+		return tls.Certificate{}, fmt.Errorf("parse local chat leaf: %w", err)
 	}
 	certificate := tls.Certificate{
-		Certificate: [][]byte{certDER},
-		PrivateKey:  key,
+		Certificate: [][]byte{certDER, caDER},
+		PrivateKey:  leafKey,
 		Leaf:        leaf,
 	}
-	// Cache the self-signed cert as PKCS#12 so subsequent starts can reuse it.
-	pfxData, err := pkcs12.Encode(rand.Reader, key, leaf, nil, "")
+	// Cache the leaf key and certificate chain as PKCS#12 so subsequent starts
+	// can reuse the same local identity without touching the machine trust store.
+	pfxData, err := pkcs12.Encode(rand.Reader, leafKey, leaf, []*x509.Certificate{caCertificate}, "")
 	if err != nil {
 		slog.Warn("could not cache self-signed cert as PKCS#12", "error", err)
 	} else if err := writePrivateFile(p.CachePath, pfxData); err != nil {
@@ -112,6 +147,9 @@ func (p Provider) decodeAndValidate(data []byte) (tls.Certificate, error) {
 	}
 	if err := leaf.VerifyHostname(p.Hostname); err != nil {
 		return tls.Certificate{}, fmt.Errorf("certificate hostname: %w", err)
+	}
+	if len(chain) == 0 || chain[0] == nil || !chain[0].IsCA {
+		return tls.Certificate{}, errors.New("certificate has no valid local issuing CA")
 	}
 	now := time.Now()
 	if now.Before(leaf.NotBefore) || leaf.NotAfter.Before(now.Add(p.MinValidFor)) {

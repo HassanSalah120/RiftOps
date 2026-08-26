@@ -53,6 +53,12 @@ func TestProviderGeneratesValidatesAndCaches(t *testing.T) {
 	if certificate.Leaf == nil || certificate.Leaf.DNSNames[0] != hostname {
 		t.Fatalf("unexpected certificate: %+v", certificate.Leaf)
 	}
+	if len(certificate.Certificate) < 2 {
+		t.Fatal("generated certificate did not include its issuing CA")
+	}
+	if len(certificate.Leaf.AuthorityKeyId) == 0 {
+		t.Fatal("generated leaf did not include an authority key identifier")
+	}
 	if _, err := (Provider{CachePath: cache, Hostname: hostname}).Load(context.Background()); err != nil {
 		t.Fatalf("cached certificate was not reusable: %v", err)
 	}
@@ -66,6 +72,23 @@ func TestProviderGeneratesLoopbackIPCertificate(t *testing.T) {
 	}
 	if certificate.Leaf == nil || len(certificate.Leaf.IPAddresses) != 1 || !certificate.Leaf.IPAddresses[0].Equal(net.ParseIP("127.0.0.1")) {
 		t.Fatalf("generated certificate has no loopback IP SAN: %+v", certificate.Leaf)
+	}
+	if len(certificate.Certificate) < 2 {
+		t.Fatal("generated loopback certificate did not include its issuing CA")
+	}
+}
+
+func TestProviderGeneratesLocalhostDNSCertificate(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "cache", "localhost.pfx")
+	certificate, err := (Provider{CachePath: cache, Hostname: "localhost"}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if certificate.Leaf == nil || len(certificate.Leaf.DNSNames) != 1 || certificate.Leaf.DNSNames[0] != "localhost" {
+		t.Fatalf("generated certificate has no localhost DNS SAN: %+v", certificate.Leaf)
+	}
+	if err := certificate.Leaf.VerifyHostname("localhost"); err != nil {
+		t.Fatalf("generated certificate does not verify localhost: %v", err)
 	}
 }
 

@@ -4,7 +4,7 @@ set -euo pipefail
 export PATH="$PATH:$HOME/go/bin"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="${1:-$(tr -d '\r\n' < "$ROOT/VERSION" 2>/dev/null || echo 2.7.2)}"
+VERSION="${1:-$(tr -d '\r\n' < "$ROOT/VERSION" 2>/dev/null || echo 2.7.7)}"
 OUTDIR="${OUTDIR:-$ROOT/dist}"
 export OUTDIR
 BINARY="${OUTDIR}/RiftOps.exe"

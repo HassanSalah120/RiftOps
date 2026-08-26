@@ -130,7 +130,8 @@ func (r LaunchRequest) Arguments() ([]string, error) {
 		return nil, fmt.Errorf("config URL is required")
 	}
 	arguments := []string{"--client-config-url=" + r.ConfigURL}
-	if product, launch := r.Game.Product(); launch {
+	product, launch := r.Game.Product()
+	if launch {
 		patchline := r.Patchline
 		if patchline == "" {
 			patchline = "live"

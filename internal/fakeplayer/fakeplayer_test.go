@@ -55,6 +55,31 @@ func TestInjectRosterPreservesRiotPayloadBytes(t *testing.T) {
 	}
 }
 
+func TestInjectRosterFallsBackForMalformedOptionalExtension(t *testing.T) {
+	// A legacy extension containing an XML control byte is invalid according
+	// to encoding/xml, but Riot's stream parser has historically forwarded it.
+	// The proxy must preserve the roster instead of disconnecting chat.
+	raw := []byte("<iq><query xmlns='jabber:iq:riotgames:roster'><item jid='friend@test'>\x01</item></query></iq>")
+	result, inserted, err := InjectRoster(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted || !bytes.Contains(result, []byte(JID)) || !bytes.Contains(result, []byte("\x01")) {
+		t.Fatalf("malformed roster was not preserved and augmented: inserted=%v result=%q", inserted, result)
+	}
+}
+
+func TestInjectRosterPassesThroughMalformedNonRosterStanza(t *testing.T) {
+	raw := []byte("<iq><item>\x01</item></iq>")
+	result, inserted, err := InjectRoster(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted || string(result) != string(raw) {
+		t.Fatalf("non-roster stanza changed: inserted=%v result=%q", inserted, result)
+	}
+}
+
 func TestChatMessageEscapesText(t *testing.T) {
 	result, err := ChatMessage("a < b & c", time.Unix(0, 0))
 	if err != nil {

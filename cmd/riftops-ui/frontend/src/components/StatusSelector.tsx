@@ -9,9 +9,11 @@ const STATUSES = [
 export default function StatusSelector({
   current,
   onChange,
+  disabled = false,
 }: {
   current: string;
   onChange: (status: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex gap-2">
@@ -21,8 +23,9 @@ export default function StatusSelector({
         return (
           <button
             key={s.key}
+            disabled={disabled}
             onClick={() => onChange(s.key)}
-            className={`relative flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition duration-200 cursor-pointer border ${
+            className={`relative flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition duration-200 cursor-pointer border disabled:opacity-40 disabled:cursor-not-allowed ${
               active
                 ? 'text-white border-primary/40 shadow-lg'
                 : 'text-text-dim border-white/[0.06] hover:text-white hover:bg-white/[0.04]'
