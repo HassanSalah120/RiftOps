@@ -5,6 +5,7 @@ const TAB_LABELS: Record<Tab, string> = {
   dashboard: 'Command Center',
   play: 'Play Flow',
   live: 'Live Session',
+  social: 'Social Center',
   qol: 'League QoL',
   history: 'Match History',
   skins: 'Skin Collection',

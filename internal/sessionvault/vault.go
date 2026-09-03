@@ -50,7 +50,7 @@ type payload struct {
 }
 
 func Default(vaultDir string) (*Vault, error) {
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
 		return nil, fmt.Errorf("encrypted Riot login switching is not implemented on %s", runtime.GOOS)
 	}
 	dataDir, err := defaultRiotDataDir()
@@ -151,6 +151,24 @@ func (v *Vault) Restore(profileID string) error {
 		return errors.New("saved Riot login payload was invalid")
 	}
 	return writePrivateFile(filepath.Join(v.RiotDataDir, privateSettingsFile), value.Data)
+}
+
+// ClearActiveSession removes the remembered-login file so Riot shows its
+// normal sign-in screen. It is used only for an explicit profile switch when
+// the selected profile has no usable saved session.
+func (v *Vault) ClearActiveSession() error {
+	path := filepath.Join(v.RiotDataDir, privateSettingsFile)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("Riot remembered-login state was not a safe regular file")
+	}
+	return os.Remove(path)
 }
 
 func (v *Vault) Status(profileID string) (Status, error) {

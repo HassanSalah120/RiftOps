@@ -21,9 +21,9 @@
 > validates and caches the public-CA bundle from the open-source backloop.dev
 > loopback service, and automatically relaunches with untouched Riot chat when
 > that secure proxy handshake is unavailable. The LAN phone transport remains explicitly
-> HTTP and trusted-LAN only. Saved session vaults use Windows DPAPI; macOS does
-> not advertise account switching until a native Keychain implementation is
-> added. These are explicit product/release constraints, not hidden failures.
+> HTTP and trusted-LAN only. Saved session vaults use Windows DPAPI and the
+> macOS Keychain; profile switching remains a desktop-only flow. These are
+> explicit product/release constraints, not hidden failures.
 
 The operator-facing release procedure is maintained in
 [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).

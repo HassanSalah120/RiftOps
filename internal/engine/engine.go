@@ -57,6 +57,7 @@ type RunOptions struct {
 	Status         model.Status
 	Patchline      string
 	StopExisting   bool
+	FreshLogin     bool
 	RiotClientArgs []string
 	GameArgs       []string
 }
@@ -234,6 +235,26 @@ func (e *Engine) SavedLoginStatus() (sessionvault.Status, error) {
 	vault := e.vault
 	profileID := e.config.ActiveProfileID
 	e.mu.RUnlock()
+	return e.savedLoginStatusForProfile(vault, profileID)
+}
+
+// SavedLoginStatusForProfile reports the saved-session state for a named
+// profile without changing which profile is active. It is used by the profile
+// picker to render every account's state before the user starts a switch.
+func (e *Engine) SavedLoginStatusForProfile(profileID string) (sessionvault.Status, error) {
+	e.mu.RLock()
+	vault := e.vault
+	profiles := e.config.Profiles
+	e.mu.RUnlock()
+	for _, profile := range profiles {
+		if profile.ID == profileID {
+			return e.savedLoginStatusForProfile(vault, profileID)
+		}
+	}
+	return sessionvault.Status{}, fmt.Errorf("launch profile %q was not found", profileID)
+}
+
+func (e *Engine) savedLoginStatusForProfile(vault *sessionvault.Vault, profileID string) (sessionvault.Status, error) {
 	if vault == nil {
 		return sessionvault.Status{}, errors.New("saved Riot logins are unavailable on this platform")
 	}
@@ -419,14 +440,21 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 			if _, vaultErr := e.vault.Status(profile.ID); vaultErr == nil {
 				return e.fail(game, status, errors.New("close Riot Client before switching to a saved login profile"))
 			}
-		} else if err := e.vault.Restore(profile.ID); err != nil {
-			switch {
-			case errors.Is(err, sessionvault.ErrNotFound):
-			case errors.Is(err, sessionvault.ErrExpired):
-				_ = e.vault.Delete(profile.ID)
-				slog.Info("saved Riot login expired; Riot Client will request sign-in", "profile", profile.Name)
-			default:
-				return e.fail(game, status, fmt.Errorf("restore saved Riot login: %w", err))
+		} else {
+			if options.FreshLogin {
+				if err := e.vault.ClearActiveSession(); err != nil {
+					return e.fail(game, status, fmt.Errorf("clear previous Riot login before fresh sign-in: %w", err))
+				}
+			}
+			if err := e.vault.Restore(profile.ID); err != nil {
+				switch {
+				case errors.Is(err, sessionvault.ErrNotFound):
+				case errors.Is(err, sessionvault.ErrExpired):
+					_ = e.vault.Delete(profile.ID)
+					slog.Info("saved Riot login expired; Riot Client will request sign-in", "profile", profile.Name)
+				default:
+					return e.fail(game, status, fmt.Errorf("restore saved Riot login: %w", err))
+				}
 			}
 		}
 	}

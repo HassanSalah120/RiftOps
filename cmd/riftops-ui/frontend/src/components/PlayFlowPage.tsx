@@ -28,6 +28,7 @@ import type { ChampSelectSession, DraftTimingMode } from '../champSelectFlow';
 import PageHeader from './PageHeader';
 import RunePageEditor from './RunePageEditor';
 import BuildPlanner from './BuildPlanner';
+import PreparationPanel from './PreparationPanel';
 import { ActionFeedback, type FeedbackState } from './DesignPrimitives';
 import { PRACTICE_TOOL_QUEUE_ID, queueStartMode } from '../playFlowQueue';
 import { recommendedRoleQuestSpells, roleQuestPlan } from '../roleQuest';
@@ -942,6 +943,20 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
           </aside>
         </div>
       </section>
+
+      <PreparationPanel
+        connected={connected}
+        remoteClient={remoteClient}
+        queueId={prefs.selectedQueue}
+        queue={selectedQueue}
+        firstRole={prefs.primaryRole}
+        secondRole={prefs.secondaryRole}
+        championId={prefs.pickChampionId}
+        runePageId={prefs.pickRunePageId}
+        fallbackRunePageId={prefs.fallbackPickRunePageId}
+        runePages={runePages}
+        onToast={showToast}
+      />
 
       <section className="glass-card play-flow__role-quest" aria-labelledby="role-quest-title">
         <div className="play-flow__role-quest-header">

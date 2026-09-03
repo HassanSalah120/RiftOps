@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/HassanSalah120/RiftOps/internal/model"
@@ -12,20 +13,41 @@ import (
 const DefaultProfileID = "default"
 
 type LaunchProfile struct {
-	ID             string                  `json:"id"`
-	Name           string                  `json:"name"`
-	AccountLabel   string                  `json:"accountLabel,omitempty"`
-	RiotID         string                  `json:"riotId,omitempty"`
-	Region         string                  `json:"region,omitempty"`
-	Enabled        bool                    `json:"enabled"`
-	Status         model.Status            `json:"status"`
-	DefaultGame    model.Game              `json:"defaultGame"`
-	StartupStatus  StartupStatus           `json:"startupStatus"`
-	ConnectToMUC   bool                    `json:"connectToMUC"`
-	Patchline      string                  `json:"patchline"`
-	RiotClientArgs []string                `json:"riotClientArgs,omitempty"`
-	GameArgs       []string                `json:"gameArgs,omitempty"`
+	ID             string                      `json:"id"`
+	Name           string                      `json:"name"`
+	AccountLabel   string                      `json:"accountLabel,omitempty"`
+	RiotID         string                      `json:"riotId,omitempty"`
+	Region         string                      `json:"region,omitempty"`
+	Enabled        bool                        `json:"enabled"`
+	Status         model.Status                `json:"status"`
+	DefaultGame    model.Game                  `json:"defaultGame"`
+	StartupStatus  StartupStatus               `json:"startupStatus"`
+	ConnectToMUC   bool                        `json:"connectToMUC"`
+	Patchline      string                      `json:"patchline"`
+	LeagueLocale   string                      `json:"leagueLocale,omitempty"`
+	RiotClientArgs []string                    `json:"riotClientArgs,omitempty"`
+	GameArgs       []string                    `json:"gameArgs,omitempty"`
 	GameStatuses   map[model.Game]model.Status `json:"gameStatuses,omitempty"`
+}
+
+const DefaultLeagueLocale = "auto"
+
+var supportedLeagueLocales = map[string]struct{}{
+	"auto": {}, "cs_CZ": {}, "de_DE": {}, "el_GR": {}, "en_AU": {},
+	"en_GB": {}, "en_PH": {}, "en_SG": {}, "en_US": {}, "es_AR": {},
+	"es_ES": {}, "es_MX": {}, "fr_FR": {}, "hu_HU": {}, "it_IT": {},
+	"ja_JP": {}, "ko_KR": {}, "pl_PL": {}, "pt_BR": {}, "ro_RO": {},
+	"ru_RU": {}, "th_TH": {}, "tr_TR": {}, "vi_VN": {}, "zh_CN": {},
+	"zh_MY": {}, "zh_TW": {},
+}
+
+func SupportedLeagueLocales() []string {
+	result := make([]string, 0, len(supportedLeagueLocales))
+	for locale := range supportedLeagueLocales {
+		result = append(result, locale)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func NewProfile(name string) LaunchProfile {
@@ -33,6 +55,7 @@ func NewProfile(name string) LaunchProfile {
 		ID: NewProfileID(), Name: strings.TrimSpace(name), Enabled: true,
 		Status: model.StatusOffline, DefaultGame: model.GameLeague,
 		StartupStatus: StartupLast, ConnectToMUC: true, Patchline: "live",
+		LeagueLocale: DefaultLeagueLocale,
 		GameStatuses: make(map[model.Game]model.Status),
 	}
 }
@@ -70,6 +93,13 @@ func (p LaunchProfile) Validate() error {
 	}
 	if strings.TrimSpace(p.Patchline) == "" || len(p.Patchline) > 32 {
 		return fmt.Errorf("profile patchline is invalid")
+	}
+	locale := strings.TrimSpace(p.LeagueLocale)
+	if locale == "" {
+		locale = DefaultLeagueLocale
+	}
+	if _, ok := supportedLeagueLocales[locale]; !ok {
+		return fmt.Errorf("unsupported League locale %q", p.LeagueLocale)
 	}
 	if err := validateArguments(p.RiotClientArgs); err != nil {
 		return fmt.Errorf("Riot Client arguments: %w", err)
@@ -133,6 +163,10 @@ func (s *Settings) UpsertProfile(profile LaunchProfile) error {
 	profile.RiotID = strings.TrimSpace(profile.RiotID)
 	profile.Region = strings.ToUpper(strings.TrimSpace(profile.Region))
 	profile.Patchline = strings.TrimSpace(profile.Patchline)
+	profile.LeagueLocale = strings.TrimSpace(profile.LeagueLocale)
+	if profile.LeagueLocale == "" {
+		profile.LeagueLocale = DefaultLeagueLocale
+	}
 	if err := profile.Validate(); err != nil {
 		return err
 	}
@@ -210,6 +244,7 @@ func profileFromSettings(s Settings, id, name string) LaunchProfile {
 		ID: id, Name: name, Enabled: s.Enabled, Status: s.Status,
 		DefaultGame: s.DefaultGame, StartupStatus: s.StartupStatus,
 		ConnectToMUC: s.ConnectToMUC, Patchline: "live",
+		LeagueLocale: DefaultLeagueLocale,
 		GameStatuses: make(map[model.Game]model.Status),
 	}
 }

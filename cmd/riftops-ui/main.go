@@ -28,6 +28,7 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/buildinfo"
 	"github.com/HassanSalah120/RiftOps/internal/diagnostics"
 	"github.com/HassanSalah120/RiftOps/internal/engine"
+	"github.com/HassanSalah120/RiftOps/internal/featurestore"
 	"github.com/HassanSalah120/RiftOps/internal/model"
 	"github.com/HassanSalah120/RiftOps/internal/platform"
 	"github.com/HassanSalah120/RiftOps/internal/qol"
@@ -51,6 +52,7 @@ var appPng []byte
 var (
 	backendEngine *engine.Engine
 	qolManager    *qol.Manager
+	featureData   *featurestore.Store
 	preferredPort = 24080
 	port          = preferredPort
 	clientURL     = fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -374,6 +376,11 @@ func main() {
 		slog.Warn("Could not load QoL preferences; using safe defaults", "error", err)
 	}
 	go qolManager.Run(context.Background())
+	featureData, err = featurestore.New(filepath.Join(path, "features.json"))
+	if err != nil {
+		logFatalStartup("RiftOps could not load feature data", err.Error())
+		return
+	}
 
 	broker.Start()
 
@@ -586,6 +593,34 @@ func getProfiles(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(backendEngine.LaunchProfiles())
 }
 
+func getProfileSessionStatuses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	type profileSessionStatus struct {
+		Saved      bool   `json:"saved"`
+		Expired    bool   `json:"expired"`
+		CapturedAt string `json:"capturedAt,omitempty"`
+		ExpiresAt  string `json:"expiresAt,omitempty"`
+		Error      string `json:"error,omitempty"`
+	}
+	statuses := make(map[string]profileSessionStatus)
+	for _, profile := range backendEngine.LaunchProfiles() {
+		status, err := backendEngine.SavedLoginStatusForProfile(profile.ID)
+		entry := profileSessionStatus{Saved: err == nil, Expired: errors.Is(err, sessionvault.ErrExpired)}
+		if err == nil || errors.Is(err, sessionvault.ErrExpired) {
+			entry.CapturedAt = status.CapturedAt.Format(time.RFC3339)
+			entry.ExpiresAt = status.ExpiresAt.Format(time.RFC3339)
+		} else if !errors.Is(err, sessionvault.ErrNotFound) {
+			entry.Error = err.Error()
+		}
+		statuses[profile.ID] = entry
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(statuses)
+}
+
 func selectProfile(w http.ResponseWriter, r *http.Request) {
 	var body struct{ ID string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -633,8 +668,9 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 			Status:         status,
 			Patchline:      profile.Patchline,
 			StopExisting:   false,
+			FreshLogin:     !result.TargetSessionAvailable,
 			RiotClientArgs: append([]string(nil), profile.RiotClientArgs...),
-			GameArgs:       append([]string(nil), profile.GameArgs...),
+			GameArgs:       launchGameArgs(profile),
 		})
 	}()
 	w.Header().Set("Content-Type", "application/json")
@@ -991,10 +1027,20 @@ func startEngine(w http.ResponseWriter, r *http.Request) {
 			Patchline:      profile.Patchline,
 			StopExisting:   body.StopExisting,
 			RiotClientArgs: append([]string(nil), profile.RiotClientArgs...),
-			GameArgs:       append([]string(nil), profile.GameArgs...),
+			GameArgs:       launchGameArgs(profile),
 		})
 	}()
 	w.WriteHeader(http.StatusOK)
+}
+
+// launchGameArgs appends only the validated, Riot-supported locale flag. The
+// app never patches League files or accepts free-form locale arguments.
+func launchGameArgs(profile settings.LaunchProfile) []string {
+	args := append([]string(nil), profile.GameArgs...)
+	if locale := strings.TrimSpace(profile.LeagueLocale); locale != "" && locale != settings.DefaultLeagueLocale {
+		args = append(args, "--locale="+locale)
+	}
+	return args
 }
 
 func stopEngine(w http.ResponseWriter, r *http.Request) {
@@ -1002,7 +1048,7 @@ func stopEngine(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// UNDER DEVELOPMENT: Session Vault (Account Switcher) feature endpoints under development
+// Saved Riot login profile endpoints.
 func captureSession(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -2083,6 +2129,10 @@ func lcuAvailabilityHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuStatusMessageHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2093,6 +2143,10 @@ func lcuStatusMessageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len([]rune(body.Message)) > 255 {
+		httpError(w, "Status message must be 255 characters or fewer", http.StatusBadRequest)
 		return
 	}
 	if err := lf.SetStatusMessage(r.Context(), body.Message); err != nil {

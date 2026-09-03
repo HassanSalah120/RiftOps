@@ -3,12 +3,36 @@ import type { Release, Snapshot } from './types';
 type JsonCacheEntry = { expiresAt: number; value: unknown };
 const jsonCache = new Map<string, JsonCacheEntry>();
 const jsonInflight = new Map<string, Promise<unknown>>();
-const JSON_CACHE_PREFIX = 'riftops.apiCache.';
+// Versioned metadata cache. Entries are best-effort and bounded so a large
+// patch catalogue cannot crowd out the rest of the browser/webview storage.
+const JSON_CACHE_PREFIX = 'riftops.apiCache.v1.';
+const JSON_CACHE_MAX_BYTES = 20 * 1024 * 1024;
+
+function persistJSONCache(path: string, entry: JsonCacheEntry) {
+  try {
+    localStorage.setItem(`${JSON_CACHE_PREFIX}${path}`, JSON.stringify(entry));
+    const entries = Object.keys(localStorage)
+      .filter((key) => key.startsWith(JSON_CACHE_PREFIX))
+      .map((key) => {
+        const raw = localStorage.getItem(key) || '';
+        let expiresAt = 0;
+        try { expiresAt = Number((JSON.parse(raw) as JsonCacheEntry).expiresAt) || 0; } catch { /* remove malformed entries below */ }
+        return { key, raw, expiresAt };
+      });
+    let total = entries.reduce((sum, item) => sum + item.raw.length + item.key.length, 0);
+    entries.sort((a, b) => a.expiresAt - b.expiresAt);
+    for (const item of entries) {
+      if (total <= JSON_CACHE_MAX_BYTES) break;
+      localStorage.removeItem(item.key);
+      total -= item.raw.length + item.key.length;
+    }
+  } catch { /* Storage is optional; the in-memory cache remains usable. */ }
+}
 
 export function clearCachedJSON() {
   jsonCache.clear();
   try {
-    Object.keys(localStorage).filter((key) => key.startsWith(JSON_CACHE_PREFIX)).forEach((key) => localStorage.removeItem(key));
+    Object.keys(localStorage).filter((key) => key.startsWith('riftops.apiCache.')).forEach((key) => localStorage.removeItem(key));
   } catch { /* Optional persistent cache. */ }
 }
 
@@ -34,7 +58,7 @@ async function fetchCachedJSON<T>(path: string, ttlMs: number): Promise<T> {
     const value = await res.json() as T;
     const entry = { value, expiresAt: Date.now() + ttlMs };
     jsonCache.set(path, entry);
-    try { localStorage.setItem(`${JSON_CACHE_PREFIX}${path}`, JSON.stringify(entry)); } catch { /* Cache is best-effort. */ }
+    persistJSONCache(path, entry);
     return value;
   })();
   jsonInflight.set(path, request);
@@ -49,6 +73,84 @@ export async function fetchSnapshot(): Promise<Snapshot> {
   const res = await fetch('/api/snapshot');
   if (!res.ok) throw new Error('Failed to fetch current state');
   return res.json();
+}
+
+export interface LaunchProfile {
+  id: string;
+  name: string;
+  accountLabel?: string;
+  riotId?: string;
+  region?: string;
+  enabled: boolean;
+  status: 'chat' | 'offline' | 'mobile';
+  defaultGame: string;
+  startupStatus: string;
+  connectToMUC: boolean;
+  patchline: string;
+  leagueLocale?: string;
+  riotClientArgs?: string[];
+  gameArgs?: string[];
+  gameStatuses?: Record<string, 'chat' | 'offline' | 'mobile'>;
+}
+
+export interface ProfileSessionStatus {
+  saved: boolean;
+  expired: boolean;
+  capturedAt?: string;
+  expiresAt?: string;
+  error?: string;
+}
+
+export async function fetchLaunchProfiles(): Promise<LaunchProfile[]> {
+  const res = await fetch('/api/profiles', { cache: 'no-store' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to load launch profiles');
+  return res.json();
+}
+
+export async function fetchProfileSessionStatuses(): Promise<Record<string, ProfileSessionStatus>> {
+  const res = await fetch('/api/profiles/session-status', { cache: 'no-store' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to load saved login status');
+  return res.json();
+}
+
+export async function saveLaunchProfile(profile: Partial<LaunchProfile>): Promise<LaunchProfile> {
+  const res = await fetch('/api/save-profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to save launch profile');
+  return res.json();
+}
+
+export async function deleteLaunchProfile(id: string): Promise<void> {
+  const res = await fetch('/api/delete-profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to delete launch profile');
+}
+
+export async function switchLaunchProfile(id: string): Promise<{ profile: LaunchProfile; targetSessionAvailable: boolean; targetSessionExpired: boolean }> {
+  const res = await fetch('/api/switch-profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to switch launch profile');
+  return res.json();
+}
+
+export async function captureSavedLogin(): Promise<{ profileId: string; profileName: string }> {
+  const res = await fetch('/api/capture-session', { method: 'POST', cache: 'no-store' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Could not save the current Riot login');
+  return res.json();
+}
+
+export async function forgetSavedLogin(): Promise<void> {
+  const res = await fetch('/api/forget-session', { method: 'POST', cache: 'no-store' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Could not forget the saved Riot login');
 }
 
 export async function toggleMasking(enabled: boolean): Promise<void> {
@@ -406,6 +508,9 @@ export function fetchLCUOwnedProfileIcons(): Promise<LCUProfileIconInventory> {
       source: String(body.source || ''),
     };
   });
+}
+export function fetchLCUProfileRegalia(): Promise<{ regalia: unknown; titles: unknown; tokens: unknown; mutation: string }> {
+  return fetch('/api/lcu/profile-regalia', { cache: 'no-store' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Profile regalia is unavailable'); return response.json(); });
 }
 
 export const DDBASE = 'https://ddragon.leagueoflegends.com';
@@ -1037,6 +1142,299 @@ export function fetchLCUFriends(): Promise<unknown> {
     if (!r.ok) throw new Error((await r.text()) || 'League friends are unavailable');
     return r.json();
   });
+}
+
+export interface SocialSnapshot {
+  friends: unknown;
+  friendRequests: unknown;
+  friendGroups: unknown;
+  lobby?: unknown;
+  fetchedAt: string;
+}
+
+export function fetchLCUSocial(signal?: AbortSignal): Promise<SocialSnapshot> {
+  return fetch('/api/lcu/social', { signal, cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League social data is unavailable');
+    return response.json();
+  });
+}
+
+export function actOnLCUFriendRequest(pid: string, action: 'accept' | 'decline' | 'delete'): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/friend-request-action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pid, action }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the friend request action');
+    return response.json();
+  });
+}
+
+export function inviteLCUFriends(summonerIds: string[]): Promise<{ ok: boolean; invited: number }> {
+  return fetch('/api/lcu/social-invite', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ summonerIds }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the invitation');
+    return response.json();
+  });
+}
+
+export function fetchLCUCustomBots(): Promise<any[]> {
+  return fetch('/api/lcu/custom-bots').then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Custom bots are unavailable');
+    const body = await response.json();
+    return Array.isArray(body) ? body : [];
+  });
+}
+
+export function addLCUCustomBot(championId: number, difficulty: string, teamId: '100' | '200'): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/custom-bots', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ championId, difficulty, teamId }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the custom bot');
+    return response.json();
+  });
+}
+
+export function fetchLCUReplay(gameId: number): Promise<any> {
+  return fetch(`/api/lcu/replay?gameId=${encodeURIComponent(gameId)}`).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Replay metadata is unavailable');
+    return response.json();
+  });
+}
+
+export function replayAction(gameId: number, action: 'download' | 'watch'): Promise<{ ok: boolean }> {
+  return fetch(`/api/lcu/replay?gameId=${encodeURIComponent(gameId)}&action=${action}`, { method: 'POST' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the replay action');
+    return response.json();
+  });
+}
+export function fetchReplayStatus(gameId: number): Promise<any> {
+  return fetch(`/api/lcu/replay-status?gameId=${encodeURIComponent(gameId)}`, { cache: 'no-store' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Replay status is unavailable'); return response.json(); });
+}
+
+export interface ProfilePreset {
+  id: string;
+  name: string;
+  accountKey: string;
+  iconId?: number;
+  backgroundSkinId?: number;
+  titleId?: number;
+  bannerId?: number;
+  tokenIds?: number[];
+  statusMessage?: string;
+}
+
+export function fetchProfilePresets(): Promise<ProfilePreset[]> {
+  return fetch('/api/profile-presets', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Profile presets are unavailable');
+    const body = await response.json();
+    return Array.isArray(body) ? body : [];
+  });
+}
+
+export function saveProfilePreset(preset: Omit<ProfilePreset, 'accountKey'>): Promise<ProfilePreset> {
+  return fetch('/api/profile-presets', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preset),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not save profile preset');
+    return response.json();
+  });
+}
+
+export function deleteProfilePreset(id: string): Promise<void> {
+  return fetch(`/api/profile-presets?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not delete profile preset');
+  });
+}
+
+export function applyProfilePreset(id: string): Promise<{ ok: boolean; results: Record<string, string> }> {
+  return fetch('/api/profile-presets/apply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not apply profile preset');
+    return response.json();
+  });
+}
+export function previewProfilePreset(id: string): Promise<{ current: unknown; proposed: ProfilePreset; expiresAt: string; requiresConfirmation: boolean }> {
+  return fetch('/api/profile-presets/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not preview profile preset'); return response.json(); });
+}
+
+export interface PreparationPreset {
+  id: string;
+  name: string;
+  accountKey: string;
+  championId?: number;
+  queueFamily?: string;
+  role?: string;
+  runePageId?: number;
+  fallbackRunePageId?: number;
+  spell1Id?: number;
+  spell2Id?: number;
+  itemIds?: number[];
+  itemSetId?: string;
+}
+
+export function fetchPreparationPresets(): Promise<PreparationPreset[]> {
+  return fetch('/api/lcu/preparation-presets', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Preparation presets are unavailable');
+    const body = await response.json(); return Array.isArray(body) ? body : [];
+  });
+}
+
+export function applyPreparationPreset(id: string): Promise<{ ok: boolean; results: Record<string, string> }> {
+  return fetch('/api/lcu/preparation-presets/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not apply preparation preset');
+    return response.json();
+  });
+}
+export function savePreparationPreset(preset: Omit<PreparationPreset, 'accountKey' | 'id'> & { id?: string }): Promise<PreparationPreset> {
+  return fetch('/api/lcu/preparation-presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preset) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not save preparation preset');
+    return response.json();
+  });
+}
+export function deletePreparationPreset(id: string): Promise<void> {
+  return fetch(`/api/lcu/preparation-presets?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not delete preparation preset'); });
+}
+
+export interface LobbyPreset { id: string; name: string; queueId: number; queueName?: string; firstRole?: string; secondRole?: string; mapId?: number; gameMode?: string }
+
+export function fetchLobbyPresets(): Promise<LobbyPreset[]> {
+  return fetch('/api/lcu/lobby-presets', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Lobby presets are unavailable');
+    const body = await response.json(); return Array.isArray(body) ? body : [];
+  });
+}
+
+export function applyLobbyPreset(id: string): Promise<{ ok: boolean; preset: LobbyPreset }> {
+  return fetch('/api/lcu/lobby-presets/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not apply lobby preset');
+    return response.json();
+  });
+}
+export function saveLobbyPreset(preset: Omit<LobbyPreset, 'id'> & { id?: string }): Promise<LobbyPreset> {
+  return fetch('/api/lcu/lobby-presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preset) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not save lobby preset'); return response.json(); });
+}
+export function deleteLobbyPreset(id: string): Promise<void> {
+  return fetch(`/api/lcu/lobby-presets?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not delete lobby preset'); });
+}
+
+export interface ReviewedOperationPreview { id: string; kind: string; targetIds: string[]; confirmation: string; expiresAt: string; state: string }
+
+export function previewReviewedOperation(kind: string, targetIds: string[]): Promise<ReviewedOperationPreview> {
+  return fetch('/api/operations/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, targetIds }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not prepare the reviewed operation');
+    return response.json();
+  });
+}
+
+export function executeReviewedOperation(id: string, confirmation: string): Promise<{ id: string; state: string }> {
+  return fetch('/api/operations/execute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, confirmation }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not start the reviewed operation');
+    return response.json();
+  });
+}
+
+export function fetchReviewedOperation(id: string): Promise<{ id: string; state: string; total: number; completed: number; results: Array<{ targetId: string; status: string; detail?: string }> }> {
+  return fetch(`/api/operations/status?id=${encodeURIComponent(id)}`, { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Operation status is unavailable');
+    return response.json();
+  });
+}
+
+export function cancelReviewedOperation(id: string): Promise<{ id: string; state: string }> {
+  return fetch('/api/operations/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not cancel the operation');
+    return response.json();
+  });
+}
+
+export interface ReviewedOperationReceipt {
+  id: string;
+  kind: string;
+  createdAt: string;
+  completedAt?: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  cancelled: boolean;
+  items: Array<{ targetId: string; status: string; detail?: string }>;
+}
+
+export function fetchReviewedOperationReceipts(): Promise<ReviewedOperationReceipt[]> {
+  return fetch('/api/operations/receipts', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Operation receipts are unavailable');
+    const body = await response.json();
+    return Array.isArray(body) ? body : [];
+  });
+}
+
+export function clearReviewedOperationReceipts(): Promise<void> {
+  return fetch('/api/operations/receipts/clear', { method: 'POST' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not clear operation receipts');
+  });
+}
+
+export interface ClientSettingsBackup { id: string; name: string; accountKey: string; createdAt: string }
+export function fetchClientSettingsBackups(): Promise<ClientSettingsBackup[]> {
+  return fetch('/api/lcu/client-settings-backups', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Client settings backups are unavailable');
+    const body = await response.json(); return Array.isArray(body) ? body : [];
+  });
+}
+export function createClientSettingsBackup(name: string): Promise<ClientSettingsBackup> {
+  return fetch('/api/lcu/client-settings-backups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not create settings backup');
+    return response.json();
+  });
+}
+export function deleteClientSettingsBackup(id: string): Promise<void> {
+  return fetch(`/api/lcu/client-settings-backups?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not delete settings backup');
+  });
+}
+export function previewClientSettingsRestore(id: string): Promise<{ backup: ClientSettingsBackup; current: unknown; restoreConfirmation: string }> {
+  return fetch('/api/lcu/client-settings-backups/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not preview settings restore');
+    return response.json();
+  });
+}
+export function restoreClientSettingsBackup(id: string, confirmation: string): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/client-settings-backups/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, confirmation }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not restore settings backup');
+    return response.json();
+  });
+}
+
+export function fetchPendingRewards(): Promise<any> {
+  return fetch('/api/lcu/pending-rewards', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Pending rewards are unavailable');
+    return response.json();
+  });
+}
+export function selectPendingReward(grantId: string, rewardGroupId: string, selections: string[]): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/pending-rewards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grantId, rewardGroupId, selections }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the reward selection');
+    return response.json();
+  });
+}
+
+export interface CapabilityStatus { id: string; status: 'supported' | 'unavailable' | 'changed'; detail?: string; patch?: string }
+export function fetchLCUCapabilities(): Promise<CapabilityStatus[]> {
+  return fetch('/api/lcu/capabilities', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'LCU capability diagnostics are unavailable');
+    const body = await response.json(); return Array.isArray(body) ? body : [];
+  });
+}
+
+export interface ItemSetSnapshot { id: string; accountKey: string; createdAt: string }
+export function fetchItemSetSnapshots(): Promise<ItemSetSnapshot[]> {
+  return fetch('/api/lcu/item-sets?snapshots=1', { cache: 'no-store' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Item-set snapshots are unavailable'); const body = await response.json(); return Array.isArray(body) ? body : []; });
+}
+export function rollbackItemSets(rollbackId: string): Promise<{ ok: boolean; rollbackId: string }> {
+  return fetch('/api/lcu/item-sets/rollback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rollbackId }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not roll back item sets'); return response.json(); });
 }
 
 export function fetchLCUGameDetail(gameId: number): Promise<any> {

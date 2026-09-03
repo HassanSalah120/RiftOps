@@ -31,6 +31,9 @@ import { ActionFeedback, type FeedbackState } from './components/DesignPrimitive
 import { ALL_TABS, availableTabs, tabAvailable } from './clientCapabilities';
 import PhoneCompanionPanel from './components/PhoneCompanionPanel';
 import FriendsPanel from './components/FriendsPanel';
+import LaunchProfilesPanel from './components/LaunchProfilesPanel';
+import SocialCenter from './components/SocialCenter';
+import { useLocale } from './localeContext';
 
 function phaseLabel(phase: string): string {
   switch (phase) {
@@ -64,6 +67,7 @@ const GAME_IMGS: Record<string, string> = {
 };
 
 export default function App() {
+  const { locale, setLocale, t } = useLocale();
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     try {
       const saved = localStorage.getItem('riftops.activeTab');
@@ -677,6 +681,11 @@ export default function App() {
                         {!presenceControlsAvailable && <p className="text-[10px] leading-relaxed text-text-dim">Riot rejected the secure presence proxy. RiftOps restored native friends and chat for this run.</p>}
                       </section>
                     </div>
+                    <LaunchProfilesPanel
+                      activeProfileId={snapshot.ActiveProfileID}
+                      showToast={showToast}
+                      onRefreshSnapshot={async () => { setSnapshot(await api.fetchSnapshot()); }}
+                    />
                   </section>
                 )}
 
@@ -734,11 +743,20 @@ export default function App() {
           )}
 
           {/* ═══════════════════════════════════════════════
+             SOCIAL TAB
+             ═══════════════════════════════════════════════ */}
+          {activeTab === 'social' && (
+            <div className="workspace-stage workspace-stage--social flex-1 min-h-0 min-w-0 overflow-y-auto p-4 animate-fadeIn">
+              <SocialCenter remoteClient={remoteClient} />
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════
              MATCH HISTORY TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'history' && (
             <div className="workspace-stage workspace-stage--history flex-1 overflow-y-auto p-4 animate-fadeIn">
-              <MatchHistory />
+              <MatchHistory remoteClient={remoteClient} />
             </div>
           )}
 
@@ -845,6 +863,12 @@ export default function App() {
               <div id="settings-interface" className="settings-card glass-card p-4 space-y-3">
                 <div className="settings-card__heading"><span><Sparkles /></span><div><small>INTERFACE & PERFORMANCE</small><h4>Workspace behavior</h4><p>These controls are stored locally and apply immediately.</p></div></div>
                 <div className="settings-control-list space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0"><span className="text-xs text-text block">{t('settings.language')}</span><span className="text-[10px] text-text-dim block mt-0.5">{t('settings.languageHelp')}</span></div>
+                    <select value={locale} onChange={(event) => { setLocale(event.target.value as 'en' | 'ar'); setSettingsFeedback({ tone: 'success', message: event.target.value === 'ar' ? 'Arabic interface enabled.' : 'English interface enabled.' }); }} className="w-32 text-xs shrink-0" aria-label={t('settings.language')}>
+                      <option value="en">English</option><option value="ar">العربية</option>
+                    </select>
+                  </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-text">Auto check for updates</span>
                     <label className="toggle">

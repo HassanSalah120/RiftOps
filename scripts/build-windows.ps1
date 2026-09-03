@@ -13,12 +13,26 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 if ([string]::IsNullOrWhiteSpace($Version)) {
     throw "VERSION is empty. Pass -Version explicitly."
 }
-$Fyne = (Get-Command fyne -ErrorAction SilentlyContinue).Source
-if (-not $Fyne) {
-    $Fyne = Join-Path $env:USERPROFILE "go\bin\fyne.exe"
+if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
+    throw "Windows resource versions must contain three or four numeric components. Got '$Version'."
 }
-if (-not (Test-Path -LiteralPath $Fyne)) {
-    throw "Fyne CLI not found. Run: go install fyne.io/tools/cmd/fyne@v1.7.2"
+if ($Build -lt 1 -or $Build -gt 65535) {
+    throw "Build must be between 1 and 65535."
+}
+$VersionParts = $Version.Split('.')
+foreach ($VersionPart in $VersionParts) {
+    if ([int]$VersionPart -gt 65535) {
+        throw "Each Windows version component must be between 0 and 65535."
+    }
+}
+$FileVersion = if ($VersionParts.Count -eq 3) { "$Version.$Build" } else { $Version }
+
+$GoWinres = (Get-Command go-winres -ErrorAction SilentlyContinue).Source
+if (-not $GoWinres) {
+    $GoWinres = Join-Path $env:USERPROFILE "go\bin\go-winres.exe"
+}
+if (-not (Test-Path -LiteralPath $GoWinres)) {
+    throw "go-winres is required. Run: go install github.com/tc-hib/go-winres@v0.3.3"
 }
 $Gcc = Get-Command gcc -ErrorAction SilentlyContinue
 if (-not $Gcc) {
@@ -45,7 +59,9 @@ try {
         "cmd/riftops-ui/fyne_metadata_init.go",
         "cmd/riftops-ui/fyne.syso",
         "cmd/riftops-ui/FyneApp.ico",
-        "cmd/riftops-ui/riftops-ui.exe.manifest"
+        "cmd/riftops-ui/riftops-ui.exe.manifest",
+        "cmd/riftops-ui/rsrc_windows_amd64.syso",
+        "cmd/riftops-ui/RiftOps.exe"
     )
     foreach ($GeneratedFile in $GeneratedFiles) {
         Remove-Item -Force -LiteralPath $GeneratedFile -ErrorAction SilentlyContinue
@@ -83,40 +99,28 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Vet failed." }
     }
 
-	$Icon = (Resolve-Path -LiteralPath "cmd/riftops-ui/app.png").Path
-    $Manifest = "cmd/riftops-ui/riftops-ui.exe.manifest"
-    Copy-Item -Force -LiteralPath "packaging/windows/app.manifest" -Destination $Manifest
-	Write-Host "[6/8] Compiling and packaging the desktop host..."
-    # Fyne uses the Go toolchain under the hood. Inject the release version
-    # into buildinfo so update checks compare against the actual package
-    # version instead of the source default.
-    $PreviousGoFlags = $env:GOFLAGS
-    try {
-        $versionLdFlag = "-ldflags=-X=github.com/HassanSalah120/RiftOps/internal/buildinfo.Version=$Version"
-        $env:GOFLAGS = if ([string]::IsNullOrWhiteSpace($PreviousGoFlags)) {
-            $versionLdFlag
-        }
-        else {
-            "$PreviousGoFlags $versionLdFlag"
-        }
-        & $Fyne package --os windows --src cmd/riftops-ui --release --tags desktop `
-            --name RiftOps --app-id io.github.hassansalah120.riftops --app-version $Version `
-            --app-build $Build --icon $Icon
-    }
-    finally {
-        if ($null -eq $PreviousGoFlags) {
-            Remove-Item Env:GOFLAGS -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:GOFLAGS = $PreviousGoFlags
-        }
-    }
-    if ($LASTEXITCODE -ne 0) { throw "Windows packaging failed." }
+	Write-Host "[6/8] Generating Windows resources and compiling the desktop host..."
+    & $GoWinres simply `
+        --icon "cmd/riftops-ui/app.ico" `
+        --manifest gui `
+        --product-version $Version `
+        --file-version $FileVersion `
+        --product-name "RiftOps" `
+        --file-description "RiftOps League Companion" `
+        --original-filename "RiftOps.exe" `
+        --copyright "Copyright (c) 2026 Hassan Salah" `
+        --arch amd64 `
+        --out "cmd/riftops-ui/rsrc"
+    if ($LASTEXITCODE -ne 0) { throw "Windows resource generation failed." }
+
+    $LdFlags = "-s -w -H=windowsgui -X=github.com/HassanSalah120/RiftOps/internal/buildinfo.Version=$Version"
+    go build -tags "desktop,release" -trimpath -ldflags $LdFlags -o "cmd/riftops-ui/RiftOps.exe" ./cmd/riftops-ui
+    if ($LASTEXITCODE -ne 0) { throw "Windows compilation failed." }
 
 	Write-Host "[7/8] Moving and validating the packaged executable..."
     New-Item -ItemType Directory -Force dist | Out-Null
     if (-not (Test-Path -LiteralPath "cmd/riftops-ui/RiftOps.exe")) {
-        throw "Fyne completed without producing cmd/riftops-ui/RiftOps.exe."
+        throw "Go completed without producing cmd/riftops-ui/RiftOps.exe."
     }
     # This is a portable desktop app, not an installer. Use a release-facing
     # filename so downloads read like a product rather than a compiler target.
@@ -138,6 +142,19 @@ try {
     if ($Subsystem -ne 2) {
         throw "Packaged executable uses PE subsystem $Subsystem instead of Windows GUI (2)."
     }
+    $VersionInfo = (Get-Item -LiteralPath $OutputPath).VersionInfo
+    if ($VersionInfo.ProductName -ne "RiftOps") {
+        throw "Packaged executable is missing the RiftOps product name."
+    }
+    if ($VersionInfo.FileDescription -ne "RiftOps League Companion") {
+        throw "Packaged executable is missing the expected file description."
+    }
+    if ($VersionInfo.ProductVersion -ne $Version) {
+        throw "Packaged product version '$($VersionInfo.ProductVersion)' does not match '$Version'."
+    }
+    if ($VersionInfo.FileVersion -ne $FileVersion) {
+        throw "Packaged file version '$($VersionInfo.FileVersion)' does not match '$FileVersion'."
+    }
     Remove-Item -Force -LiteralPath cmd/riftops-ui/RiftOps.exe
     Write-Host "[8/8] Writing SHA-256 checksum..."
     $ResolvedOutput = (Resolve-Path -LiteralPath $OutputPath).Path
@@ -151,7 +168,9 @@ finally {
         "cmd/riftops-ui/fyne_metadata_init.go",
         "cmd/riftops-ui/fyne.syso",
         "cmd/riftops-ui/FyneApp.ico",
-        "cmd/riftops-ui/riftops-ui.exe.manifest"
+        "cmd/riftops-ui/riftops-ui.exe.manifest",
+        "cmd/riftops-ui/rsrc_windows_amd64.syso",
+        "cmd/riftops-ui/RiftOps.exe"
     )) {
         Remove-Item -Force -LiteralPath $GeneratedFile -ErrorAction SilentlyContinue
     }

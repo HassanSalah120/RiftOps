@@ -356,21 +356,40 @@ type remoteCapability struct {
 // remoteCapabilities is the phone product contract. Keeping routes in named
 // groups makes every permission reviewable and prevents a paired phone from
 // inheriting new desktop endpoints by accident. Full settings, saved sessions,
-// diagnostics, loot/crafting, rune CRUD, cosmetics, updates, app quit, and
-// presence-engine controls intentionally do not appear here.
+// diagnostics, settings/restore, loot/rewards, rune/item CRUD, profile
+// mutation, updates, app quit, and presence-engine controls intentionally do
+// not appear here. Safe preset application and replay/lobby controls are
+// explicitly listed below and remain bounded by their typed handlers.
 var remoteCapabilities = []remoteCapability{
 	{ID: "session_state", Routes: map[string][]string{
 		"/api/snapshot": {http.MethodGet}, "/api/events": {http.MethodGet}, "/api/remote/status": {http.MethodGet},
 		"/api/ddragon/version": {http.MethodGet}, "/api/ddragon/champions": {http.MethodGet}, "/api/ddragon/profile-icons": {http.MethodGet},
 		"/api/lcu/status": {http.MethodGet}, "/api/lcu/overview": {http.MethodGet}, "/api/lcu/profile": {http.MethodGet},
 		"/api/lcu/active-game": {http.MethodGet},
-		"/api/lcu/friends":     {http.MethodGet}, "/api/lcu/health": {http.MethodGet}, "/api/lcu/server-status": {http.MethodGet},
+		"/api/lcu/friends":     {http.MethodGet}, "/api/lcu/social": {http.MethodGet}, "/api/lcu/health": {http.MethodGet}, "/api/lcu/server-status": {http.MethodGet},
+	}},
+	{ID: "social_control", Routes: map[string][]string{
+		"/api/lcu/friend-request-action": {http.MethodPost}, "/api/lcu/social-invite": {http.MethodPost},
 	}},
 	{ID: "match_history_read", Routes: map[string][]string{
 		"/api/lcu/match-history": {http.MethodGet}, "/api/lcu/game-detail": {http.MethodGet}, "/api/lcu/champ-select/runes/catalog": {http.MethodGet},
 	}},
 	{ID: "collection_read", Routes: map[string][]string{
 		"/api/lcu/skins": {http.MethodGet}, "/api/lcu/background-champions": {http.MethodGet}, "/api/lcu/background-skins": {http.MethodGet},
+	}},
+	{ID: "preset_apply", Routes: map[string][]string{
+		"/api/profile-presets": {http.MethodGet}, "/api/profile-presets/preview": {http.MethodPost}, "/api/profile-presets/apply": {http.MethodPost},
+		"/api/lcu/preparation-presets": {http.MethodGet}, "/api/lcu/preparation-presets/apply": {http.MethodPost},
+		"/api/lcu/lobby-presets": {http.MethodGet}, "/api/lcu/lobby-presets/apply": {http.MethodPost},
+	}},
+	{ID: "quick_lobby", Routes: map[string][]string{
+		"/api/lcu/custom-bots": {http.MethodGet, http.MethodPost},
+	}},
+	{ID: "replay_control", Routes: map[string][]string{
+		"/api/lcu/replay":          {http.MethodGet, http.MethodPost},
+		"/api/lcu/replay-status":   {http.MethodGet},
+		"/api/lcu/replay/download": {http.MethodPost},
+		"/api/lcu/replay/watch":    {http.MethodPost},
 	}},
 	{ID: "lobby_control", Routes: map[string][]string{
 		"/api/lcu/lobby": {http.MethodGet}, "/api/lcu/available-queues": {http.MethodGet}, "/api/lcu/create-lobby": {http.MethodPost},

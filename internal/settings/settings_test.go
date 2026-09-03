@@ -85,6 +85,25 @@ func TestVersionOneSettingsBecomeDefaultProfile(t *testing.T) {
 	}
 }
 
+func TestVersionTwoProfilesMigrateLeagueLocale(t *testing.T) {
+	data := []byte(`{"version":2,"profiles":[{"id":"main","name":"Main","status":"chat","defaultGame":"lol","startupStatus":"last","connectToMUC":true,"patchline":"live"}],"activeProfileId":"main"}`)
+	got, err := decodeSettings(data, Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != CurrentVersion || got.ActiveProfile().LeagueLocale != DefaultLeagueLocale {
+		t.Fatalf("v2 migration = %+v", got.ActiveProfile())
+	}
+}
+
+func TestLaunchProfileRejectsUnsupportedLeagueLocale(t *testing.T) {
+	profile := NewProfile("Locale")
+	profile.LeagueLocale = "xx_XX"
+	if err := profile.Validate(); err == nil {
+		t.Fatal("expected unsupported League locale to be rejected")
+	}
+}
+
 func TestLaunchProfileCRUD(t *testing.T) {
 	value := Default()
 	profile := NewProfile("Ranked account")

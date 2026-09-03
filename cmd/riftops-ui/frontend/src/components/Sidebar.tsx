@@ -1,21 +1,23 @@
-import { Activity, Command, Gem, History, PanelLeftClose, PanelLeftOpen, Radar, RadioTower, Settings, Sparkles, Swords, Wand2 } from 'lucide-react';
+import { Activity, Command, Gem, History, PanelLeftClose, PanelLeftOpen, Radar, RadioTower, Settings, Sparkles, Swords, Wand2, Users } from 'lucide-react';
 import { useState } from 'react';
 import type { Tab } from '../types';
 import { tabAvailable } from '../clientCapabilities';
 import HealthIndicator from './HealthIndicator';
 import { livePhaseLabel, normalizeLivePhase } from '../liveSession';
 import { useLCUConnection } from './lcuConnectionContext';
+import { useLocale } from '../localeContext';
 
 const NAV = [
-  { key: 'dashboard' as Tab, icon: Radar, label: 'Command Center', hint: 'Readiness and launch', group: 'operate' },
-  { key: 'play' as Tab, icon: Swords, label: 'Play Flow', hint: 'Prepare matchmaking', group: 'operate' },
-  { key: 'live' as Tab, icon: Activity, label: 'Live Session', hint: 'Follow the current game', group: 'operate' },
-  { key: 'history' as Tab, icon: History, label: 'Match History', hint: 'Review performance', group: 'review' },
-  { key: 'skins' as Tab, icon: Sparkles, label: 'Collection', hint: 'Skins and profile studio', group: 'review' },
-  { key: 'loot' as Tab, icon: Gem, label: 'Loot Workshop', hint: 'Inventory and crafting', group: 'review' },
-  { key: 'qol' as Tab, icon: Wand2, label: 'Quality of Life', hint: 'Client utilities', group: 'system' },
-  { key: 'remote' as Tab, icon: RadioTower, label: 'Remote Access', hint: 'Pair and manage phones', group: 'system' },
-  { key: 'settings' as Tab, icon: Settings, label: 'Settings', hint: 'Application preferences', group: 'system' },
+  { key: 'dashboard' as Tab, icon: Radar, label: 'Command Center', mobileLabel: 'Home', hint: 'Readiness and launch', group: 'operate' },
+  { key: 'play' as Tab, icon: Swords, label: 'Play Flow', mobileLabel: 'Play', hint: 'Prepare matchmaking', group: 'operate' },
+  { key: 'live' as Tab, icon: Activity, label: 'Live Session', mobileLabel: 'Live', hint: 'Follow the current game', group: 'operate' },
+  { key: 'social' as Tab, icon: Users, label: 'Social Center', mobileLabel: 'Social', hint: 'Friends and invitations', group: 'operate' },
+  { key: 'history' as Tab, icon: History, label: 'Match History', mobileLabel: 'History', hint: 'Review performance', group: 'review' },
+  { key: 'skins' as Tab, icon: Sparkles, label: 'Collection', mobileLabel: 'Skins', hint: 'Skins and profile studio', group: 'review' },
+  { key: 'loot' as Tab, icon: Gem, label: 'Loot Workshop', mobileLabel: 'Loot', hint: 'Inventory and crafting', group: 'review' },
+  { key: 'qol' as Tab, icon: Wand2, label: 'Quality of Life', mobileLabel: 'Tools', hint: 'Client utilities', group: 'system' },
+  { key: 'remote' as Tab, icon: RadioTower, label: 'Remote Access', mobileLabel: 'Phone', hint: 'Pair and manage phones', group: 'system' },
+  { key: 'settings' as Tab, icon: Settings, label: 'Settings', mobileLabel: 'Settings', hint: 'Application preferences', group: 'system' },
 ];
 
 export default function Sidebar({
@@ -35,6 +37,7 @@ export default function Sidebar({
     try { return localStorage.getItem('riftops.sidebarCollapsed') === 'true'; } catch { return false; }
   });
   const { qol, stale } = useLCUConnection();
+  const { t } = useLocale();
   const sessionPhase = normalizeLivePhase(qol?.phase, qol?.queueState);
   const isLive = sessionPhase !== 'IDLE' || (phase !== 'idle' && phase !== 'error');
   const visibleNav = NAV.filter((item) => tabAvailable(item.key, remoteClient));
@@ -45,6 +48,10 @@ export default function Sidebar({
     return next;
   });
 
+  const translatedLabel = (key: Tab, fallback: string) => {
+    const map: Partial<Record<Tab, string>> = { dashboard: 'nav.command', play: 'nav.play', live: 'nav.live', social: 'nav.social', history: 'nav.history', skins: 'nav.skins', loot: 'nav.loot', qol: 'nav.qol', remote: 'nav.remote', settings: 'nav.settings' };
+    return map[key] ? t(map[key]!) : fallback;
+  };
   const renderNavItem = (item: typeof NAV[number]) => {
     const active = activeTab === item.key;
     const Icon = item.icon;
@@ -58,8 +65,9 @@ export default function Sidebar({
       >
         <span className="app-sidebar__item-icon"><Icon /></span>
         <span className="app-sidebar__item-copy">
-          <strong>{item.label}</strong>
-          <small>{item.hint}</small>
+          <strong>{translatedLabel(item.key, item.label)}</strong>
+          <span className="app-sidebar__item-mobile-label" aria-hidden="true">{item.mobileLabel}</span>
+          <small>{item.key === 'social' ? t('nav.socialHint') : item.hint}</small>
         </span>
         {item.key === 'live' && <span className={`app-sidebar__live-badge ${stale ? 'is-stale' : ''}`}>{stale ? 'Retrying' : livePhaseLabel(sessionPhase)}</span>}
         {active && <span className="app-sidebar__active-dot" />}

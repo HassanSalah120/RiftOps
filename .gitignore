@@ -2,6 +2,7 @@
 /dist/
 /riftops-ui.exe
 /rsrc_windows_amd64.syso
+/cmd/riftops-ui/rsrc_windows_*.syso
 /s
 
 # Frontend dependencies and output

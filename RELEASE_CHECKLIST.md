@@ -17,7 +17,7 @@ League Client.
 ## Packaging
 
 1. Confirm the intended version in [`VERSION`](VERSION).
-2. Windows: install MinGW-w64 and Fyne, then run
+2. Windows: install MinGW-w64 and `go-winres`, then run
    `./scripts/build-windows.ps1 -Build <build>`.
 3. macOS: install Xcode command-line tools and Fyne, then run
    `bash ./scripts/build-macos.sh`.

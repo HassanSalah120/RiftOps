@@ -46,11 +46,11 @@ jobs:
           cache: npm
           cache-dependency-path: cmd/riftops-ui/frontend/package-lock.json
 
-      - name: Install MinGW and Fyne packaging CLI
+      - name: Install MinGW and Windows resource tool
         shell: pwsh
         run: |
           choco install mingw --no-progress -y
-          go install fyne.io/tools/cmd/fyne@v1.7.2
+          go install github.com/tc-hib/go-winres@v0.3.3
 
       - name: Build and verify Windows executable
         shell: pwsh

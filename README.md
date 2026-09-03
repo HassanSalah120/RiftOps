@@ -9,6 +9,10 @@ argument is omitted.
 Download links and Windows signing details are in [Downloads](DOWNLOADS.md).
 See the [Privacy Policy](PRIVACY.md) for local storage, Riot-service requests,
 and optional LAN phone control.
+The competitor feature inventory and planned safe additions are in
+[Feature comparison and roadmap](COMPETITOR_COMPARISON.md).
+The implemented safe feature contract and desktop/phone boundaries are in
+[SAFE_FEATURES.md](SAFE_FEATURES.md).
 
 ## Start here
 
@@ -40,13 +44,16 @@ Client location**, then use **Browse**, **Auto-detect**, or paste the `.app`
 path. RiftOps validates the selection and stores the resolved executable in
 `settings.json`.
 
-There is no Riot password field in RiftOps. Riot Client handles your normal
-sign-in and remembers your session as usual.
+There is no Riot password field in RiftOps. Riot Client handles the initial
+sign-in. You can then save the active Riot login to a named launch profile for
+30 days. Launching another saved profile closes Riot Client, restores that
+profile's encrypted local session, and starts Riot again without a password
+prompt. If the saved session is missing or expired, Riot shows its normal
+sign-in screen and you can save the refreshed session afterward.
 
-RiftOps does not currently provide a cross-platform account/session switcher.
-The saved-session vault is Windows-only and protected by Windows DPAPI; macOS
-does not persist Riot credentials or session tokens. On every platform, normal
-authentication remains owned by Riot Client.
+Saved sessions are protected with Windows DPAPI on Windows and the macOS
+Keychain on macOS. RiftOps never stores a Riot password, and session data stays
+on the local machine.
 
 ### macOS first launch
 
@@ -220,11 +227,16 @@ go vet ./...
 go run ./cmd/riftops --help
 ```
 
-The native desktop application uses Fyne and CGO. Windows requires MinGW-w64;
-macOS requires Xcode command-line tools. Install the packaging CLI with:
+The native desktop application uses Fyne and CGO. Windows requires MinGW-w64
+and `go-winres`; macOS requires Xcode command-line tools and the Fyne packaging
+CLI:
+
+```powershell
+go install github.com/tc-hib/go-winres@v0.3.3
+```
 
 ```sh
-go install fyne.io/tools/cmd/fyne@v1.7.2
+go install fyne.io/tools/cmd/fyne@v1.7.2 # macOS packaging
 ```
 
 Build a native package:

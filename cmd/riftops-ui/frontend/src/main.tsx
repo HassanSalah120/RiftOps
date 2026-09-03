@@ -4,11 +4,14 @@ import './index.css'
 import './design-system.css'
 import App from './App.tsx'
 import { LCUConnectionProvider } from './components/LCUProvider'
+import { LocaleProvider } from './locale'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <LCUConnectionProvider>
-      <App />
-    </LCUConnectionProvider>
+    <LocaleProvider>
+      <LCUConnectionProvider>
+        <App />
+      </LCUConnectionProvider>
+    </LocaleProvider>
   </StrictMode>,
 )

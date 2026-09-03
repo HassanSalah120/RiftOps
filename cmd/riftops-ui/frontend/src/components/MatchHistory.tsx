@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog, fetchLCUProfile, fetchRiotMatchIDs, fetchRiotMatch } from '../api';
+import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog, fetchLCUProfile, fetchRiotMatchIDs, fetchRiotMatch, fetchLCUReplay, replayAction } from '../api';
 import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download, Coins, Crosshair, Target, Trophy, Users } from 'lucide-react';
 import PageHeader from './PageHeader';
 import { RiotAssetImage } from '../riotAssets';
@@ -237,7 +237,7 @@ function MatchDetails({ match, detail, loading, player, queueName, championName,
   );
 }
 
-export default function MatchHistory() {
+export default function MatchHistory({ remoteClient = false }: { remoteClient?: boolean }) {
   const showLegacyMatchDetails = false;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -256,6 +256,8 @@ export default function MatchHistory() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [paginationError, setPaginationError] = useState('');
   const [dataSource, setDataSource] = useState<'LCU' | 'Riot API'>('LCU');
+  const [replayStatus, setReplayStatus] = useState<Record<number, any>>({});
+  const [replayBusy, setReplayBusy] = useState<number | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -361,6 +363,24 @@ export default function MatchHistory() {
       setLoadingDetail(null);
     }
   }, [expandedId, gameDetails]);
+
+  const handleReplay = async (gameId: number, action?: 'download' | 'watch') => {
+    if (!gameId) return;
+    setReplayBusy(gameId);
+    try {
+      if (!action) {
+        const status = await fetchLCUReplay(gameId);
+        setReplayStatus((current) => ({ ...current, [gameId]: status }));
+        return;
+      }
+      if (action === 'watch' && remoteClient && !window.confirm(`Watch replay for Game ID ${gameId}?`)) return;
+      await replayAction(gameId, action);
+      const status = await fetchLCUReplay(gameId).catch(() => null);
+      if (status) setReplayStatus((current) => ({ ...current, [gameId]: status }));
+    } catch (reason: any) {
+      setReplayStatus((current) => ({ ...current, [gameId]: { status: 'failed', error: reason?.message || 'Replay action failed.' } }));
+    } finally { setReplayBusy(null); }
+  };
 
   // Robust timestamp parser for LCU games
   const getMatchTimestamp = (g: any): number => {
@@ -720,6 +740,10 @@ export default function MatchHistory() {
                     {/* Right: Items Build Slots & Drawer Toggle */}
                     <div className="history-match__loadout flex items-center gap-3 shrink-0">
                       <ItemStrip stats={stats} assets={assets} compact />
+
+                      <div className="history-match__replay" onClick={(event) => event.stopPropagation()}>
+                        {replayStatus[Number(gameId)]?.status === 'ready' ? <button type="button" className="btn-secondary" onClick={() => void handleReplay(Number(gameId), 'watch')} disabled={replayBusy === Number(gameId)}>Watch</button> : <button type="button" className="btn-secondary" onClick={() => void handleReplay(Number(gameId), 'download')} disabled={replayBusy === Number(gameId)}>{replayBusy === Number(gameId) ? <Loader2 className="animate-spin" /> : <Download />} {replayStatus[Number(gameId)]?.status === 'downloading' ? 'Downloading…' : 'Replay'}</button>}
+                      </div>
 
                       <button className="text-text-dim hover:text-white transition">
                         {isExpanded ? <ChevronUp className="w-4 h-4 text-primary" /> : <ChevronDown className="w-4 h-4" />}

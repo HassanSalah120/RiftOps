@@ -24,6 +24,7 @@ import ChampSelectWorkspace from './ChampSelectWorkspace';
 import FriendsPanel from './FriendsPanel';
 import type { ConfirmAction } from '../types';
 import { useLCUConnection } from './lcuConnectionContext';
+import SafeToolsPanel from './SafeToolsPanel';
 
 const ROLE_OPTIONS = [
   ['TOP', 'Top'],
@@ -646,7 +647,7 @@ export default function QoLPanel() {
               <input
                 id="qol-status-message"
                 value={statusMessage}
-                maxLength={128}
+                maxLength={255}
                 disabled={!connected}
                 placeholder="What should friends see?"
                 onChange={(event) => setStatusMessage(event.target.value)}
@@ -669,7 +670,7 @@ export default function QoLPanel() {
                 Update
               </ActionButton>
             </div>
-            <small className="qol-character-count">{statusMessage.length}/128</small>
+            <small className="qol-character-count">{statusMessage.length}/255</small>
           </div>
         </Panel>
 
@@ -796,6 +797,7 @@ export default function QoLPanel() {
           )}
         </Panel>
       </div>
+      <SafeToolsPanel />
     </div>
   );
 }

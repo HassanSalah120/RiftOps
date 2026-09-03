@@ -84,6 +84,24 @@ func TestExpiredLoginIsNotRestored(t *testing.T) {
 	}
 }
 
+func TestClearActiveSession(t *testing.T) {
+	dataDir := t.TempDir()
+	path := filepath.Join(dataDir, privateSettingsFile)
+	if err := os.WriteFile(path, []byte("session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}}
+	if err := vault.ClearActiveSession(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("session file still exists, error = %v", err)
+	}
+	if err := vault.ClearActiveSession(); err != nil {
+		t.Fatalf("clearing an already-empty session should be idempotent: %v", err)
+	}
+}
+
 func TestRefreshIfEnrolledKeepsProfilesIsolatedAndRenewsExpiry(t *testing.T) {
 	dataDir := t.TempDir()
 	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}}

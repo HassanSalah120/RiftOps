@@ -13,7 +13,7 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/model"
 )
 
-const CurrentVersion = 2
+const CurrentVersion = 3
 
 type StartupStatus string
 
@@ -157,6 +157,16 @@ func decodeSettings(data []byte, defaults Settings) (Settings, error) {
 		result.Version = CurrentVersion
 		result.ActiveProfileID = DefaultProfileID
 		result.Profiles = []LaunchProfile{profileFromSettings(result, DefaultProfileID, "Default")}
+	}
+	if result.Version == 2 {
+		// Version 3 adds a validated per-profile League locale. Existing
+		// profiles intentionally keep the automatic locale selection.
+		result.Version = CurrentVersion
+		for index := range result.Profiles {
+			if strings.TrimSpace(result.Profiles[index].LeagueLocale) == "" {
+				result.Profiles[index].LeagueLocale = DefaultLeagueLocale
+			}
+		}
 	}
 	if result.Version != CurrentVersion {
 		return Settings{}, fmt.Errorf("unsupported settings version %d", result.Version)

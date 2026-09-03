@@ -83,6 +83,28 @@ func TestAPIHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("GET /api/profiles/session-status", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "/api/profiles/session-status", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rr := httptest.NewRecorder()
+		handler := http.HandlerFunc(getProfileSessionStatuses)
+		handler.ServeHTTP(rr, req)
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+		}
+		var statuses map[string]struct {
+			Saved bool `json:"saved"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&statuses); err != nil {
+			t.Fatalf("failed to decode profile session statuses: %v", err)
+		}
+		if len(statuses) == 0 {
+			t.Fatal("expected a status entry for the default profile")
+		}
+	})
+
 	t.Run("POST /api/save-profile", func(t *testing.T) {
 		newProfile := settings.NewProfile("Test Profile")
 		newProfile.ID = ""
