@@ -62,7 +62,7 @@ jobs:
         run: bash ./scripts/build-macos.sh "${{ steps.release.outputs.version }}" "${{ github.run_number }}"
 
       - name: Preserve macOS ZIP as a workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: RiftOps-macOS-${{ steps.release.outputs.tag }}
           path: |

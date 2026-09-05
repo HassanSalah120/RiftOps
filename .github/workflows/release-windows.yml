@@ -67,7 +67,7 @@ jobs:
 
       - name: Preserve unsigned executable
         id: upload-unsigned
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: RiftOps-Windows-${{ steps.release.outputs.tag }}-unsigned
           path: dist/RiftOps-${{ steps.release.outputs.version }}-win-x64.exe
@@ -122,7 +122,7 @@ jobs:
           }
 
       - name: Preserve Windows release files as a workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: RiftOps-Windows-${{ steps.release.outputs.tag }}
           path: |
