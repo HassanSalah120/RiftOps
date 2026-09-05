@@ -50,7 +50,13 @@ function assetPath(path?: string): string {
 }
 
 function plainText(value?: string): string {
-  return String(value || '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  let text = String(value || '').replace(/<br\s*\/?>/gi, ' ');
+  let previous: string;
+  do {
+    previous = text;
+    text = text.replace(/<[^>]+>/g, '');
+  } while (text !== previous);
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 function RuneChoice({ perk, selected, disabled, onClick }: { perk?: LCURunePerk; selected: boolean; disabled?: boolean; onClick: () => void }) {

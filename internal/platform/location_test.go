@@ -37,3 +37,16 @@ func TestResolveRiotClientExecutableRejectsUnrelatedFile(t *testing.T) {
 		t.Fatal("expected unrelated executable to be rejected")
 	}
 }
+
+func TestResolveRiotClientExecutableRejectsTraversal(t *testing.T) {
+	for _, invalid := range []string{
+		"../RiotClientServices.exe",
+		"foo/../../bar",
+		"path\x00withnull",
+	} {
+		if _, err := ResolveRiotClientExecutable(invalid); err == nil {
+			t.Fatalf("expected candidate %q to be rejected", invalid)
+		}
+	}
+}
+

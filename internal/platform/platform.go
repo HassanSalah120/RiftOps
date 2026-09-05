@@ -27,7 +27,14 @@ func ResolveRiotClientExecutable(candidate string) (string, error) {
 	if candidate == "" {
 		return "", fmt.Errorf("Riot Client location is empty")
 	}
-	absolute, err := filepath.Abs(filepath.Clean(candidate))
+	if strings.Contains(candidate, "\x00") || strings.Contains(candidate, "..") {
+		return "", fmt.Errorf("invalid Riot Client location: path traversal is not permitted")
+	}
+	clean := filepath.Clean(candidate)
+	if strings.HasPrefix(clean, "..") {
+		return "", fmt.Errorf("invalid Riot Client location: directory traversal is not permitted")
+	}
+	absolute, err := filepath.Abs(clean)
 	if err != nil {
 		return "", fmt.Errorf("resolve Riot Client location: %w", err)
 	}

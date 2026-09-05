@@ -881,7 +881,12 @@ func riotClientLocationHandler(w http.ResponseWriter, r *http.Request) {
 			httpError(w, "Enter a valid Riot Client or League application location", http.StatusBadRequest)
 			return
 		}
-		resolved, err := backendEngine.SaveRiotClientPath(body.Path)
+		candidate := strings.TrimSpace(body.Path)
+		if strings.Contains(candidate, "\x00") || strings.Contains(candidate, "..") {
+			httpError(w, "Invalid path: directory traversal is not permitted", http.StatusBadRequest)
+			return
+		}
+		resolved, err := backendEngine.SaveRiotClientPath(candidate)
 		if err != nil {
 			httpError(w, "No launchable Riot Client was found at that location", http.StatusUnprocessableEntity)
 			slog.Info("manual Riot Client location rejected", "error", err)
