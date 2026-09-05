@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -18,43 +18,55 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="alternate icon" type="image/x-icon" href="favicon.ico" />
 
-  <!-- Google Fonts: Inter & Outfit -->
+  <!-- Google Fonts: Inter & Outfit & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800;900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-  <!-- Ambient Glow Backgrounds -->
-  <div class="glow glow-top" aria-hidden="true"></div>
-  <div class="glow glow-right" aria-hidden="true"></div>
+  <!-- Cybernetic Grid & Ambient Light Canvas -->
+  <div class="cyber-grid" aria-hidden="true"></div>
+  <div class="glow glow-cyan" aria-hidden="true"></div>
+  <div class="glow glow-gold" aria-hidden="true"></div>
+  <div class="glow glow-purple" aria-hidden="true"></div>
+
+  <!-- Top Ambient Beam -->
+  <div class="top-beam" aria-hidden="true"></div>
 
   <!-- Header Navigation -->
   <header class="site-header">
-    <div class="container header-inner">
-      <a href="#" class="brand">
-        <img src="assets/branding/riftops-logo.png" alt="RiftOps Emblem" class="brand-crest" width="32" height="32" />
-        <span class="brand-name">RiftOps</span>
-      </a>
-
-      <nav class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#showcase">Showcase</a>
-        <a href="#safety">Ban-Safety</a>
-        <a href="#phone">Phone Control</a>
-        <a href="#faq">FAQ</a>
-      </nav>
-
-      <div class="header-actions">
-        <a href="https://github.com/HassanSalah120/RiftOps" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-icon" title="View GitHub Repository">
-          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-          </svg>
-          <span>Star on GitHub</span>
+    <div class="container">
+      <div class="header-floating-pill">
+        <a href="#" class="brand">
+          <div class="brand-crest-wrap">
+            <img src="assets/branding/riftops-logo.png" alt="RiftOps Emblem" class="brand-crest" width="30" height="30" />
+          </div>
+          <span class="brand-name">RiftOps</span>
         </a>
-        <a href="#download" class="btn btn-primary">Download v2.8.0</a>
+
+        <nav class="nav-links">
+          <a href="#features">Features</a>
+          <a href="#showcase">Showcase</a>
+          <a href="#safety">Ban-Safety</a>
+          <a href="#phone">Phone Control</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+
+        <div class="header-actions">
+          <a href="https://github.com/HassanSalah120/RiftOps" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-icon" title="View GitHub Repository">
+            <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+            </svg>
+            <span>Star</span>
+          </a>
+          <a href="#download" class="btn btn-primary">
+            <span>Download</span>
+            <span class="pill-badge">v2.8.0</span>
+          </a>
+        </div>
       </div>
     </div>
   </header>
@@ -64,45 +76,89 @@
     <div class="container hero-inner">
       <div class="badge-pill">
         <span class="badge-dot"></span>
-        <span>100% Ban-Safe • Zero Memory Hooking • Local-First</span>
+        <span class="badge-text">100% Ban-Safe • Zero Memory Hooking • Local-First</span>
       </div>
 
-      <h1 class="hero-title">The Modern League <br /><span class="text-gold">Operations Deck</span></h1>
+      <h1 class="hero-title">
+        The Modern League <br />
+        <span class="text-gradient-gold">Operations Deck</span>
+      </h1>
 
       <p class="hero-subtitle">
-        Launch Riot titles, explore your entire 1,940+ skin collection, automate grind workflows, track real-time match telemetry, and manage champion select from your smartphone.
+        Launch Riot titles, explore your entire 1,940+ skin collection, automate grind workflows, track real-time match telemetry, and manage champion select straight from your smartphone.
       </p>
 
       <div class="hero-cta-group">
-        <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-primary btn-large">
-          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.401H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
-          </svg>
-          <span>Download for Windows</span>
-          <span class="btn-subtext">64-bit • Free & Open Source</span>
+        <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-primary btn-large shimmer">
+          <div class="btn-content-left">
+            <svg class="icon-lg" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.401H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+            </svg>
+          </div>
+          <div class="btn-content-right">
+            <span class="btn-headline">Download for Windows</span>
+            <span class="btn-subtext">Windows 10 / 11 • 64-bit Native</span>
+          </div>
         </a>
 
         <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-secondary btn-large">
-          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 4.54c.64-.78 1.08-1.87.96-2.96-1.02.04-2.22.68-2.92 1.5-.61.71-1.15 1.83-1.01 2.91 1.13.09 2.33-.67 2.97-1.45z"/>
-          </svg>
-          <span>Download for macOS</span>
-          <span class="btn-subtext">Universal • Apple Silicon & Intel</span>
+          <div class="btn-content-left">
+            <svg class="icon-lg" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 4.54c.64-.78 1.08-1.87.96-2.96-1.02.04-2.22.68-2.92 1.5-.61.71-1.15 1.83-1.01 2.91 1.13.09 2.33-.67 2.97-1.45z"/>
+            </svg>
+          </div>
+          <div class="btn-content-right">
+            <span class="btn-headline">Download for macOS</span>
+            <span class="btn-subtext">Apple Silicon & Intel Universal</span>
+          </div>
         </a>
       </div>
 
-      <!-- App Preview Frame -->
-      <div class="hero-preview-frame">
-        <div class="frame-bar">
-          <div class="frame-dots">
-            <span class="dot red"></span>
-            <span class="dot yellow"></span>
-            <span class="dot green"></span>
-          </div>
-          <div class="frame-title">RiftOps — Command Center</div>
+      <!-- Quick Metrics Strip -->
+      <div class="hero-stats">
+        <div class="stat-item">
+          <span class="stat-number">1,940+</span>
+          <span class="stat-label">Skins & Chromas</span>
         </div>
-        <div class="frame-image-wrap">
-          <img src="assets/screenshots/command-center.png" alt="RiftOps Command Center" class="frame-image" loading="eager" />
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <span class="stat-number">0 MB</span>
+          <span class="stat-label">Memory Injected</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <span class="stat-number">100%</span>
+          <span class="stat-label">Vanguard Safe</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <span class="stat-number">&lt; 5ms</span>
+          <span class="stat-label">Local Latency</span>
+        </div>
+      </div>
+
+      <!-- App Preview Frame with Glow Aura -->
+      <div class="hero-preview-wrapper">
+        <div class="frame-ambient-glow"></div>
+        <div class="hero-preview-frame">
+          <div class="frame-bar">
+            <div class="frame-dots">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+            </div>
+            <div class="frame-title">
+              <span class="frame-title-tag">SECURE DECK</span>
+              <span>RiftOps — Command Center Hub</span>
+            </div>
+            <div class="frame-status">
+              <span class="live-pulse"></span>
+              <span>LOCAL LINK</span>
+            </div>
+          </div>
+          <div class="frame-image-wrap">
+            <img src="assets/screenshots/command-center.png" alt="RiftOps Command Center" class="frame-image" loading="eager" />
+          </div>
         </div>
       </div>
     </div>
@@ -119,37 +175,55 @@
 
       <div class="pillars-grid">
         <div class="pillar-card">
-          <div class="pillar-icon text-teal">🛡️</div>
+          <div class="pillar-top-row">
+            <div class="pillar-icon-box cyan-glow">🛡️</div>
+            <span class="pillar-tag cyan">VANGUARD COMPLIANT</span>
+          </div>
           <h3>100% Ban-Safe & Memory-Free</h3>
-          <p>Operates exclusively via Riot’s official LCU API and Live Game Client Data API (<code>127.0.0.1:2999</code>). Never touches game process memory, never injects DLLs, completely Vanguard-compliant.</p>
+          <p>Operates exclusively via Riot’s official LCU API and Live Game Client Data API (<code>127.0.0.1:2999</code>). Never touches game process memory, never injects DLLs, completely Vanguard-safe.</p>
         </div>
 
         <div class="pillar-card">
-          <div class="pillar-icon text-gold">🚀</div>
+          <div class="pillar-top-row">
+            <div class="pillar-icon-box gold-glow">🚀</div>
+            <span class="pillar-tag gold">DPAPI SECURED</span>
+          </div>
           <h3>Multi-Game Launchpad</h3>
-          <p>1-click launch for League of Legends, VALORANT, Legends of Runeterra, 2XKO, and Riot Client with DPAPI-encrypted multi-account switching.</p>
+          <p>1-click launch for League of Legends, VALORANT, Legends of Runeterra, 2XKO, and Riot Client with hardware-encrypted multi-account profile switching.</p>
         </div>
 
         <div class="pillar-card">
-          <div class="pillar-icon text-teal">🎭</div>
+          <div class="pillar-top-row">
+            <div class="pillar-icon-box emerald-glow">🎭</div>
+            <span class="pillar-tag emerald">ANTI-STREAM SNIPE</span>
+          </div>
           <h3>Streamer Privacy Shield</h3>
           <p>One toggle anonymizes summoner names, Riot IDs, and friend identities with lore-friendly Piltover/Zaun aliases across all screens to prevent stream sniping.</p>
         </div>
 
         <div class="pillar-card">
-          <div class="pillar-icon text-gold">💎</div>
+          <div class="pillar-top-row">
+            <div class="pillar-icon-box purple-glow">💎</div>
+            <span class="pillar-tag purple">DDRAGON CACHED</span>
+          </div>
           <h3>Cosmetic Vault & Skin Studio</h3>
           <p>Explore all 1,940+ skins with real ownership indicators, splash artwork, chromas, and craftable shard inventory tracking.</p>
         </div>
 
         <div class="pillar-card">
-          <div class="pillar-icon text-teal">🤖</div>
+          <div class="pillar-top-row">
+            <div class="pillar-icon-box cyan-glow">🤖</div>
+            <span class="pillar-tag cyan">AUTO-PILOT</span>
+          </div>
           <h3>Grind Mode Automations</h3>
           <p>Automate repetitive client tasks: auto-accept queue pops, auto-return to lobby post-match, auto-honor teammates, and claim battle pass milestones.</p>
         </div>
 
         <div class="pillar-card">
-          <div class="pillar-icon text-gold">📱</div>
+          <div class="pillar-top-row">
+            <div class="pillar-icon-box gold-glow">📱</div>
+            <span class="pillar-tag gold">P2P LOCAL LAN</span>
+          </div>
           <h3>Zero-Cloud Phone Companion</h3>
           <p>Pair your smartphone over local home Wi-Fi with a 5-minute single-use QR code. Accept queues and lock champion hovers from anywhere in your house.</p>
         </div>
@@ -405,28 +479,78 @@
           <tbody>
             <tr>
               <td><strong>Process Memory Access</strong></td>
-              <td class="text-danger">Attaches to game process; reads/writes RAM</td>
-              <td class="text-success"><strong>Zero memory access.</strong> Never attaches to <code>League of Legends.exe</code>.</td>
+              <td>
+                <div class="threat-badge">
+                  <span class="badge-icon">✕</span>
+                  <span>Attaches to game process; reads/writes RAM</span>
+                </div>
+              </td>
+              <td>
+                <div class="safe-badge">
+                  <span class="badge-icon">✓</span>
+                  <span><strong>Zero memory access.</strong> Never attaches to <code>League of Legends.exe</code></span>
+                </div>
+              </td>
             </tr>
             <tr>
               <td><strong>GPU & DirectX Hooking</strong></td>
-              <td class="text-danger">Injects overlays into DirectX/Vulkan pipelines</td>
-              <td class="text-success"><strong>Standalone desktop app.</strong> Uses native OS windowing with zero GPU hooking.</td>
+              <td>
+                <div class="threat-badge">
+                  <span class="badge-icon">✕</span>
+                  <span>Injects overlays into DirectX/Vulkan pipelines</span>
+                </div>
+              </td>
+              <td>
+                <div class="safe-badge">
+                  <span class="badge-icon">✓</span>
+                  <span><strong>Standalone desktop app.</strong> Uses native OS windowing with zero GPU hooking</span>
+                </div>
+              </td>
             </tr>
             <tr>
               <td><strong>Client DOM Injection</strong></td>
-              <td class="text-danger">Injects custom JS/CSS via Pengu Loader</td>
-              <td class="text-success"><strong>Zero client modification.</strong> Interacts only through official LCU HTTP/WebSocket APIs.</td>
+              <td>
+                <div class="threat-badge">
+                  <span class="badge-icon">✕</span>
+                  <span>Injects custom JS/CSS via Pengu Loader</span>
+                </div>
+              </td>
+              <td>
+                <div class="safe-badge">
+                  <span class="badge-icon">✓</span>
+                  <span><strong>Zero client modification.</strong> Interacts only through official LCU HTTP/WebSocket APIs</span>
+                </div>
+              </td>
             </tr>
             <tr>
               <td><strong>Credential Safety</strong></td>
-              <td class="text-danger">Stores plaintext passwords or transmits tokens to cloud</td>
-              <td class="text-success"><strong>Zero password storage.</strong> Protected by local Windows DPAPI / macOS Keychain.</td>
+              <td>
+                <div class="threat-badge">
+                  <span class="badge-icon">✕</span>
+                  <span>Stores plaintext passwords or transmits tokens to cloud</span>
+                </div>
+              </td>
+              <td>
+                <div class="safe-badge">
+                  <span class="badge-icon">✓</span>
+                  <span><strong>Zero password storage.</strong> Protected by local Windows DPAPI / macOS Keychain</span>
+                </div>
+              </td>
             </tr>
             <tr>
               <td><strong>Network Privacy</strong></td>
-              <td class="text-danger">Sends game telemetry to third-party ad servers</td>
-              <td class="text-success"><strong>100% Local Loopback.</strong> All operations stay strictly on your personal PC.</td>
+              <td>
+                <div class="threat-badge">
+                  <span class="badge-icon">✕</span>
+                  <span>Sends game telemetry to third-party ad servers</span>
+                </div>
+              </td>
+              <td>
+                <div class="safe-badge">
+                  <span class="badge-icon">✓</span>
+                  <span><strong>100% Local Loopback.</strong> All operations stay strictly on your personal PC</span>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -441,38 +565,66 @@
         <span class="kicker">LOCAL WI-FI CONNECTIVITY</span>
         <h2>Never Miss a Queue Pop Again</h2>
         <p>
-          Need to grab a glass of water or stretch between games? Pull out your phone and manage matchmaking from the kitchen.
+          Need to grab a glass of water or stretch between games? Pull out your phone and manage matchmaking from anywhere on your home network.
         </p>
         <ol class="step-list">
-          <li><strong>Open Remote Access</strong> in the RiftOps desktop deck.</li>
-          <li><strong>Click Turn on</strong> to start the secure local network listener.</li>
-          <li><strong>Scan the QR code</strong> with your phone's camera.</li>
-          <li><strong>Accept queues and lock champions</strong> right from your mobile browser.</li>
+          <li>
+            <div class="step-num">01</div>
+            <div class="step-text"><strong>Open Remote Access</strong> in the RiftOps desktop deck.</div>
+          </li>
+          <li>
+            <div class="step-num">02</div>
+            <div class="step-text"><strong>Click Turn on</strong> to launch the ephemeral LAN listener.</div>
+          </li>
+          <li>
+            <div class="step-num">03</div>
+            <div class="step-text"><strong>Scan the QR code</strong> with your phone's camera.</div>
+          </li>
+          <li>
+            <div class="step-num">04</div>
+            <div class="step-text"><strong>Accept queues and lock champions</strong> right from your mobile browser.</div>
+          </li>
         </ol>
       </div>
       <div class="phone-diagram-card">
+        <div class="diagram-glow-orb"></div>
         <div class="diagram-node">
-          <span class="node-icon">📱</span>
-          <strong>Mobile Device</strong>
-          <small>Phone / Tablet Browser</small>
+          <div class="node-icon-box">📱</div>
+          <div class="node-details">
+            <strong>Mobile Device</strong>
+            <small>Phone / Tablet Web App</small>
+          </div>
+          <span class="node-chip">CLIENT</span>
         </div>
         <div class="diagram-arrow">
-          <span>Local Home Wi-Fi (HTTP)</span>
+          <div class="arrow-ping-pill">
+            <span class="ping-dot"></span>
+            <span>Local Home Wi-Fi (HTTP)</span>
+          </div>
+          <div class="arrow-line"></div>
+        </div>
+        <div class="diagram-node active-node">
+          <div class="node-icon-box">💻</div>
+          <div class="node-details">
+            <strong>RiftOps Desktop Hub</strong>
+            <small>Port 24080 (Single-Use Token)</small>
+          </div>
+          <span class="node-chip gold">ACTIVE</span>
+        </div>
+        <div class="diagram-arrow">
+          <div class="arrow-ping-pill">
+            <span class="ping-dot cyan"></span>
+            <span>Local Loopback LCU API</span>
+          </div>
           <div class="arrow-line"></div>
         </div>
         <div class="diagram-node">
-          <span class="node-icon">💻</span>
-          <strong>RiftOps Desktop</strong>
-          <small>Port 24080 (Local-First)</small>
-        </div>
-        <div class="diagram-arrow">
-          <span>Loopback LCU API</span>
-          <div class="arrow-line"></div>
-        </div>
-        <div class="diagram-node">
-          <span class="node-icon">🎮</span>
-          <strong>League Client</strong>
-          <small>Official Riot LCU Endpoint</small>
+          <div class="node-icon-box">🎮</div>
+          <div class="node-details">
+            <strong>League Client</strong>
+            <small>Official Riot LCU Endpoint</small>
+          </div>
+          <span class="node-chip">ENDPOINT</span>
         </div>
       </div>
     </div>
@@ -491,13 +643,13 @@
         <!-- Windows Card -->
         <div class="download-card featured">
           <div class="card-badge">RECOMMENDED</div>
-          <div class="download-icon">🪟</div>
+          <div class="download-icon-box gold-glow">🪟</div>
           <h3>Windows Desktop</h3>
           <p>For Windows 10 and Windows 11 (64-bit)</p>
           <div class="card-specs">
             <span>v2.8.0</span> • <span>WebView2 Native</span> • <span>Portable Executable</span>
           </div>
-          <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-primary btn-full">
+          <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-primary btn-full shimmer">
             Download for Windows (.exe)
           </a>
           <small class="card-note">Includes custom Hextech frameless titlebar and system tray companion.</small>
@@ -505,7 +657,7 @@
 
         <!-- macOS Card -->
         <div class="download-card">
-          <div class="download-icon">🍎</div>
+          <div class="download-icon-box cyan-glow">🍎</div>
           <h3>macOS Desktop</h3>
           <p>For macOS 12 Monterey and newer</p>
           <div class="card-specs">
