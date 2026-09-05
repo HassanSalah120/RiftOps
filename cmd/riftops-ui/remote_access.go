@@ -295,8 +295,29 @@ func (m *remoteAccessManager) status(remote bool) remoteAccessStatus {
 	return result
 }
 
+func isPublicPWAPath(path string) bool {
+	switch path {
+	case "/manifest.webmanifest", "/manifest.json", "/sw.js",
+		"/favicon.ico", "/favicon.svg", "/apple-touch-icon.png",
+		"/icon-192.png", "/icon-256.png", "/icon-384.png", "/icon-512.png",
+		"/favicon-16x16.png", "/favicon-32x32.png":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *remoteAccessManager) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isPublicPWAPath(r.URL.Path) {
+			if r.URL.Path == "/sw.js" {
+				w.Header().Set("Service-Worker-Allowed", "/")
+				w.Header().Set("Cache-Control", "no-cache")
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		if pair := r.URL.Query().Get("pair"); pair != "" {
 			// Camera apps and mobile browsers may retry the QR URL after the
 			// redirect. If this browser already has a valid session, make that

@@ -295,3 +295,42 @@ func TestRemoteSecurityHeadersAllowOnlyKnownAssetHosts(t *testing.T) {
 		t.Errorf("remote browser hardening headers are incomplete: %v", recorder.Header())
 	}
 }
+
+func TestRemoteGuardAllowsPublicPWAAssets(t *testing.T) {
+	m := pairedTestManager(t)
+	handler := m.guard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	publicAssets := []string{
+		"/manifest.webmanifest",
+		"/manifest.json",
+		"/sw.js",
+		"/favicon.ico",
+		"/favicon.svg",
+		"/apple-touch-icon.png",
+		"/icon-192.png",
+		"/icon-512.png",
+	}
+
+	for _, path := range publicAssets {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected public PWA asset %s to be accessible without auth, got status %d", path, rec.Code)
+		}
+		if path == "/sw.js" && rec.Header().Get("Service-Worker-Allowed") != "/" {
+			t.Errorf("expected Service-Worker-Allowed header on /sw.js, got %q", rec.Header().Get("Service-Worker-Allowed"))
+		}
+	}
+
+	// Normal protected path without auth must still be rejected
+	protectedRec := httptest.NewRecorder()
+	protectedReq := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	handler.ServeHTTP(protectedRec, protectedReq)
+	if protectedRec.Code != http.StatusUnauthorized {
+		t.Errorf("expected protected path to return 401 Unauthorized, got %d", protectedRec.Code)
+	}
+}
+

@@ -2392,5 +2392,101 @@ html[data-locale="ar"] .workspace-header__tools, html[data-locale="ar"] .page-he
   display: none;
 }
 
+/* Mobile PWA Install Banner */
+.pwa-install-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin: 10px 0 16px 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(9, 20, 40, 0.96), rgba(4, 12, 22, 0.98));
+  border: 1px solid rgba(200, 170, 110, 0.35);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 0 12px rgba(200, 170, 110, 0.08);
+  backdrop-filter: blur(12px);
+  position: relative;
+  z-index: 40;
+}
+
+.pwa-install-banner__icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(200, 170, 110, 0.12);
+  border: 1px solid rgba(200, 170, 110, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pwa-install-banner__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pwa-install-banner__text strong {
+  display: block;
+  font-size: 0.85rem;
+  color: #f0e6d2;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pwa-install-banner__text p {
+  margin: 2px 0 0 0;
+  font-size: 0.75rem;
+  color: #a09b8c;
+  line-height: 1.35;
+}
+
+.pwa-install-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pwa-install-banner__btn {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pwa-install-banner__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #888;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.pwa-install-banner__close:hover {
+  color: #f0e6d2;
+  border-color: rgba(200, 170, 110, 0.3);
+}
+
+@media (max-width: 520px) {
+  .pwa-install-banner {
+    flex-wrap: wrap;
+  }
+  .pwa-install-banner__actions {
+    width: 100%;
+    margin-top: 6px;
+    justify-content: flex-end;
+  }
+}
+
 
 

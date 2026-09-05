@@ -5,6 +5,9 @@ import './design-system.css'
 import App from './App.tsx'
 import { LCUConnectionProvider } from './components/LCUProvider'
 import { LocaleProvider } from './locale'
+import { registerServiceWorker } from './pwa'
+
+registerServiceWorker();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -15,3 +18,4 @@ createRoot(document.getElementById('root')!).render(
     </LocaleProvider>
   </StrictMode>,
 )
+

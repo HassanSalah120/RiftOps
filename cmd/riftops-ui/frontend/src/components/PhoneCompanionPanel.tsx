@@ -4,6 +4,7 @@ import { setLCUAvailability, setLCUStatusMessage } from '../api';
 import { ActionFeedback, type FeedbackState } from './DesignPrimitives';
 import FriendsPanel from './FriendsPanel';
 import { useLCUConnection } from './lcuConnectionContext';
+import PWAInstallBanner from './PWAInstallBanner';
 
 type Toast = (message: string, type?: 'info' | 'success' | 'error') => void;
 
@@ -38,6 +39,7 @@ export default function PhoneCompanionPanel({ showToast }: { showToast: Toast })
 
   return (
     <section className="phone-companion" aria-label="Phone social controls">
+      <PWAInstallBanner />
       <div className="phone-companion__heading"><span><Radio /></span><div><small>PHONE-SAFE CONTROLS</small><strong>Presence & friends</strong><p>Update reversible League presence and review your social list without exposing desktop settings.</p></div></div>
       <ActionFeedback state={feedback} />
       <div className="phone-companion__presence">
