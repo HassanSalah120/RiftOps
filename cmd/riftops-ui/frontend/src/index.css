@@ -423,8 +423,8 @@ html[data-performance='quiet'] .control-room__glow { animation: none !important;
   padding: 3px 5px 22px;
 }
 .app-sidebar__mark {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   border-radius: 13px;
@@ -437,13 +437,16 @@ html[data-performance='quiet'] .control-room__glow { animation: none !important;
 }
 .app-sidebar__mark--image {
   display: block;
-  flex: 0 0 38px;
-  padding: 2px;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 0;
   object-fit: contain;
   border-radius: 12px;
-  background: radial-gradient(circle at 50% 42%, rgba(0, 119, 255, .18), transparent 68%), #06101c;
-  border-color: rgba(200, 170, 110, .44);
-  box-shadow: 0 8px 24px rgba(0, 86, 192, .24), inset 0 1px 0 rgba(255, 255, 255, .2);
+  background: transparent;
+  border: none;
+  filter: drop-shadow(0 4px 14px rgba(0, 119, 255, 0.32)) drop-shadow(0 2px 8px rgba(200, 170, 110, 0.25));
+  box-shadow: none;
 }
 .app-sidebar__brand > div:last-child,
 .app-sidebar__status > span:last-child {

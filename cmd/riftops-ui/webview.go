@@ -67,6 +67,46 @@ func setDarkTitleBar(hwnd uintptr) {
 	)
 }
 
+// setWindowIcons sets both the large (taskbar/Alt-Tab) and small (titlebar) icons on the window.
+func setWindowIcons(hwnd uintptr) {
+	const (
+		WM_SETICON  = 0x0080
+		ICON_SMALL  = 0
+		ICON_BIG    = 1
+		IMAGE_ICON  = 1
+		LR_SHARED   = 0x00008000
+		SM_CXICON   = 11
+		SM_CYICON   = 12
+		SM_CXSMICON = 49
+		SM_CYSMICON = 50
+	)
+
+	user32 := windows.NewLazySystemDLL("user32.dll")
+	sendMessage := user32.NewProc("SendMessageW")
+	loadImage := user32.NewProc("LoadImageW")
+	getSystemMetrics := user32.NewProc("GetSystemMetrics")
+
+	var hinstance windows.Handle
+	_ = windows.GetModuleHandleEx(0, nil, &hinstance)
+
+	cxSm, _, _ := getSystemMetrics.Call(SM_CXSMICON)
+	cySm, _, _ := getSystemMetrics.Call(SM_CYSMICON)
+	cxLg, _, _ := getSystemMetrics.Call(SM_CXICON)
+	cyLg, _, _ := getSystemMetrics.Call(SM_CYICON)
+
+	// Resource ID 1 is MAINICON / RT_GROUP_ICON in rsrc_windows_amd64.syso
+	hSmall, _, _ := loadImage.Call(uintptr(hinstance), 1, IMAGE_ICON, cxSm, cySm, LR_SHARED)
+	if hSmall != 0 {
+		sendMessage.Call(hwnd, WM_SETICON, ICON_SMALL, hSmall)
+	}
+
+	hBig, _, _ := loadImage.Call(uintptr(hinstance), 1, IMAGE_ICON, cxLg, cyLg, LR_SHARED)
+	if hBig != 0 {
+		sendMessage.Call(hwnd, WM_SETICON, ICON_BIG, hBig)
+	}
+}
+
+
 // safeOpenDashboard tries WebView2 first, falls back to Chrome --app=
 func safeOpenDashboard(url string) {
 	webviewMu.Lock()
@@ -131,11 +171,12 @@ func safeOpenDashboard(url string) {
 		setWebViewState(w, false)
 		w.Navigate(url)
 
-		// Set dark title bar after window is ready
+		// Set dark title bar and native window icons after window is ready
 		w.Dispatch(func() {
 			hwnd := w.Window()
 			if hwnd != nil {
 				setDarkTitleBar(uintptr(hwnd))
+				setWindowIcons(uintptr(hwnd))
 			}
 		})
 
@@ -159,6 +200,7 @@ func showWebViewWindow() {
 				setForeground := user32.NewProc("SetForegroundWindow")
 				showWindow.Call(uintptr(hwnd), 5) // SW_SHOW
 				setForeground.Call(uintptr(hwnd))
+				setWindowIcons(uintptr(hwnd))
 			}
 		})
 	} else if !opening {
