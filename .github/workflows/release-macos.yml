@@ -3,10 +3,13 @@ name: Build macOS release
 on:
   release:
     types: [published]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing GitHub release tag to receive the macOS ZIP (for example v2.6.1)
+        description: Target release tag (for example v2.8.0)
         required: true
         type: string
 
@@ -24,13 +27,20 @@ jobs:
         shell: bash
         run: |
           tag="${{ github.event.release.tag_name || inputs.tag }}"
+          if [ -z "$tag" ] && [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${{ github.ref_name }}"
+          fi
+          if [ -z "$tag" ]; then
+            echo "Unable to determine release tag." >&2
+            exit 1
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - name: Check out release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ steps.release.outputs.tag }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -63,4 +73,8 @@ jobs:
       - name: Attach macOS ZIP to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ steps.release.outputs.tag }}" dist/RiftOps-macOS.zip dist/RiftOps-macOS.zip.sha256 --clobber --repo "${{ github.repository }}"
+        run: |
+          tag="${{ steps.release.outputs.tag }}"
+          gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+          gh release create "$tag" --title "RiftOps $tag" --generate-notes --repo "${{ github.repository }}" || true
+          gh release upload "$tag" dist/RiftOps-macOS.zip dist/RiftOps-macOS.zip.sha256 --clobber --repo "${{ github.repository }}"

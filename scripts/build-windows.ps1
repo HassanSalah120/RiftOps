@@ -1,7 +1,8 @@
 param(
     [string]$Version = "",
     [int]$Build = 1,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,7 +61,6 @@ try {
         "cmd/riftops-ui/fyne.syso",
         "cmd/riftops-ui/FyneApp.ico",
         "cmd/riftops-ui/riftops-ui.exe.manifest",
-        "cmd/riftops-ui/rsrc_windows_amd64.syso",
         "cmd/riftops-ui/RiftOps.exe"
     )
     foreach ($GeneratedFile in $GeneratedFiles) {
@@ -70,19 +70,19 @@ try {
 	if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 		throw "Node.js/npm is required to build the RiftOps frontend."
 	}
-	Write-Host "[1/8] Installing the locked frontend dependencies..."
+	Write-Host "[1/9] Installing the locked frontend dependencies..."
 	Push-Location "cmd/riftops-ui/frontend"
 	try {
 		npm ci --ignore-scripts
 		if ($LASTEXITCODE -ne 0) { throw "Frontend dependency install failed." }
 		if (-not $SkipTests) {
-			Write-Host "[2/8] Linting and testing the frontend..."
+			Write-Host "[2/9] Linting and testing the frontend..."
 			npm run lint
 			if ($LASTEXITCODE -ne 0) { throw "Frontend lint failed." }
 			npm test
 			if ($LASTEXITCODE -ne 0) { throw "Frontend tests failed." }
 		}
-		Write-Host "[3/8] Building the embedded frontend..."
+		Write-Host "[3/9] Building the embedded frontend..."
 		npm run build
 		if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
 	}
@@ -91,15 +91,15 @@ try {
 	}
 
     if (-not $SkipTests) {
-		Write-Host "[4/8] Running race-enabled desktop tests..."
+		Write-Host "[4/9] Running race-enabled desktop tests..."
 		go test -race -tags desktop ./...
         if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
-		Write-Host "[5/8] Running go vet..."
+		Write-Host "[5/9] Running go vet..."
 		go vet -tags desktop ./...
         if ($LASTEXITCODE -ne 0) { throw "Vet failed." }
     }
 
-	Write-Host "[6/8] Generating Windows resources and compiling the desktop host..."
+	Write-Host "[6/9] Generating Windows resources and compiling the desktop host..."
     & $GoWinres simply `
         --icon "cmd/riftops-ui/app.ico" `
         --manifest gui `
@@ -117,7 +117,7 @@ try {
     go build -tags "desktop,release" -trimpath -ldflags $LdFlags -o "cmd/riftops-ui/RiftOps.exe" ./cmd/riftops-ui
     if ($LASTEXITCODE -ne 0) { throw "Windows compilation failed." }
 
-	Write-Host "[7/8] Moving and validating the packaged executable..."
+	Write-Host "[7/9] Moving and validating the packaged executable..."
     New-Item -ItemType Directory -Force dist | Out-Null
     if (-not (Test-Path -LiteralPath "cmd/riftops-ui/RiftOps.exe")) {
         throw "Go completed without producing cmd/riftops-ui/RiftOps.exe."
@@ -156,12 +156,50 @@ try {
         throw "Packaged file version '$($VersionInfo.FileVersion)' does not match '$FileVersion'."
     }
     Remove-Item -Force -LiteralPath cmd/riftops-ui/RiftOps.exe
-    Write-Host "[8/8] Writing SHA-256 checksum..."
+    Write-Host "[8/9] Writing SHA-256 checksum for portable binary..."
     $ResolvedOutput = (Resolve-Path -LiteralPath $OutputPath).Path
     $ChecksumPath = "$ResolvedOutput.sha256"
     $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ResolvedOutput).Hash.ToLowerInvariant()
     Set-Content -LiteralPath $ChecksumPath -Encoding ascii -NoNewline -Value "$Hash  $([System.IO.Path]::GetFileName($ResolvedOutput))`n"
     Write-Host "Created $OutputPath and $OutputPath.sha256 (Windows GUI subsystem; no startup console)"
+
+    if (-not $SkipInstaller) {
+        Write-Host "[9/9] Checking Inno Setup and building Windows installer..."
+        $IsccCmd = Get-Command iscc -ErrorAction SilentlyContinue
+        $Iscc = if ($IsccCmd) { $IsccCmd.Source } else { $null }
+        if (-not $Iscc) {
+            $KnownIsccPaths = @(
+                (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\iscc.exe"),
+                "C:\Program Files (x86)\Inno Setup 6\iscc.exe",
+                "C:\Program Files\Inno Setup 6\iscc.exe"
+            )
+            $Iscc = $KnownIsccPaths | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        }
+
+        if ($Iscc) {
+            $InstallerScript = Join-Path $Root "scripts\installer.iss"
+            $DistDir = (Resolve-Path -LiteralPath "dist").Path
+            Write-Host "Compiling installer using $Iscc..."
+            & $Iscc "/DAppVersion=$Version" "/DSourceExe=$ResolvedOutput" "/DOutputDir=$DistDir" $InstallerScript
+            if ($LASTEXITCODE -ne 0) {
+                throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
+            }
+
+            $InstallerPath = Join-Path $DistDir "RiftOps-Setup-$Version-x64.exe"
+            if (Test-Path -LiteralPath $InstallerPath) {
+                $InstallerChecksum = "$InstallerPath.sha256"
+                $InstallerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $InstallerPath).Hash.ToLowerInvariant()
+                Set-Content -LiteralPath $InstallerChecksum -Encoding ascii -NoNewline -Value "$InstallerHash  $([System.IO.Path]::GetFileName($InstallerPath))`n"
+                Write-Host "Created $([System.IO.Path]::GetFileName($InstallerPath)) and $([System.IO.Path]::GetFileName($InstallerChecksum))"
+            } else {
+                throw "Expected installer output at $InstallerPath was not created."
+            }
+        } else {
+            Write-Warning "Inno Setup (iscc.exe) not found. Skipping installer packaging."
+        }
+    } else {
+        Write-Host "[9/9] Skipping installer packaging as requested."
+    }
 }
 finally {
     foreach ($GeneratedFile in @(
@@ -169,7 +207,6 @@ finally {
         "cmd/riftops-ui/fyne.syso",
         "cmd/riftops-ui/FyneApp.ico",
         "cmd/riftops-ui/riftops-ui.exe.manifest",
-        "cmd/riftops-ui/rsrc_windows_amd64.syso",
         "cmd/riftops-ui/RiftOps.exe"
     )) {
         Remove-Item -Force -LiteralPath $GeneratedFile -ErrorAction SilentlyContinue

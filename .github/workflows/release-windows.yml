@@ -3,10 +3,13 @@ name: Build Windows release
 on:
   release:
     types: [published]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing GitHub release tag to receive the Windows executable (for example v2.6.1)
+        description: Target release tag (for example v2.8.0)
         required: true
         type: string
 
@@ -25,13 +28,19 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.event.release.tag_name || inputs.tag }}"
+          if (-not $tag -and "${{ github.ref_type }}" -eq "tag") {
+            $tag = "${{ github.ref_name }}"
+          }
+          if (-not $tag) {
+            throw "Unable to determine release tag."
+          }
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "version=$($tag.TrimStart('v'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Check out release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ steps.release.outputs.tag }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -46,13 +55,13 @@ jobs:
           cache: npm
           cache-dependency-path: cmd/riftops-ui/frontend/package-lock.json
 
-      - name: Install MinGW and Windows resource tool
+      - name: Install MinGW, Inno Setup, and Windows resource tool
         shell: pwsh
         run: |
-          choco install mingw --no-progress -y
+          choco install mingw innosetup --no-progress -y
           go install github.com/tc-hib/go-winres@v0.3.3
 
-      - name: Build and verify Windows executable
+      - name: Build and verify Windows executable and installer
         shell: pwsh
         run: ./scripts/build-windows.ps1 -Version "${{ steps.release.outputs.version }}" -Build ${{ github.run_number }}
 
@@ -119,6 +128,8 @@ jobs:
           path: |
             dist/RiftOps-*-win-x64*.exe
             dist/RiftOps-*-win-x64*.exe.sha256
+            dist/RiftOps-Setup-*-x64*.exe
+            dist/RiftOps-Setup-*-x64*.exe.sha256
           if-no-files-found: error
 
       - name: Attach Windows files to GitHub Release
@@ -126,6 +137,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          [string[]]$assets = Get-ChildItem -Path "dist/RiftOps-*-win-x64*.exe", "dist/RiftOps-*-win-x64*.exe.sha256" | ForEach-Object FullName
+          $tag = "${{ steps.release.outputs.tag }}"
+          gh release view "$tag" --repo "${{ github.repository }}" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$tag" --title "RiftOps $tag" --generate-notes --repo "${{ github.repository }}"
+          }
+          [string[]]$assets = Get-ChildItem -Path "dist/RiftOps-*.exe", "dist/RiftOps-*.exe.sha256" | ForEach-Object FullName
           if ($assets.Count -eq 0) { throw "No Windows release assets were produced." }
-          gh release upload "${{ steps.release.outputs.tag }}" @assets --clobber --repo "${{ github.repository }}"
+          gh release upload "$tag" @assets --clobber --repo "${{ github.repository }}"
