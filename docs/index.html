@@ -1,0 +1,606 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RiftOps — The Modern League Operations Deck</title>
+  <meta name="description" content="The local-first League of Legends operations deck & companion for Windows and macOS. Launch Riot games, explore skin vaults, automate safe workflows, and track live matches." />
+  <meta name="theme-color" content="#030912" />
+
+  <!-- OpenGraph / Social Meta -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://hassansalah120.github.io/RiftOps/" />
+  <meta property="og:title" content="RiftOps — The Modern League Operations Deck" />
+  <meta property="og:description" content="100% Ban-Safe, zero-memory companion for League of Legends. Explore skins, manage loot, automate queue loops, and control champ select from your phone." />
+  <meta property="og:image" content="https://hassansalah120.github.io/RiftOps/assets/screenshots/command-center.png" />
+
+  <!-- Favicons -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="alternate icon" type="image/x-icon" href="favicon.ico" />
+
+  <!-- Google Fonts: Inter & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800;900&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Ambient Glow Backgrounds -->
+  <div class="glow glow-top" aria-hidden="true"></div>
+  <div class="glow glow-right" aria-hidden="true"></div>
+
+  <!-- Header Navigation -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="#" class="brand">
+        <img src="assets/branding/riftops-logo.png" alt="RiftOps Emblem" class="brand-crest" width="32" height="32" />
+        <span class="brand-name">RiftOps</span>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#showcase">Showcase</a>
+        <a href="#safety">Ban-Safety</a>
+        <a href="#phone">Phone Control</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+
+      <div class="header-actions">
+        <a href="https://github.com/HassanSalah120/RiftOps" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-icon" title="View GitHub Repository">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          <span>Star on GitHub</span>
+        </a>
+        <a href="#download" class="btn btn-primary">Download v2.8.0</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero-section">
+    <div class="container hero-inner">
+      <div class="badge-pill">
+        <span class="badge-dot"></span>
+        <span>100% Ban-Safe • Zero Memory Hooking • Local-First</span>
+      </div>
+
+      <h1 class="hero-title">The Modern League <br /><span class="text-gold">Operations Deck</span></h1>
+
+      <p class="hero-subtitle">
+        Launch Riot titles, explore your entire 1,940+ skin collection, automate grind workflows, track real-time match telemetry, and manage champion select from your smartphone.
+      </p>
+
+      <div class="hero-cta-group">
+        <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-primary btn-large">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.401H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+          </svg>
+          <span>Download for Windows</span>
+          <span class="btn-subtext">64-bit • Free & Open Source</span>
+        </a>
+
+        <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-secondary btn-large">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 4.54c.64-.78 1.08-1.87.96-2.96-1.02.04-2.22.68-2.92 1.5-.61.71-1.15 1.83-1.01 2.91 1.13.09 2.33-.67 2.97-1.45z"/>
+          </svg>
+          <span>Download for macOS</span>
+          <span class="btn-subtext">Universal • Apple Silicon & Intel</span>
+        </a>
+      </div>
+
+      <!-- App Preview Frame -->
+      <div class="hero-preview-frame">
+        <div class="frame-bar">
+          <div class="frame-dots">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+          </div>
+          <div class="frame-title">RiftOps — Command Center</div>
+        </div>
+        <div class="frame-image-wrap">
+          <img src="assets/screenshots/command-center.png" alt="RiftOps Command Center" class="frame-image" loading="eager" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Key Pillars Section -->
+  <section id="features" class="section pillars-section">
+    <div class="container">
+      <div class="section-header text-center">
+        <span class="kicker">ENGINEERED FOR EXCELLENCE</span>
+        <h2 class="section-title">Everything League Needs. Zero Cloud. Zero Lag.</h2>
+        <p class="section-desc">A unified desktop workspace crafted with clean layered Go, native WebView2, and React.</p>
+      </div>
+
+      <div class="pillars-grid">
+        <div class="pillar-card">
+          <div class="pillar-icon text-teal">🛡️</div>
+          <h3>100% Ban-Safe & Memory-Free</h3>
+          <p>Operates exclusively via Riot’s official LCU API and Live Game Client Data API (<code>127.0.0.1:2999</code>). Never touches game process memory, never injects DLLs, completely Vanguard-compliant.</p>
+        </div>
+
+        <div class="pillar-card">
+          <div class="pillar-icon text-gold">🚀</div>
+          <h3>Multi-Game Launchpad</h3>
+          <p>1-click launch for League of Legends, VALORANT, Legends of Runeterra, 2XKO, and Riot Client with DPAPI-encrypted multi-account switching.</p>
+        </div>
+
+        <div class="pillar-card">
+          <div class="pillar-icon text-teal">🎭</div>
+          <h3>Streamer Privacy Shield</h3>
+          <p>One toggle anonymizes summoner names, Riot IDs, and friend identities with lore-friendly Piltover/Zaun aliases across all screens to prevent stream sniping.</p>
+        </div>
+
+        <div class="pillar-card">
+          <div class="pillar-icon text-gold">💎</div>
+          <h3>Cosmetic Vault & Skin Studio</h3>
+          <p>Explore all 1,940+ skins with real ownership indicators, splash artwork, chromas, and craftable shard inventory tracking.</p>
+        </div>
+
+        <div class="pillar-card">
+          <div class="pillar-icon text-teal">🤖</div>
+          <h3>Grind Mode Automations</h3>
+          <p>Automate repetitive client tasks: auto-accept queue pops, auto-return to lobby post-match, auto-honor teammates, and claim battle pass milestones.</p>
+        </div>
+
+        <div class="pillar-card">
+          <div class="pillar-icon text-gold">📱</div>
+          <h3>Zero-Cloud Phone Companion</h3>
+          <p>Pair your smartphone over local home Wi-Fi with a 5-minute single-use QR code. Accept queues and lock champion hovers from anywhere in your house.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Feature Showcase Section -->
+  <section id="showcase" class="section showcase-section">
+    <div class="container">
+      <div class="section-header text-center">
+        <span class="kicker">IN-DEPTH WALKTHROUGH</span>
+        <h2 class="section-title">Explore the 11 Specialized Decks</h2>
+        <p class="section-desc">Click any deck below to inspect the dedicated toolset and authentic Hextech UI.</p>
+      </div>
+
+      <!-- Tab Buttons -->
+      <div class="showcase-tabs" role="tablist">
+        <button class="showcase-tab active" data-target="tab-command">Command Center</button>
+        <button class="showcase-tab" data-target="tab-skins">Cosmetic Vault</button>
+        <button class="showcase-tab" data-target="tab-loot">Loot Workshop</button>
+        <button class="showcase-tab" data-target="tab-profile">Profile Studio</button>
+        <button class="showcase-tab" data-target="tab-qol">QoL & Automation</button>
+        <button class="showcase-tab" data-target="tab-play">Play Flow</button>
+        <button class="showcase-tab" data-target="tab-live">Live Session</button>
+        <button class="showcase-tab" data-target="tab-social">Social Center</button>
+        <button class="showcase-tab" data-target="tab-history">Match History</button>
+        <button class="showcase-tab" data-target="tab-settings">Settings Deck</button>
+        <button class="showcase-tab" data-target="tab-remote">Phone Access</button>
+      </div>
+
+      <!-- Tab Content Panels -->
+      <div class="showcase-panels">
+        <!-- Command Center -->
+        <div class="showcase-panel active" id="tab-command">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/command-center.png" alt="Command Center Deck" />
+            </div>
+            <div class="panel-copy">
+              <h3>Command Center Hub</h3>
+              <p class="panel-lead">Real-time summoner rank and LP telemetry, 1-click Riot title launchpad, instant Presence Shield, and DPAPI-encrypted account profiles.</p>
+              <ul>
+                <li><strong>Live LP & Rank Trackers:</strong> Real-time rank tier badges, win/loss tallies, and current tier standing.</li>
+                <li><strong>Stealth Presence Shield:</strong> Toggle Online, Away, Mobile, or 100% Invisible offline appearance.</li>
+                <li><strong>DPAPI Account Profiles:</strong> Switch between smurfs and mains with zero plaintext password storage.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Skins Vault -->
+        <div class="showcase-panel" id="tab-skins">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/skins-vault.png" alt="Cosmetic Vault Deck" />
+            </div>
+            <div class="panel-copy">
+              <h3>Cosmetic Vault & Collection</h3>
+              <p class="panel-lead">Browse every skin on your account alongside the ones still missing with instant multi-filtering, splash artwork, and craftable shard indicators.</p>
+              <ul>
+                <li><strong>Authentic Ownership Counters:</strong> Live counts for owned normal skins, champion coverage percentage, and shard readiness.</li>
+                <li><strong>Deep Filter Matrix:</strong> Filter by champion, ownership status (All / Owned / Missing), rarity tier, and chromas.</li>
+                <li><strong>Riot DDragon Caching:</strong> High-resolution artwork loaded instantly from official CDN mirrors.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Loot Workshop -->
+        <div class="showcase-panel" id="tab-loot">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/loot-workshop.png" alt="Hextech Loot Workshop" />
+            </div>
+            <div class="panel-copy">
+              <h3>Hextech Loot Workshop</h3>
+              <p class="panel-lead">Real spendable wallet and crafting workstation with authentic League of Legends currency iconography and interactive recipe inspection.</p>
+              <ul>
+                <li><strong>Genuine In-Game Currency Icons:</strong> Live balances for Blue Essence, Orange Essence, RP, Mythic Essence, and Keys.</li>
+                <li><strong>1-Click Recipe Inspector:</strong> Inspect upgrade costs, disenchant yields, or reroll recipes for every shard.</li>
+                <li><strong>Batch Disenchanting:</strong> Forge keys and clean up duplicate champion shards without tedious client delays.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Profile Studio -->
+        <div class="showcase-panel" id="tab-profile">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/profile-studio.png" alt="Profile Studio" />
+            </div>
+            <div class="panel-copy">
+              <h3>Profile Studio & Regalia</h3>
+              <p class="panel-lead">Personalize how your summoner card, profile background, and prestige badges appear to others without leaving the workspace.</p>
+              <ul>
+                <li><strong>Live Regalia Compositing:</strong> Real-time preview of your summoner card, level border, and challenge crests.</li>
+                <li><strong>Custom Background Scenes:</strong> Set your profile backdrop to any owned champion splash art.</li>
+                <li><strong>Owned Icon Browser:</strong> Visual search and instant selection across your entire library of owned summoner icons.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- QoL Cockpit -->
+        <div class="showcase-panel" id="tab-qol">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/qol-cockpit.png" alt="Quality of Life Cockpit" />
+            </div>
+            <div class="panel-copy">
+              <h3>Quality of Life & Automation</h3>
+              <p class="panel-lead">Automate repetitive client tasks, save queue position presets, manage chat presence, and create safe settings snapshots.</p>
+              <ul>
+                <li><strong>Grind Mode Master Loop:</strong> Auto-accept queue pops, return to lobby, honor allies, and claim battle pass milestones.</li>
+                <li><strong>Phase-Aware Execution:</strong> Controls dynamically adjust based on active League phase (Lobby, Queue, Champ Select, In-Game).</li>
+                <li><strong>Safe Config Snapshots:</strong> Backup and restore custom in-game keybinds and audio settings with 1 click.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Play Flow -->
+        <div class="showcase-panel" id="tab-play">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/play-flow.png" alt="Play Flow Pipeline" />
+            </div>
+            <div class="panel-copy">
+              <h3>Play Flow & Matchmaking</h3>
+              <p class="panel-lead">One-click matchmaking runbook: set primary and secondary lane preferences, create lobbies, and queue up with instant feedback.</p>
+              <ul>
+                <li><strong>Lane Position Presets:</strong> Validate and save primary/secondary roles (Top, Jungle, Mid, Bot, Support) directly to the lobby.</li>
+                <li><strong>Mode Shortcuts:</strong> Jump straight into Ranked Solo, Ranked Flex, Normal Draft, ARAM, or Arena.</li>
+                <li><strong>Practice Tool Rehearsal:</strong> Safely test pick/ban draft runbooks in Practice Tool before entering live queues.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Session -->
+        <div class="showcase-panel" id="tab-live">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/live-session.png" alt="Canonical Live Session" />
+            </div>
+            <div class="panel-copy">
+              <h3>Canonical Live Session</h3>
+              <p class="panel-lead">Follow your match continuously across Queue, Ready Check, Champion Select, Loading Screen, In-Game, and Post-Game.</p>
+              <ul>
+                <li><strong>Continuous 6-Phase Pipeline:</strong> Smooth state machine tracking each milestone of your match automatically.</li>
+                <li><strong>Live Game Data API:</strong> Queries official local endpoint (<code>127.0.0.1:2999</code>) for real-time gold, KDA, CS, and neutral objective timers.</li>
+                <li><strong>Arena Telemetry:</strong> Dedicated tracking for Arena rounds, placements, augments, and teammate health.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Social Center -->
+        <div class="showcase-panel" id="tab-social">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/social-center.png" alt="Social Center" />
+            </div>
+            <div class="panel-copy">
+              <h3>Social Center & Streamer Shield</h3>
+              <p class="panel-lead">Fast, lightweight friend directory with built-in Streamer Mode and bulk lobby invitations.</p>
+              <ul>
+                <li><strong>Streamer Privacy Shield:</strong> Masks summoner names with lore-friendly aliases (e.g., <em>Targon Stargazer</em>, <em>Piltover Scout</em>) to prevent stream sniping.</li>
+                <li><strong>Direct OP.GG Links:</strong> Instant 1-click lookup for teammate profiles and stats.</li>
+                <li><strong>Lobby Invites:</strong> Invite online friends directly from the social center into your active party.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Match History -->
+        <div class="showcase-panel" id="tab-history">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/match-history.png" alt="Match History & Performance" />
+            </div>
+            <div class="panel-copy">
+              <h3>Match History & Analytics</h3>
+              <p class="panel-lead">Deep match telemetry, KDA trends, champion performance, and timeline breakdowns.</p>
+              <ul>
+                <li><strong>Timeline Breakdown:</strong> Full game timelines with gold differentials, objective timers, and item builds.</li>
+                <li><strong>Role & Champion Analytics:</strong> Track performance across individual champions and assigned lanes.</li>
+                <li><strong>Participant Overview:</strong> Inspect performance, runes, and builds of all 10 players in past matches.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings Deck -->
+        <div class="showcase-panel" id="tab-settings">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/settings-cockpit.png" alt="Settings Cockpit" />
+            </div>
+            <div class="panel-copy">
+              <h3>Settings & Encrypted Switcher</h3>
+              <p class="panel-lead">Granular workspace control, Riot Client executable auto-detection, and DPAPI-secured session storage.</p>
+              <ul>
+                <li><strong>One-Click Account Switching:</strong> Save remembered Riot logins to named profiles. Swap accounts without typing passwords.</li>
+                <li><strong>OS Cryptography:</strong> Protected by <strong>Windows DPAPI</strong> on Windows and <strong>Keychain</strong> on macOS.</li>
+                <li><strong>Auto-Detection:</strong> Scans Windows Registry and macOS <code>/Applications</code> to find client paths automatically.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Phone Access -->
+        <div class="showcase-panel" id="tab-remote">
+          <div class="panel-layout">
+            <div class="panel-image-wrap">
+              <img src="assets/screenshots/remote-access.png" alt="Phone Companion QR Deck" />
+            </div>
+            <div class="panel-copy">
+              <h3>Phone Companion QR Pairing</h3>
+              <p class="panel-lead">Pair any phone on your local Wi-Fi with a 5-minute single-use QR code. Control champion select and accept queues remotely.</p>
+              <ul>
+                <li><strong>Zero Cloud Relays:</strong> Pure peer-to-peer connection over your local home Wi-Fi network.</li>
+                <li><strong>Single-Use QR Security:</strong> Tokens expire in 5 minutes and revoke immediately on first connection.</li>
+                <li><strong>Safe Action Boundaries:</strong> Only exposes queue accept, champion hover/lock, and runes. Sensitive settings stay desktop-only.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Ban-Safety Comparison Section -->
+  <section id="safety" class="section safety-section">
+    <div class="container">
+      <div class="section-header text-center">
+        <span class="kicker">SECURITY & INTEGRITY</span>
+        <h2 class="section-title">Built for Peace of Mind with Vanguard</h2>
+        <p class="section-desc">See how RiftOps' local-first architecture differs from risky third-party overlays.</p>
+      </div>
+
+      <div class="table-card">
+        <table class="safety-table">
+          <thead>
+            <tr>
+              <th>Architecture Category</th>
+              <th>Risky Third-Party Overlays</th>
+              <th>RiftOps Architecture</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Process Memory Access</strong></td>
+              <td class="text-danger">Attaches to game process; reads/writes RAM</td>
+              <td class="text-success"><strong>Zero memory access.</strong> Never attaches to <code>League of Legends.exe</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>GPU & DirectX Hooking</strong></td>
+              <td class="text-danger">Injects overlays into DirectX/Vulkan pipelines</td>
+              <td class="text-success"><strong>Standalone desktop app.</strong> Uses native OS windowing with zero GPU hooking.</td>
+            </tr>
+            <tr>
+              <td><strong>Client DOM Injection</strong></td>
+              <td class="text-danger">Injects custom JS/CSS via Pengu Loader</td>
+              <td class="text-success"><strong>Zero client modification.</strong> Interacts only through official LCU HTTP/WebSocket APIs.</td>
+            </tr>
+            <tr>
+              <td><strong>Credential Safety</strong></td>
+              <td class="text-danger">Stores plaintext passwords or transmits tokens to cloud</td>
+              <td class="text-success"><strong>Zero password storage.</strong> Protected by local Windows DPAPI / macOS Keychain.</td>
+            </tr>
+            <tr>
+              <td><strong>Network Privacy</strong></td>
+              <td class="text-danger">Sends game telemetry to third-party ad servers</td>
+              <td class="text-success"><strong>100% Local Loopback.</strong> All operations stay strictly on your personal PC.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Phone Companion Diagram Section -->
+  <section id="phone" class="section phone-section">
+    <div class="container phone-container">
+      <div class="phone-copy">
+        <span class="kicker">LOCAL WI-FI CONNECTIVITY</span>
+        <h2>Never Miss a Queue Pop Again</h2>
+        <p>
+          Need to grab a glass of water or stretch between games? Pull out your phone and manage matchmaking from the kitchen.
+        </p>
+        <ol class="step-list">
+          <li><strong>Open Remote Access</strong> in the RiftOps desktop deck.</li>
+          <li><strong>Click Turn on</strong> to start the secure local network listener.</li>
+          <li><strong>Scan the QR code</strong> with your phone's camera.</li>
+          <li><strong>Accept queues and lock champions</strong> right from your mobile browser.</li>
+        </ol>
+      </div>
+      <div class="phone-diagram-card">
+        <div class="diagram-node">
+          <span class="node-icon">📱</span>
+          <strong>Mobile Device</strong>
+          <small>Phone / Tablet Browser</small>
+        </div>
+        <div class="diagram-arrow">
+          <span>Local Home Wi-Fi (HTTP)</span>
+          <div class="arrow-line"></div>
+        </div>
+        <div class="diagram-node">
+          <span class="node-icon">💻</span>
+          <strong>RiftOps Desktop</strong>
+          <small>Port 24080 (Local-First)</small>
+        </div>
+        <div class="diagram-arrow">
+          <span>Loopback LCU API</span>
+          <div class="arrow-line"></div>
+        </div>
+        <div class="diagram-node">
+          <span class="node-icon">🎮</span>
+          <strong>League Client</strong>
+          <small>Official Riot LCU Endpoint</small>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download Section -->
+  <section id="download" class="section download-section">
+    <div class="container">
+      <div class="section-header text-center">
+        <span class="kicker">GET STARTED TODAY</span>
+        <h2 class="section-title">Elevate Your League Experience</h2>
+        <p class="section-desc">Download RiftOps for Windows and macOS. Completely free, open source, and ban-safe.</p>
+      </div>
+
+      <div class="download-cards">
+        <!-- Windows Card -->
+        <div class="download-card featured">
+          <div class="card-badge">RECOMMENDED</div>
+          <div class="download-icon">🪟</div>
+          <h3>Windows Desktop</h3>
+          <p>For Windows 10 and Windows 11 (64-bit)</p>
+          <div class="card-specs">
+            <span>v2.8.0</span> • <span>WebView2 Native</span> • <span>Portable Executable</span>
+          </div>
+          <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-primary btn-full">
+            Download for Windows (.exe)
+          </a>
+          <small class="card-note">Includes custom Hextech frameless titlebar and system tray companion.</small>
+        </div>
+
+        <!-- macOS Card -->
+        <div class="download-card">
+          <div class="download-icon">🍎</div>
+          <h3>macOS Desktop</h3>
+          <p>For macOS 12 Monterey and newer</p>
+          <div class="card-specs">
+            <span>v2.8.0</span> • <span>WebKit Native</span> • <span>Apple Silicon & Intel</span>
+          </div>
+          <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn btn-secondary btn-full">
+            Download for macOS (.zip)
+          </a>
+          <small class="card-note">Runs as a native standalone Dock application.</small>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ Section -->
+  <section id="faq" class="section faq-section">
+    <div class="container">
+      <div class="section-header text-center">
+        <span class="kicker">FREQUENTLY ASKED QUESTIONS</span>
+        <h2 class="section-title">Got Questions? We’ve Got Answers.</h2>
+      </div>
+
+      <div class="faq-list">
+        <details class="faq-item">
+          <summary>Is RiftOps safe from Vanguard and Riot bans?</summary>
+          <div class="faq-answer">
+            <p><strong>Yes, 100%.</strong> RiftOps complies with Riot Games’ third-party developer policies. It never reads or modifies the memory of <code>League of Legends.exe</code>, does not inject DLLs, and contains no overlay hooks. It communicates exclusively through the official, supported League Client API (LCU) and Game Client Data API provided by Riot on your local machine.</p>
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary>How does the Presence Shield (Appear Offline) work?</summary>
+          <div class="faq-answer">
+            <p>RiftOps establishes a secure local loopback chat proxy between your League Client and Riot’s XMPP chat server. When you toggle Offline, RiftOps intercepts chat presence stanzas while keeping game matchmaking intact, allowing you to play without appearing online to friends.</p>
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary>Are my account credentials or passwords stored?</summary>
+          <div class="faq-answer">
+            <p><strong>Never in plaintext.</strong> Account sessions are encrypted using your operating system's native hardware-backed encryption: <strong>Windows DPAPI</strong> on Windows and the <strong>macOS Keychain</strong> on macOS. RiftOps contains zero cloud servers, zero telemetry, and never transmits your login tokens anywhere.</p>
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary>How does the Phone Companion connect to my PC?</summary>
+          <div class="faq-answer">
+            <p>The companion communicates directly over your local home Wi-Fi network (P2P LAN). No traffic ever goes to the cloud or an external server. The QR code contains a cryptographically random single-use token that expires in 5 minutes for airtight local security.</p>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <img src="assets/branding/riftops-logo.png" alt="RiftOps" width="24" height="24" />
+        <span>RiftOps</span>
+      </div>
+
+      <div class="footer-links">
+        <a href="https://github.com/HassanSalah120/RiftOps" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://github.com/HassanSalah120/RiftOps/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+        <a href="https://github.com/HassanSalah120/RiftOps/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+        <a href="https://github.com/HassanSalah120/RiftOps/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">GPLv3 License</a>
+      </div>
+
+      <p class="footer-disclaimer">
+        RiftOps is an independent open-source project created by <a href="https://github.com/HassanSalah120" target="_blank" rel="noopener noreferrer">Hassan Salah</a>. It is not endorsed by Riot Games and does not reflect the views or opinions of Riot Games or anyone officially involved in producing or managing League of Legends properties.
+      </p>
+    </div>
+  </footer>
+
+  <!-- Simple Tab Interactivity Script -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const tabs = document.querySelectorAll('.showcase-tab');
+      const panels = document.querySelectorAll('.showcase-panel');
+
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          tabs.forEach((t) => t.classList.remove('active'));
+          panels.forEach((p) => p.classList.remove('active'));
+
+          tab.classList.add('active');
+          const targetId = tab.getAttribute('data-target');
+          const targetPanel = document.getElementById(targetId);
+          if (targetPanel) {
+            targetPanel.classList.add('active');
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>
