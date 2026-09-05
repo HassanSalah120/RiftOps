@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/branding/riftops-logo.png" alt="RiftOps Logo" width="340" />
+  <img src="assets/branding/riftops-full-logo.png" alt="RiftOps Logo" width="340" />
   <h1>RiftOps</h1>
   <p><strong>The Local-First League of Legends Operations Deck & Companion for Windows and macOS</strong></p>
   <p>Launch Riot games, automate safe queue workflows, track live matches, explore your skin vault, and inspect Hextech loot from one unified cockpit.</p>
