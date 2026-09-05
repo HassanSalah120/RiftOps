@@ -60,6 +60,12 @@ func TestEnsureLoopbackEndpointAcceptsLocalhostName(t *testing.T) {
 	}
 }
 
+func TestEnsureLoopbackEndpointAcceptsDeceiveDomain(t *testing.T) {
+	if err := ensureLoopbackEndpoint(context.Background(), LocalhostDomain); err != nil {
+		t.Fatalf("%s endpoint rejected: %v", LocalhostDomain, err)
+	}
+}
+
 func TestEnsureLoopbackEndpointRejectsNonLoopbackIP(t *testing.T) {
 	if err := ensureLoopbackEndpoint(context.Background(), "192.0.2.1"); err == nil {
 		t.Fatal("non-loopback endpoint was accepted")

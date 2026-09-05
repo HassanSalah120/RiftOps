@@ -51,6 +51,7 @@ func Rewrite(content []byte, options RewriteOptions) ([]byte, Endpoint, error) {
 	}
 	config["chat.host"] = options.LocalHost
 	config["chat.port"] = options.LocalPort
+	config["chat.allow_bad_cert.enabled"] = true
 	if affinities, ok := config["chat.affinities"].(map[string]any); ok {
 		for key := range affinities {
 			affinities[key] = options.LocalHost

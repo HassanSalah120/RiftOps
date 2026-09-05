@@ -129,7 +129,7 @@ export default function SettingsPage({
       } else if (res.error) {
         showToast('Update check failed', res.error, 'error');
       } else {
-        const ver = res.currentVersion || snapshot.Version || '2.8.2';
+        const ver = res.currentVersion || snapshot.Version || '2.8.3';
         showToast('Up to date', `You are using the latest version of RiftOps (v${ver}).`, 'success');
       }
     } catch (err: any) {
@@ -634,7 +634,7 @@ export default function SettingsPage({
                   <div className="settings-specs-item">
                     <span className="settings-specs-item__label">VERSION</span>
                     <div className="flex items-center gap-2">
-                      <strong className="settings-specs-item__val">{snapshot.Version ? `v${snapshot.Version}` : '2.8.2'}</strong>
+                      <strong className="settings-specs-item__val">{snapshot.Version ? `v${snapshot.Version}` : '2.8.3'}</strong>
                       <button
                         type="button"
                         disabled={checkingUpdates}

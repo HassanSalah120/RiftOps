@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -101,5 +102,49 @@ func TestProviderRejectsWrongHostnameAndExpiringCertificate(t *testing.T) {
 	expiring := makePFX(t, "expected.example.test", time.Now().Add(5*24*time.Hour))
 	if _, err := provider.decodeAndValidate(expiring); err == nil {
 		t.Fatal("expiring certificate was accepted")
+	}
+}
+
+func TestProviderLoadsBundledDeceiveCert(t *testing.T) {
+	provider := Provider{
+		CachePath:   "localhostCert.pfx",
+		Hostname:    "deceive-localhost.molenzwiebel.xyz",
+		MinValidFor: 20 * 24 * time.Hour,
+	}
+	cert, err := provider.Load(context.Background())
+	if err != nil {
+		t.Fatalf("failed to load bundled deceive cert: %v", err)
+	}
+	if cert.Leaf == nil {
+		t.Fatal("expected non-nil leaf")
+	}
+	if err := cert.Leaf.VerifyHostname("deceive-localhost.molenzwiebel.xyz"); err != nil {
+		t.Fatalf("hostname mismatch: %v", err)
+	}
+	if err := VerifyLeaf(cert, nil, "deceive-localhost.molenzwiebel.xyz"); err != nil {
+		t.Fatalf("system root trust verification failed: %v", err)
+	}
+}
+
+func TestProviderDiscardsStaleCacheAndLoadsEmbedded(t *testing.T) {
+	tempCache := filepath.Join(t.TempDir(), "localhostCert.pfx")
+	// Write invalid data as cache
+	_ = os.WriteFile(tempCache, []byte("stale-or-corrupt-data"), 0600)
+	provider := Provider{
+		CachePath:   tempCache,
+		Hostname:    "deceive-localhost.molenzwiebel.xyz",
+		MinValidFor: 20 * 24 * time.Hour,
+	}
+	cert, err := provider.Load(context.Background())
+	if err != nil {
+		t.Fatalf("expected embedded cert to load after stale cache discard: %v", err)
+	}
+	if cert.Leaf == nil || cert.Leaf.Subject.CommonName != "deceive-localhost.molenzwiebel.xyz" {
+		t.Fatalf("unexpected leaf: %+v", cert.Leaf)
+	}
+	// Verify that the valid embedded cert was written to cache
+	cachedData, err := os.ReadFile(tempCache)
+	if err != nil || len(cachedData) == 0 {
+		t.Fatalf("expected embedded cert to be written to cache: %v", err)
 	}
 }

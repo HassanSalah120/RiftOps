@@ -22,10 +22,14 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
-// Riot's client-config service is rewritten to a local loopback address. The
-// chat proxy certificate is generated and cached locally; no DNS record or
-// remote certificate service is involved.
-const LocalhostDomain = "127.0.0.1"
+// Riot's client-config service is rewritten to a loopback endpoint.
+// Using deceive-localhost.molenzwiebel.xyz provides a publicly trusted
+// TLS certificate (Let's Encrypt) that maps to loopback 127.0.0.1, preventing
+// TLS handshake rejections by Riot Client without requiring Windows store mutations.
+var (
+	LocalhostDomain = "deceive-localhost.molenzwiebel.xyz"
+	CertificateURL  = "https://mln.cx/deceive/localhost.pfx"
+)
 
 type Phase string
 
@@ -463,6 +467,11 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	}
 
 	e.emit(e.phaseSnapshot(PhasePreparingProxy, game, "Preparing secure local chat proxy"))
+	domain := LocalhostDomain
+	if err := ensureLoopbackEndpoint(ctx, domain); err != nil {
+		slog.Warn("loopback domain resolution failed; falling back to loopback IP", "domain", domain, "error", err)
+		domain = "127.0.0.1"
+	}
 	chatListener, err := chatproxy.Listen("127.0.0.1:0")
 	if err != nil {
 		slog.Warn("local chat listener is unavailable; using native Riot chat", "error", err)
@@ -475,7 +484,11 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		slog.Warn("local certificate cache is unavailable; using native Riot chat", "error", err)
 		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
 	}
-	serverCertificate, err := (certificate.Provider{CachePath: cachePath, Hostname: LocalhostDomain}).Load(ctx)
+	serverCertificate, err := (certificate.Provider{
+		CachePath: cachePath,
+		URL:       CertificateURL,
+		Hostname:  domain,
+	}).Load(ctx)
 	if err != nil {
 		_ = chatListener.Close()
 		slog.Warn("local loopback certificate is unavailable; using native Riot chat", "error", err)
@@ -520,7 +533,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		})
 	})
 	configServer, err := configproxy.NewServer(configproxy.ServerOptions{
-		LocalChatHost: LocalhostDomain, LocalChatPort: chatPort,
+		LocalChatHost: domain, LocalChatPort: chatPort,
 		OnEndpoint: func(value configproxy.Endpoint) {
 			endpoint.set(value)
 			snapshot := e.phaseSnapshot(PhaseWaiting, game, "Riot chat endpoint found; completing secure handshake")

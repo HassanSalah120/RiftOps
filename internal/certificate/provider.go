@@ -8,11 +8,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -21,30 +24,110 @@ import (
 	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
 
+//go:embed localhostCert.pfx
+var embeddedPFX []byte
+
+const MaxPFXBytes = 2 << 20
+
 type Provider struct {
 	CachePath   string
+	URL         string
 	Hostname    string
 	MinValidFor time.Duration
+	Client      *http.Client
 }
 
 func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
 	if p.MinValidFor == 0 {
-		p.MinValidFor = 20 * 24 * time.Hour
+		p.MinValidFor = 14 * 24 * time.Hour
 	}
-	// Try cache first
-	if cached, err := os.ReadFile(p.CachePath); err == nil {
-		if certificate, err := p.decodeAndValidate(cached); err == nil {
+	// 1. Try cache first
+	if p.CachePath != "" {
+		if cached, err := os.ReadFile(p.CachePath); err == nil {
+			if certificate, err := p.decodeAndValidate(cached); err == nil {
+				if p.URL != "" && time.Until(certificate.Leaf.NotAfter) < 20*24*time.Hour {
+					p.triggerBackgroundRefresh()
+				}
+				return certificate, nil
+			}
+			_ = os.Remove(p.CachePath) // stale cache, discard
+		}
+	}
+
+	// 2. Try embedded bundle if valid for target hostname
+	if len(embeddedPFX) > 0 {
+		if certificate, err := p.decodeAndValidate(embeddedPFX); err == nil {
+			if p.CachePath != "" {
+				_ = writePrivateFile(p.CachePath, embeddedPFX)
+			}
+			if p.URL != "" && time.Until(certificate.Leaf.NotAfter) < 20*24*time.Hour {
+				p.triggerBackgroundRefresh()
+			}
 			return certificate, nil
 		}
-		_ = os.Remove(p.CachePath) // stale cache, discard
 	}
-	// Always produce a local certificate immediately. The chat proxy is
-	// loopback-only and must never depend on an external certificate service.
+
+	// 3. Try download if URL provided and network is available
+	if p.URL != "" {
+		dlCtx, dlCancel := context.WithTimeout(ctx, 3*time.Second)
+		defer dlCancel()
+		if cert, err := p.download(dlCtx); err == nil {
+			return cert, nil
+		}
+	}
+
+	// 4. Always produce a local certificate immediately as reliable fallback.
 	cert, err := p.generateSelfSigned()
 	if err != nil {
 		return tls.Certificate{}, err
 	}
 	return cert, nil
+}
+
+func (p Provider) triggerBackgroundRefresh() {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if _, err := p.download(ctx); err != nil {
+			slog.Debug("background cert refresh skipped", "error", err)
+			return
+		}
+		slog.Info("downloaded and refreshed proxy certificate cache")
+	}()
+}
+
+func (p Provider) download(ctx context.Context) (tls.Certificate, error) {
+	client := p.Client
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("create cert request: %w", err)
+	}
+	request.Header.Set("User-Agent", "RiftOps")
+	response, err := client.Do(request)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("download proxy certificate: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return tls.Certificate{}, fmt.Errorf("certificate server returned %s", response.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, MaxPFXBytes+1))
+	if err != nil || len(data) > MaxPFXBytes {
+		return tls.Certificate{}, errors.New("certificate response was invalid or too large")
+	}
+	certificate, err := p.decodeAndValidate(data)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if p.CachePath != "" {
+		if err := writePrivateFile(p.CachePath, data); err != nil {
+			slog.Warn("could not cache downloaded certificate", "error", err)
+		}
+	}
+	return certificate, nil
 }
 
 // generateSelfSigned creates a short-lived local CA and an ECDSA leaf
@@ -145,8 +228,10 @@ func (p Provider) decodeAndValidate(data []byte) (tls.Certificate, error) {
 	if privateKey == nil || leaf == nil {
 		return tls.Certificate{}, errors.New("certificate has no private key or leaf")
 	}
-	if err := leaf.VerifyHostname(p.Hostname); err != nil {
-		return tls.Certificate{}, fmt.Errorf("certificate hostname: %w", err)
+	if p.Hostname != "" {
+		if err := leaf.VerifyHostname(p.Hostname); err != nil {
+			return tls.Certificate{}, fmt.Errorf("certificate hostname: %w", err)
+		}
 	}
 	if len(chain) == 0 || chain[0] == nil || !chain[0].IsCA {
 		return tls.Certificate{}, errors.New("certificate has no valid local issuing CA")
