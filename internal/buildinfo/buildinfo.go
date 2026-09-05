@@ -5,4 +5,4 @@ package buildinfo
 //
 // Release packaging overrides this value with -ldflags so the executable's
 // runtime version always matches the version shown in its release metadata.
-var Version = "2.8.1"
+var Version = "2.8.2"
