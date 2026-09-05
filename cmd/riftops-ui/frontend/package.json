@@ -1,15 +1,4 @@
 {
-  "name": "frontend",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "test": "node --test tests/champSelectFlow.test.ts tests/liveSession.test.ts tests/clientCapabilities.test.ts tests/externalURL.test.ts tests/playFlowQueue.test.ts tests/roleQuest.test.ts tests/buildPlanner.test.ts tests/lootActions.test.ts tests/arenaBravery.test.ts tests/arenaTelemetry.test.ts tests/skinAssets.test.ts",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
-  },
   "dependencies": {
     "@tailwindcss/container-queries": "^0.1.1",
     "@tailwindcss/typography": "^0.5.20",
@@ -28,8 +17,19 @@
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
   },
+  "name": "frontend",
   "overrides": {
     "nanoid": "3.3.18",
     "postcss": "8.5.26"
-  }
+  },
+  "private": true,
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test": "node --test tests/champSelectFlow.test.ts tests/liveSession.test.ts tests/clientCapabilities.test.ts tests/externalURL.test.ts tests/playFlowQueue.test.ts tests/roleQuest.test.ts tests/buildPlanner.test.ts tests/lootActions.test.ts tests/arenaBravery.test.ts tests/arenaTelemetry.test.ts tests/skinAssets.test.ts"
+  },
+  "type": "module",
+  "version": "2.8.3"
 }
