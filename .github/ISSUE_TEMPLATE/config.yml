@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/HassanSalah120/RiftOps/security/advisories/new
+    about: Please report security vulnerabilities privately via GitHub Security Advisories.
+  - name: RiftOps Official Website
+    url: https://hassansalah120.github.io/RiftOps/
+    about: Documentation, deck showcase, and direct binary downloads.
