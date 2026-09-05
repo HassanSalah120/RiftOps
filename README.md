@@ -150,9 +150,26 @@ Granular workspace control, Riot Client executable auto-detection, and DPAPI-sec
 
 ---
 
+### 9. Match History & Performance Analytics
+Deep match telemetry, KDA trends, champion performance, and timeline breakdowns.
+
+<div align="center">
+  <img src="assets/screenshots/match-history.png" alt="Match History & Performance" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **Timeline Breakdown**: Full game timelines with gold differentials, objective timers, and item builds.
+- **Role & Champion Analytics**: Track performance across individual champions and assigned lanes.
+- **Direct OP.GG Integration**: One-click lookup for all participants in previous matches.
+
+---
+
 ## 📱 Phone Companion (Mimic-Style LAN Control)
 
 RiftOps includes a local-first mobile companion inspired by Mimic. It communicates directly with your desktop over your home Wi-Fi network—**no external servers or cloud relays are involved**.
+
+<div align="center">
+  <img src="assets/screenshots/remote-access.png" alt="Remote Access & QR Pairing" width="100%" style="border-radius: 8px;" />
+</div>
 
 ```
 ┌─────────────────┐       Wi-Fi LAN (HTTP)       ┌────────────────────────┐
