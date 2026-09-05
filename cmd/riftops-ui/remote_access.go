@@ -379,11 +379,12 @@ var remoteCapabilities = []remoteCapability{
 	}},
 	{ID: "preset_apply", Routes: map[string][]string{
 		"/api/profile-presets": {http.MethodGet}, "/api/profile-presets/preview": {http.MethodPost}, "/api/profile-presets/apply": {http.MethodPost},
-		"/api/lcu/preparation-presets": {http.MethodGet}, "/api/lcu/preparation-presets/apply": {http.MethodPost},
-		"/api/lcu/lobby-presets": {http.MethodGet}, "/api/lcu/lobby-presets/apply": {http.MethodPost},
+		"/api/lcu/preparation-presets": {http.MethodGet}, "/api/lcu/preparation-presets/preview": {http.MethodPost}, "/api/lcu/preparation-presets/apply": {http.MethodPost},
+		"/api/lcu/lobby-presets": {http.MethodGet}, "/api/lcu/lobby-presets/preview": {http.MethodPost}, "/api/lcu/lobby-presets/apply": {http.MethodPost},
 	}},
 	{ID: "quick_lobby", Routes: map[string][]string{
-		"/api/lcu/custom-bots": {http.MethodGet, http.MethodPost},
+		"/api/lcu/custom-bots":     {http.MethodGet, http.MethodPost},
+		"/api/lcu/custom-bots/add": {http.MethodPost},
 	}},
 	{ID: "replay_control", Routes: map[string][]string{
 		"/api/lcu/replay":          {http.MethodGet, http.MethodPost},

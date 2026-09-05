@@ -17,7 +17,7 @@ function rankLabel(profile: LCUProfile | null): string {
 }
 
 export default function AccountSummary() {
-  const { connected, pageVisible, performanceMode } = useLCUConnection();
+  const { connected, pageVisible, performanceMode, streamerMode } = useLCUConnection();
   const [profile, setProfile] = useState<LCUProfile | null>(null);
   const [version, setVersion] = useState('');
   const [loading, setLoading] = useState(false);
@@ -53,9 +53,10 @@ export default function AccountSummary() {
   const summoner = profile?.summoner;
   const riotID = useMemo(() => {
     if (!summoner) return 'Summoner unavailable';
+    if (streamerMode) return 'Demo Player#EUW';
     const name = summoner.gameName || summoner.displayName || 'League account';
     return summoner.tagLine ? `${name}#${summoner.tagLine}` : name;
-  }, [summoner]);
+  }, [summoner, streamerMode]);
   const rank = rankedEntry(profile);
 
   return (

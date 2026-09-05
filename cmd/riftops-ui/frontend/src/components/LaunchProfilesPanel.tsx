@@ -10,6 +10,7 @@ import {
   type LaunchProfile,
   type ProfileSessionStatus,
 } from '../api';
+import { useLCUConnection } from './lcuConnectionContext';
 
 type Toast = (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
 
@@ -48,6 +49,7 @@ export default function LaunchProfilesPanel({
   showToast: Toast;
   onRefreshSnapshot: () => Promise<void>;
 }) {
+  const { streamerMode } = useLCUConnection();
   const [profiles, setProfiles] = useState<LaunchProfile[]>([]);
   const [statuses, setStatuses] = useState<Record<string, ProfileSessionStatus>>({});
   const [loading, setLoading] = useState(true);
@@ -177,19 +179,23 @@ export default function LaunchProfilesPanel({
       {error && <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-[11px] text-danger">{error}</div>}
 
       <div className="grid gap-2 sm:grid-cols-2">
-        {profiles.map((profile) => {
+        {profiles.map((profile, index) => {
           const active = profile.id === activeProfileId;
           const switching = busy === `switch:${profile.id}`;
+          const profileDisplayName = streamerMode
+            ? (active ? 'Main Profile' : `Secondary Profile ${index}`)
+            : profile.name;
+          const profileDisplayRiotId = streamerMode ? undefined : profile.riotId;
           return (
             <article key={profile.id} className={`rounded-xl border p-3 transition ${active ? 'border-primary/50 bg-primary/10 shadow-[0_0_18px_rgba(200,170,110,.12)]' : 'border-white/[0.08] bg-black/10 hover:border-primary/30'}`}>
               <div className="flex items-start gap-2">
                 <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${active ? 'bg-primary/20 text-primary' : 'bg-white/[0.06] text-text-dim'}`}><ShieldCheck className="h-4 w-4" /></span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <strong className="truncate text-xs text-white">{profile.name}</strong>
+                    <strong className="truncate text-xs text-white">{profileDisplayName}</strong>
                     {active && <span className="rounded-full bg-success/15 px-1.5 py-0.5 text-[9px] font-bold text-success">ACTIVE</span>}
                   </div>
-                  <p className="mt-0.5 truncate text-[10px] text-text-muted">{profile.region || 'Region not set'}{profile.riotId ? ` · ${profile.riotId}` : ''}</p>
+                  <p className="mt-0.5 truncate text-[10px] text-text-muted">{profile.region || 'Region not set'}{profileDisplayRiotId ? ` · ${profileDisplayRiotId}` : ''}</p>
                   <p className={`mt-2 text-[10px] ${statuses[profile.id]?.saved ? 'text-success' : statuses[profile.id]?.expired ? 'text-warning' : 'text-text-dim'}`}>
                     {sessionLabel(statuses[profile.id])}
                   </p>
@@ -209,7 +215,7 @@ export default function LaunchProfilesPanel({
 
       {activeProfile && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-success/20 bg-success/[0.06] px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2"><Check className="h-4 w-4 shrink-0 text-success" /><span className="truncate text-[10px] text-text-muted">Current profile: <strong className="text-white">{activeProfile.name}</strong></span></div>
+          <div className="flex min-w-0 items-center gap-2"><Check className="h-4 w-4 shrink-0 text-success" /><span className="truncate text-[10px] text-text-muted">Current profile: <strong className="text-white">{streamerMode ? 'Main Profile' : activeProfile.name}</strong></span></div>
           <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-success/30 bg-success/10 px-2.5 py-1.5 text-[10px] font-bold text-success transition hover:bg-success/20 disabled:opacity-50" onClick={() => void saveCurrentSession()} disabled={busy !== '' || loading}>
             {busy === 'capture' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
             Save current Riot login · 30 days

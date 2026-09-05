@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftRight, Ban, Check, CheckCircle2, ChevronDown, Clock3, Eye, Flame, LockKeyhole, Loader2,
-  Pencil, RefreshCw, RotateCcw, Search, Shield, Sparkles, Swords, Users, WifiOff,
+  Map, Pencil, RefreshCw, RotateCcw, Search, Shield, Sparkles, Swords, Users, Volume2, VolumeX, WifiOff,
 } from 'lucide-react';
 import {
   DDBASE, ddChampionIcon, fetchDDChampions, fetchDDragonVersion,
@@ -9,7 +9,7 @@ import {
   fetchLCUChampSelectPickOrderSwaps, fetchLCUChampSelectPositionSwaps,
   fetchLCUChampSelectSkins, fetchLCURunePages, mutateLCUChampSelectSwap, rerollLCUChampSelect,
   selectLCURunePage, submitLCUChampSelectAction, swapLCUChampSelectBench,
-  updateLCUChampSelectSelection,
+  updateLCUChampSelectSelection, muteLCUChampSelectPlayer,
 } from '../api';
 import type { DDChampion, DDChampionList, LCURunePage } from '../api';
 import {
@@ -40,6 +40,11 @@ type TeamMember = {
   assignedPosition?: string;
   assignedRole?: string;
   position?: string;
+  puuid?: string;
+  muted?: boolean;
+  isMuted?: boolean;
+  team?: number;
+  teamId?: number;
 };
 
 type Session = Omit<BaseChampSelectSession, 'timer'> & {
@@ -366,6 +371,27 @@ export default function ChampSelectWorkspace({
     void runAction(`swap-${kind}-${id}-${action}`, () => mutateLCUChampSelectSwap(kind, id, action), `${label} swap ${actionLabel}.`);
   };
 
+  const mutePlayer = (member: TeamMember, muted: boolean) => {
+    if (!member.puuid) return;
+    void runAction(`mute-${member.cellId}`, () => muteLCUChampSelectPlayer(member.puuid!, muted), muted ? 'Player muted.' : 'Player unmuted.');
+  };
+
+  const muteUnmutedPlayers = async () => {
+    const targets = (session?.myTeam || []).filter((member) => member.cellId !== session?.localPlayerCellId && member.puuid && !(member.muted || member.isMuted));
+    if (!targets.length) return;
+    setBusy('mute-all');
+    try {
+      for (const member of targets) await muteLCUChampSelectPlayer(member.puuid!, true);
+      notify(`${targets.length} teammate${targets.length === 1 ? '' : 's'} muted.`, 'success');
+      await refresh();
+    } catch (reason: any) { notify(reason?.message || 'League rejected a mute action.', 'error'); }
+    finally { setBusy(''); }
+  };
+
+  const localTeamID = Number(localMember?.teamId || localMember?.team || 0);
+  const sideLabel = localTeamID === 100 ? 'Blue side' : localTeamID === 200 ? 'Red side' : 'Side assigned by League';
+  const mapLabel = Number(session?.mapId) === 11 ? "Summoner's Rift" : Number(session?.mapId) === 12 ? 'Howling Abyss' : Number(session?.mapId) === 30 ? 'Arena' : session?.mapId ? `Map ${session.mapId}` : 'Map unavailable';
+
   return (
     <section className="champ-select-workspace">
       <div className="champ-select-workspace__header">
@@ -380,6 +406,7 @@ export default function ChampSelectWorkspace({
       {session && (
         <>
           {arenaLive && <div className="champ-select-workspace__arena-banner"><span className="champ-select-workspace__arena-mark">✦</span><span><small>ARENA EVENT</small><strong>{arenaEventLabel(arenaEvent)}</strong><em>{braveryAvailable ? 'Bravery and League-provided Crowd Favorites are available for this pick.' : 'League is still publishing the current Arena choices.'}</em></span></div>}
+          <div className="champ-select-workspace__map-context"><Map /><span><small>MAP & SIDE</small><strong>{mapLabel}</strong><em>{sideLabel}</em></span><button type="button" className="btn-secondary" disabled={busy !== '' || !(session.myTeam || []).some((member) => member.cellId !== session.localPlayerCellId && member.puuid && !(member.muted || member.isMuted))} onClick={() => void muteUnmutedPlayers()}><VolumeX />Mute unmuted</button></div>
           <div className="champ-select-workspace__timer">
             <div><span>{currentAction ? 'Your action' : currentTurn.length ? 'Waiting for turn' : phase.replaceAll('_', ' ')}</span><small>{currentTurn.filter((action) => !action.completed).length ? `${currentTurn.filter((action) => !action.completed).length} action${currentTurn.filter((action) => !action.completed).length === 1 ? '' : 's'} in turn` : 'Live session'}</small></div>
             <strong>{session.timer?.isInfinite ? '∞' : `${seconds}s`}</strong>
@@ -395,7 +422,7 @@ export default function ChampSelectWorkspace({
 
           <div className="champ-select-workspace__body">
             <div className="champ-select-workspace__teams">
-              <div><h4><Users /> Your team</h4>{(session.myTeam || []).map((member, index) => <div className={`champ-select-workspace__member ${member.cellId === session.localPlayerCellId ? 'is-local' : ''}`} key={member.cellId || member.summonerId || index}><ChampionIcon id={championID(member)} champions={champions} version={version} /><span>{memberName(member, index)}</span><small>{championLabel(member, champions)}</small>{member.cellId === session.localPlayerCellId && <em>YOU</em>}</div>)}</div>
+              <div><h4><Users /> Your team</h4>{(session.myTeam || []).map((member, index) => <div className={`champ-select-workspace__member ${member.cellId === session.localPlayerCellId ? 'is-local' : ''}`} key={member.cellId || member.summonerId || index}><ChampionIcon id={championID(member)} champions={champions} version={version} /><span>{memberName(member, index)}</span><small>{championLabel(member, champions)}</small>{member.cellId === session.localPlayerCellId ? <em>YOU</em> : member.puuid && <button type="button" className="champ-select-workspace__mute" aria-label={`${member.muted || member.isMuted ? 'Unmute' : 'Mute'} ${memberName(member, index)}`} onClick={() => mutePlayer(member, !(member.muted || member.isMuted))} disabled={busy !== ''}>{member.muted || member.isMuted ? <Volume2 /> : <VolumeX />}</button>}</div>)}</div>
               <div><h4><Shield /> Opponents</h4>{(session.theirTeam || []).map((member, index) => <div className="champ-select-workspace__member" key={member.cellId || member.summonerId || index}><ChampionIcon id={championID(member)} champions={champions} version={version} enemy /><span>{memberName(member, index, true)}</span><small>{championLabel(member, champions)}</small></div>)}</div>
               <div className="champ-select-workspace__swaps">
                 <div className="champ-select-workspace__swaps-heading"><span><ArrowLeftRight /> TEAM SWAPS</span><small>Swap pick order or lane with a teammate</small></div>

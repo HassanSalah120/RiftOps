@@ -23,15 +23,19 @@ import (
 const CurrentVersion = 1
 
 type ProfilePreset struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	AccountKey       string `json:"accountKey"`
-	IconID           int    `json:"iconId,omitempty"`
-	BackgroundSkinID int    `json:"backgroundSkinId,omitempty"`
-	TitleID          int    `json:"titleId,omitempty"`
-	BannerID         int    `json:"bannerId,omitempty"`
-	TokenIDs         []int  `json:"tokenIds,omitempty"`
-	StatusMessage    string `json:"statusMessage,omitempty"`
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	AccountKey            string `json:"accountKey"`
+	IconID                int    `json:"iconId,omitempty"`
+	BackgroundSkinID      int    `json:"backgroundSkinId,omitempty"`
+	TitleID               int    `json:"titleId,omitempty"`
+	BannerID              int    `json:"bannerId,omitempty"` // retained for version-1 store compatibility
+	BannerAccent          string `json:"bannerAccent,omitempty"`
+	TokenIDs              []int  `json:"tokenIds,omitempty"`
+	PreferredBannerType   string `json:"preferredBannerType,omitempty"`
+	PreferredCrestType    string `json:"preferredCrestType,omitempty"`
+	SelectedPrestigeCrest int    `json:"selectedPrestigeCrest,omitempty"`
+	StatusMessage         string `json:"statusMessage,omitempty"`
 }
 
 type PreparationPreset struct {

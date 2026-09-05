@@ -78,7 +78,7 @@ export default function Sidebar({
   return (
     <nav className={`app-sidebar ${collapsed ? 'is-collapsed' : ''}`} aria-label="RiftOps workspaces">
       <div className="app-sidebar__brand">
-        <div className="app-sidebar__mark">R</div>
+        <img className="app-sidebar__mark app-sidebar__mark--image" src="/icons/riftops-128.png" alt="" width="128" height="128" />
         <div>
           <strong>RiftOps</strong>
           <span>League companion</span>

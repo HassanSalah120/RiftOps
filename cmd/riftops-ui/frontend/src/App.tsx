@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChevronDown, Play, Square, Shield, Server, Sparkles, Settings, Power, FolderOpen, Search, RotateCcw, Wrench } from 'lucide-react';
+import { ChevronDown, Play, Square, Shield, Server, RotateCcw, Wrench } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
 import GameSelector from './components/GameSelector';
@@ -22,17 +22,17 @@ import UpdateDialog from './components/UpdateDialog';
 import NotificationCenter from './components/NotificationCenter';
 import type { NotificationEntry } from './components/NotificationCenter';
 import { useLCUConnection } from './components/lcuConnectionContext';
-import { PERFORMANCE_MODES } from './components/lcuConnectionContext';
 import ClientControlRoom from './components/ClientControlRoom';
 import RemoteAccessPage from './components/RemoteAccessPage';
 import AccountSummary from './components/AccountSummary';
 import { GAMES, gameLabel } from './types';
-import { ActionFeedback, type FeedbackState } from './components/DesignPrimitives';
+import type { FeedbackState } from './components/DesignPrimitives';
 import { ALL_TABS, availableTabs, tabAvailable } from './clientCapabilities';
 import PhoneCompanionPanel from './components/PhoneCompanionPanel';
 import FriendsPanel from './components/FriendsPanel';
 import LaunchProfilesPanel from './components/LaunchProfilesPanel';
 import SocialCenter from './components/SocialCenter';
+import SettingsPage from './components/SettingsPage';
 import { useLocale } from './localeContext';
 
 function phaseLabel(phase: string): string {
@@ -514,7 +514,7 @@ export default function App() {
   if (clientMode === 'loading') {
     return (
       <main className="riftops-bootstrap" aria-busy="true" aria-live="polite">
-        <Shield />
+        <img className="riftops-bootstrap__logo" src="/branding/riftops-full-logo.png" alt="RiftOps" width="240" height="240" />
         <strong>Securing RiftOps…</strong>
         <span>Loading the permissions for this device.</span>
       </main>
@@ -565,7 +565,7 @@ export default function App() {
           {/* QoL Panel */}
           {activeTab === 'qol' && (
             <div className="workspace-stage workspace-stage--qol flex-1 min-h-0 overflow-hidden animate-fadeIn">
-              <QoLPanel />
+              <QoLPanel onOpenLive={() => setActiveTab('live')} />
             </div>
           )}
 
@@ -656,18 +656,60 @@ export default function App() {
               <div className="dashboard-page__body flex-1 overflow-y-auto px-4 py-3 space-y-4">
                 {remoteClient && <div className="phone-session-banner"><Shield /><span><strong>Phone session connected</strong><small>Live League controls are routed through your paired RiftOps desktop.</small></span></div>}
 
-                {!remoteClient && (
-                  <section className="dashboard-section dashboard-section--preflight" aria-labelledby="dashboard-preflight-title">
-                    <div id="dashboard-preflight-title" className="dashboard-section__kicker">BEFORE YOU LAUNCH</div>
-                    <div className="dashboard-page__context-grid">
-                      <section className="dashboard-section dashboard-section--target">
-                        <div className="dashboard-section__heading">
-                          <span className="dashboard-section__icon"><Server /></span>
-                          <span><small>TARGET GAME</small><strong>Choose a launch target</strong></span>
-                        </div>
-                        <GameSelector value={selectedGame} onChange={handleSetGame} disabled={!isIdle} />
+                {/* Balanced Cockpit Grid */}
+                <div className="dashboard-page__grid">
+                  {/* Primary Operations Column */}
+                  <div className="dashboard-page__primary space-y-4">
+                    {/* When Live: Client Control Room is elevated to #1 */}
+                    {isLive && (
+                      <section className="dashboard-section dashboard-section--control">
+                        <div className="dashboard-section__kicker">LEAGUE NOW</div>
+                        <ClientControlRoom remoteClient={remoteClient} onOpenQoL={() => setActiveTab(remoteClient ? 'live' : 'qol')} onOpenLive={() => setActiveTab('live')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
                       </section>
+                    )}
 
+                    {/* Preflight Target Game & Profiles */}
+                    {!remoteClient && (
+                      <section className={`dashboard-section dashboard-section--preflight ${isLive ? 'is-running-secondary' : ''}`} aria-labelledby="dashboard-preflight-title">
+                        <div id="dashboard-preflight-title" className="dashboard-section__kicker">{isLive ? 'ACTIVE TARGET & PROFILES' : 'BEFORE YOU LAUNCH'}</div>
+                        <div className="dashboard-page__context-grid">
+                          <section className="dashboard-section dashboard-section--target">
+                            <div className="dashboard-section__heading">
+                              <span className="dashboard-section__icon"><Server /></span>
+                              <span><small>TARGET GAME</small><strong>{isLive ? 'Current launch target' : 'Choose a launch target'}</strong></span>
+                            </div>
+                            <GameSelector value={selectedGame} onChange={handleSetGame} disabled={!isIdle} />
+                          </section>
+                        </div>
+                        <LaunchProfilesPanel
+                          activeProfileId={snapshot.ActiveProfileID}
+                          showToast={showToast}
+                          onRefreshSnapshot={async () => { setSnapshot(await api.fetchSnapshot()); }}
+                        />
+                      </section>
+                    )}
+
+                    {/* When Idle: Show Control Room below preflight */}
+                    {!isLive && (
+                      <section className="dashboard-section dashboard-section--control">
+                        <div className="dashboard-section__kicker">LEAGUE STATUS</div>
+                        <ClientControlRoom remoteClient={remoteClient} onOpenQoL={() => setActiveTab(remoteClient ? 'live' : 'qol')} onOpenLive={() => setActiveTab('live')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
+                      </section>
+                    )}
+
+                    {/* Quick Shortcuts */}
+                    {!remoteClient && (
+                      <section className="dashboard-section dashboard-section--quick">
+                        <div className="dashboard-section__kicker">SHORTCUTS & AUTOMATIONS</div>
+                        <QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
+                      </section>
+                    )}
+                  </div>
+
+                  {/* Secondary Companion Column */}
+                  <div className="dashboard-page__secondary space-y-4">
+                    {/* Presence Shield Card */}
+                    {!remoteClient && (
                       <section className="dashboard-section dashboard-section--presence glass-card p-3.5 space-y-3">
                         <div className="dashboard-section__heading">
                           <span className="dashboard-section__icon"><Shield /></span>
@@ -680,46 +722,39 @@ export default function App() {
                         <StatusSelector current={snapshot.Status} onChange={handleSetStatus} disabled={!presenceControlsAvailable} />
                         {!presenceControlsAvailable && <p className="text-[10px] leading-relaxed text-text-dim">Riot rejected the secure presence proxy. RiftOps restored native friends and chat for this run.</p>}
                       </section>
+                    )}
+
+                    {/* Friends Panel in Companion Column */}
+                    {!remoteClient && (
+                      <section className="dashboard-section dashboard-section--friends" aria-label="League friends">
+                        <div className="dashboard-section__kicker">SOCIAL</div>
+                        <FriendsPanel id="dashboard-friends" connected={lcuConnected} />
+                      </section>
+                    )}
+
+                    {remoteClient && <PhoneCompanionPanel showToast={(message, type = 'info') => showToast('League Client', message, type)} />}
+
+                    {snapshot.StartedAt && (
+                      <div className="dashboard-launch-history">
+                        <Play className="dashboard-launch-history__icon" />
+                        <span>Last launch <strong>{timeAgo(snapshot.StartedAt)}</strong></span>
+                        {snapshot.Game && <span className="dashboard-launch-history__game">{gameLabel(snapshot.Game)}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {!remoteClient && (
+                  <details className="dashboard-tools">
+                    <summary><span><Wrench /><span><strong>System diagnostics</strong><small>Runtime logs and debug console</small></span></span><ChevronDown /></summary>
+                    <div className="dashboard-tools__content">
+                      <section className="dashboard-section dashboard-section--logs">
+                        <div className="dashboard-section__kicker">DIAGNOSTICS</div>
+                        <LogViewer logs={logs} onClear={() => setLogs([])} />
+                      </section>
                     </div>
-                    <LaunchProfilesPanel
-                      activeProfileId={snapshot.ActiveProfileID}
-                      showToast={showToast}
-                      onRefreshSnapshot={async () => { setSnapshot(await api.fetchSnapshot()); }}
-                    />
-                  </section>
+                  </details>
                 )}
-
-                <section className="dashboard-section dashboard-section--control">
-                  <div className="dashboard-section__kicker">LEAGUE NOW</div>
-                  <ClientControlRoom remoteClient={remoteClient} onOpenQoL={() => setActiveTab(remoteClient ? 'live' : 'qol')} onOpenLive={() => setActiveTab('live')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
-                </section>
-                {!remoteClient && <section className="dashboard-section dashboard-section--friends" aria-label="League friends">
-                  <div className="dashboard-section__kicker">SOCIAL</div>
-                  <FriendsPanel id="dashboard-friends" connected={lcuConnected} />
-                </section>}
-                {remoteClient && <PhoneCompanionPanel showToast={(message, type = 'info') => showToast('League Client', message, type)} />}
-
-                {snapshot.StartedAt && (
-                  <div className="dashboard-launch-history">
-                    <Play className="dashboard-launch-history__icon" />
-                    <span>Last launch <strong>{timeAgo(snapshot.StartedAt)}</strong></span>
-                    {snapshot.Game && <span className="dashboard-launch-history__game">{gameLabel(snapshot.Game)}</span>}
-                  </div>
-                )}
-
-                {!remoteClient && <details className="dashboard-tools">
-                  <summary><span><Wrench /><span><strong>Utilities & diagnostics</strong><small>Shortcuts and local logs</small></span></span><ChevronDown /></summary>
-                  <div className="dashboard-tools__content">
-                    <section className="dashboard-section dashboard-section--quick">
-                      <div className="dashboard-section__kicker">SHORTCUTS</div>
-                      <QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
-                    </section>
-                    <section className="dashboard-section dashboard-section--logs">
-                      <div className="dashboard-section__kicker">DIAGNOSTICS</div>
-                      <LogViewer logs={logs} onClear={() => setLogs([])} />
-                    </section>
-                  </div>
-                </details>}
               </div>
             </div>
           )}
@@ -788,248 +823,42 @@ export default function App() {
              SETTINGS TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'settings' && (
-            <div className="workspace-stage workspace-stage--settings flex-1 overflow-y-auto p-4 space-y-4 animate-fadeIn">
-              <div className="settings-page-heading">
-                <div className="settings-page-heading__identity"><span className="settings-page-heading__icon"><Settings /></span><div><span className="page-header__eyebrow">WORKSPACE CONFIGURATION</span><h1>App settings</h1><p>Keep launch behavior, client performance, and desktop integration under control.</p></div></div>
-                <span className="page-header__badge">Local preferences</span>
-              </div>
-
-              <nav className="settings-nav" aria-label="Settings sections">
-                <a href="#settings-launch">Launch & presence</a>
-                <a href="#settings-interface">Interface & performance</a>
-                <a href="#settings-league">League installation</a>
-                <a href="#settings-data">Data & app</a>
-              </nav>
-              <ActionFeedback state={settingsFeedback} className="settings-feedback" />
-
-              {/* Preferences */}
-              <div id="settings-launch" className="settings-card glass-card p-4 space-y-3">
-                <div className="settings-card__heading"><span><Play /></span><div><small>LAUNCH & PRESENCE</small><h4>League startup</h4><p>Choose what RiftOps launches and how your presence starts.</p></div></div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs text-text-muted">Default Game</label>
-                    <select
-                      aria-label="Default game"
-                      name="default-game"
-                      value={prefGame}
-                      onChange={(e) => {
-                        setPrefGame(e.target.value);
-                        void persistPreferences({ game: e.target.value }).catch((err: any) => showToast('Save failed', err.message, 'error'));
-                      }}
-                      className="w-full text-xs"
-                    >
-                      {GAMES.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs text-text-muted">Startup Status</label>
-                    <select
-                      aria-label="Startup status"
-                      name="startup-status"
-                      value={prefStartup}
-                      onChange={(e) => {
-                        setPrefStartup(e.target.value);
-                        void persistPreferences({ startupStatus: e.target.value }).catch((err: any) => showToast('Save failed', err.message, 'error'));
-                      }}
-                      className="w-full text-xs"
-                    >
-                      <option value="last">Remember last</option>
-                      <option value="chat">Online</option>
-                      <option value="offline">Offline</option>
-                      <option value="mobile">Mobile</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="settings-control-list space-y-2 pt-2 border-t border-white/[0.06]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text">Keep lobby chat connected (MUC)</span>
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        aria-label="Keep lobby chat connected"
-                        checked={prefMUC}
-                        onChange={(e) => {
-                          setPrefMUC(e.target.checked);
-                          void persistPreferences({ connectToMUC: e.target.checked }).catch((err: any) => showToast('Save failed', err.message, 'error'));
-                        }}
-                      />
-                      <span className="slider" />
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div id="settings-interface" className="settings-card glass-card p-4 space-y-3">
-                <div className="settings-card__heading"><span><Sparkles /></span><div><small>INTERFACE & PERFORMANCE</small><h4>Workspace behavior</h4><p>These controls are stored locally and apply immediately.</p></div></div>
-                <div className="settings-control-list space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0"><span className="text-xs text-text block">{t('settings.language')}</span><span className="text-[10px] text-text-dim block mt-0.5">{t('settings.languageHelp')}</span></div>
-                    <select value={locale} onChange={(event) => { setLocale(event.target.value as 'en' | 'ar'); setSettingsFeedback({ tone: 'success', message: event.target.value === 'ar' ? 'Arabic interface enabled.' : 'English interface enabled.' }); }} className="w-32 text-xs shrink-0" aria-label={t('settings.language')}>
-                      <option value="en">English</option><option value="ar">العربية</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text">Auto check for updates</span>
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        aria-label="Automatically check for updates"
-                        checked={prefUpdates}
-                        onChange={(e) => {
-                          setPrefUpdates(e.target.checked);
-                          void persistPreferences({ checkUpdates: e.target.checked }).catch((err: any) => showToast('Save failed', err.message, 'error'));
-                        }}
-                      />
-                      <span className="slider" />
-                    </label>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text">Compact workspace density</span>
-                    <label className="toggle">
-                      <input type="checkbox" aria-label="Use compact workspace density" checked={compactMode} onChange={(e) => { setCompactMode(e.target.checked); setSettingsFeedback({ tone: 'success', message: e.target.checked ? 'Compact density enabled.' : 'Comfortable density enabled.' }); }} />
-                      <span className="slider" />
-                    </label>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text">Reduce interface motion</span>
-                    <label className="toggle">
-                      <input type="checkbox" aria-label="Reduce interface motion" checked={reducedMotion} onChange={(e) => { setReducedMotion(e.target.checked); setSettingsFeedback({ tone: 'success', message: e.target.checked ? 'Interface motion reduced.' : 'Standard interface motion restored.' }); }} />
-                      <span className="slider" />
-                    </label>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <span className="text-xs text-text block">Client performance mode</span>
-                      <span className="text-[10px] text-text-dim block mt-0.5">Controls background polling and refresh work.</span>
-                    </div>
-                    <select
-                      value={performanceMode}
-                      onChange={(event) => { setPerformanceMode(event.target.value as keyof typeof PERFORMANCE_MODES); setSettingsFeedback({ tone: 'success', message: `${PERFORMANCE_MODES[event.target.value as keyof typeof PERFORMANCE_MODES].label} performance mode applied.` }); }}
-                      className="w-32 text-xs shrink-0"
-                      aria-label="Client performance mode"
-                    >
-                      {Object.entries(PERFORMANCE_MODES).map(([key, mode]) => <option key={key} value={key}>{mode.label}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <div id="settings-league" className="settings-card glass-card p-4 space-y-3">
-                <div className="settings-card__heading"><span><FolderOpen /></span><div><small>LEAGUE INSTALLATION</small><h4>Client location & desktop</h4><p>Configure the executable RiftOps validates before launch.</p></div></div>
-                <div className="space-y-2 pb-3 border-b border-white/[0.06]">
-                  <div>
-                    <p className="text-xs text-text">Riot Client location</p>
-                    <p className="text-[11px] text-text-muted mt-0.5">
-                      Select League of Legends.app, Riot Client.app, or the client executable.
-                    </p>
-                  </div>
-                  <input
-                    aria-label="Riot Client location"
-                    name="riot-client-location"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={riotClientPath}
-                    disabled={riotLocationBusy}
-                    onChange={(event) => setRiotClientPath(event.target.value)}
-                    placeholder={snapshot.Platform === 'darwin'
-                      ? '/Applications/League of Legends.app'
-                      : 'RiotClientServices executable or application folder'}
-                    className="w-full text-xs"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={riotLocationBusy || !riotClientPath.trim()}
-                      onClick={() => void updateRiotLocation(
-                        () => api.saveRiotClientLocation(riotClientPath),
-                        'Saved and validated.',
-                      )}
-                      className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-[11px]"
-                    >
-                      <FolderOpen className="w-3.5 h-3.5" />
-                      Save Path
-                    </button>
-                    <button
-                      type="button"
-                      disabled={riotLocationBusy}
-                      onClick={() => void updateRiotLocation(
-                        api.detectRiotClientLocation,
-                        'Installation detected and saved.',
-                      )}
-                      className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-[11px]"
-                    >
-                      <Search className="w-3.5 h-3.5" />
-                      Auto-detect
-                    </button>
-                    {snapshot.Platform === 'darwin' && (
-                      <button
-                        type="button"
-                        disabled={riotLocationBusy}
-                        onClick={() => void updateRiotLocation(
-                          api.browseRiotClientLocation,
-                          'Application selected and saved.',
-                        )}
-                        className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-[11px]"
-                      >
-                        <FolderOpen className="w-3.5 h-3.5" />
-                        Browse…
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      disabled={riotLocationBusy || !riotClientPath}
-                      onClick={() => void updateRiotLocation(
-                        api.clearRiotClientLocation,
-                        'Saved override cleared; automatic discovery restored.',
-                      )}
-                      className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-[11px]"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      Clear
-                    </button>
-                  </div>
-                </div>
-                {snapshot.Platform === 'windows' && (
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-text">Start RiftOps with Windows</p>
-                      <p className="text-[11px] text-text-muted mt-0.5">Run RiftOps after you sign in to this PC.</p>
-                    </div>
-                    <label className="toggle">
-                      <input type="checkbox" aria-label="Start RiftOps with Windows" checked={autostartEnabled} onChange={(e) => void handleAutostart(e.target.checked)} />
-                      <span className="slider" />
-                    </label>
-                  </div>
-                )}
-                <div className="pt-2 border-t border-white/[0.06]">
-                  <button onClick={handleQuit} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-danger/15 text-danger border border-danger/30 hover:bg-danger hover:text-white transition text-xs font-bold">
-                    <Power className="w-3.5 h-3.5" />
-                    Quit RiftOps
-                  </button>
-                </div>
-              </div>
-
-              {/* About RiftOps */}
-              <div id="settings-data" className="settings-card settings-card--data glass-card p-4 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-primary" />
-                  <span className="text-xs font-bold text-white">About RiftOps</span>
-                </div>
-                <p className="text-xs text-text-muted leading-relaxed">
-                  Private Riot Client launcher with real-time presence masking, automation, and LCU integration.
-                </p>
-                <div className="flex items-center justify-between text-[11px] text-text-dim pt-2 border-t border-white/[0.04]">
-                  <span>Version: {snapshot.Version ? `v${snapshot.Version}` : 'loading...'}</span>
-                  <span>Build: {snapshot.Platform === 'darwin' ? 'macOS' : snapshot.Platform === 'windows' ? 'Windows x64' : snapshot.Platform || 'detecting...'}</span>
-                </div>
-                <button type="button" onClick={resetWorkspacePreferences} className="text-[10px] text-text-dim hover:text-primary transition cursor-pointer">
-                  Reset workspace layout and local filters
-                </button>
-                <button type="button" onClick={clearAssetCache} className="text-[10px] text-text-dim hover:text-primary transition cursor-pointer">
-                  Clear RiftOps asset cache
-                </button>
-              </div>
+            <div className="workspace-stage workspace-stage--settings flex-1 overflow-y-auto p-4 animate-fadeIn">
+              <SettingsPage
+                snapshot={snapshot}
+                prefGame={prefGame}
+                setPrefGame={setPrefGame}
+                prefStartup={prefStartup}
+                setPrefStartup={setPrefStartup}
+                prefMUC={prefMUC}
+                setPrefMUC={setPrefMUC}
+                prefUpdates={prefUpdates}
+                setPrefUpdates={setPrefUpdates}
+                riotClientPath={riotClientPath}
+                setRiotClientPath={setRiotClientPath}
+                riotLocationBusy={riotLocationBusy}
+                settingsFeedback={settingsFeedback}
+                setSettingsFeedback={setSettingsFeedback}
+                autostartEnabled={autostartEnabled}
+                handleAutostart={handleAutostart}
+                compactMode={compactMode}
+                setCompactMode={setCompactMode}
+                reducedMotion={reducedMotion}
+                setReducedMotion={setReducedMotion}
+                performanceMode={performanceMode}
+                setPerformanceMode={setPerformanceMode}
+                locale={locale}
+                setLocale={setLocale}
+                t={t}
+                persistPreferences={persistPreferences}
+                updateRiotLocation={updateRiotLocation}
+                api={api}
+                handleQuit={handleQuit}
+                resetWorkspacePreferences={resetWorkspacePreferences}
+                clearAssetCache={clearAssetCache}
+                showToast={showToast}
+                lcuConnected={lcuConnected}
+              />
             </div>
           )}
         </main>

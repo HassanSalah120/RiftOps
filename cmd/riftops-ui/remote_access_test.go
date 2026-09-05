@@ -94,7 +94,7 @@ func TestRemoteRouteScopeRejectsDesktopCapabilities(t *testing.T) {
 	handler := remoteRouteScope(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { called = true; w.WriteHeader(http.StatusNoContent) }))
 	for _, path := range []string{
 		"/api/quit", "/api/riot-client-location", "/api/capture-session", "/api/session-status",
-		"/api/preferences", "/api/check-update", "/api/qol/preferences", "/api/lcu/loot/craft",
+		"/api/preferences", "/api/check-update", "/api/skip-update", "/api/qol/preferences", "/api/lcu/loot/craft",
 		"/api/lcu/champ-select/runes/page", "/api/lcu/profile-icon", "/api/diagnostics/reports",
 	} {
 		called = false

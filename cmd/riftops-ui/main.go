@@ -1036,7 +1036,25 @@ func startEngine(w http.ResponseWriter, r *http.Request) {
 // launchGameArgs appends only the validated, Riot-supported locale flag. The
 // app never patches League files or accepts free-form locale arguments.
 func launchGameArgs(profile settings.LaunchProfile) []string {
-	args := append([]string(nil), profile.GameArgs...)
+	// Keep the dedicated profile locale as the single source of truth. Older
+	// profiles may still contain a free-form --locale argument in GameArgs;
+	// remove both --locale=value and the two-token form before appending the
+	// validated value below so Riot never receives conflicting locales.
+	args := make([]string, 0, len(profile.GameArgs)+1)
+	for index := 0; index < len(profile.GameArgs); index++ {
+		argument := profile.GameArgs[index]
+		lower := strings.ToLower(strings.TrimSpace(argument))
+		if lower == "--locale" {
+			if index+1 < len(profile.GameArgs) {
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(lower, "--locale=") {
+			continue
+		}
+		args = append(args, argument)
+	}
 	if locale := strings.TrimSpace(profile.LeagueLocale); locale != "" && locale != settings.DefaultLeagueLocale {
 		args = append(args, "--locale="+locale)
 	}
@@ -1103,6 +1121,10 @@ func getSessionStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func checkUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	prefs := backendEngine.Settings()
 	if !prefs.CheckUpdates {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"available": false})
@@ -1120,15 +1142,45 @@ func checkUpdate(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"available": false})
 		return
 	}
-	_ = backendEngine.MarkUpdatePrompted(release.Version)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"available": true,
 		"release": map[string]interface{}{
-			"version": release.Version,
-			"url":     release.URL,
+			"version":            release.Version,
+			"url":                release.URL,
+			"name":               release.Name,
+			"notes":              release.Notes,
+			"checksumAvailable":  release.ChecksumAvailable,
+			"signatureStatus":    release.SignatureStatus,
+			"downloadAssetNames": release.DownloadAssetNames,
 		},
 	})
+}
+
+func skipUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Version string `json:"version"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpError(w, "Invalid update version", http.StatusBadRequest)
+		return
+	}
+	body.Version = strings.TrimSpace(body.Version)
+	newer, err := update.IsNewer(buildinfo.Version, body.Version)
+	if err != nil || !newer {
+		httpError(w, "Invalid update version", http.StatusBadRequest)
+		return
+	}
+	if err := backendEngine.MarkUpdatePrompted(body.Version); err != nil {
+		httpError(w, "Could not save skipped version", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func showApp(w http.ResponseWriter, r *http.Request) {
@@ -1951,6 +2003,10 @@ func lcuAutoRolesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuCustomStartHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)

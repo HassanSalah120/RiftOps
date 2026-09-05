@@ -11,5 +11,7 @@
 *.tsbuildinfo
 
 # Local tooling and operating-system files
+/artifacts/
 .DS_Store
 Thumbs.db
+

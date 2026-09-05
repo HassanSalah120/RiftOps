@@ -2,6 +2,7 @@ package featurestore
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,6 +68,30 @@ func TestStoreRejectsUnknownVersion(t *testing.T) {
 	}
 	if _, err := New(path); err == nil {
 		t.Fatal("expected unknown version to be rejected")
+	}
+}
+
+func TestFailedUpdateLeavesLastAtomicSnapshotIntact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "features.json")
+	store, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(func(data *Data) error {
+		data.LobbyPresets = []LobbyPreset{{ID: "safe", Name: "Existing", QueueID: 420}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := string(mustRead(t, path))
+	if err := store.Update(func(data *Data) error {
+		data.LobbyPresets = nil
+		return errors.New("stop before write")
+	}); err == nil {
+		t.Fatal("failed update unexpectedly succeeded")
+	}
+	if after := string(mustRead(t, path)); after != before {
+		t.Fatal("failed update changed the last good atomic snapshot")
 	}
 }
 

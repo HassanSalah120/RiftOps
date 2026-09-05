@@ -28,6 +28,8 @@ export interface LCUConnectionSnapshot {
   pollInterval: number;
   realtimeInterval: number;
   refresh: () => Promise<void>;
+  streamerMode: boolean;
+  setStreamerMode: (enabled: boolean) => void;
 }
 
 export const LCUConnectionContext = createContext<LCUConnectionSnapshot | null>(null);

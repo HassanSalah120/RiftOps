@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -28,6 +29,17 @@ type reviewedOperation struct {
 	ExpiresAt    time.Time
 	Cancel       chan struct{}
 	Started      bool
+	LootItems    map[string]lootOperationItem
+}
+
+type lootOperationItem struct {
+	TargetID   string   `json:"targetId"`
+	LootID     string   `json:"lootId"`
+	RecipeName string   `json:"recipeName"`
+	LootIDs    []string `json:"lootIds"`
+	Repeat     int      `json:"repeat"`
+	Label      string   `json:"label,omitempty"`
+	Outputs    any      `json:"outputs,omitempty"`
 }
 
 var reviewedOperations = struct {
@@ -53,19 +65,26 @@ func operationPreviewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Kind      string   `json:"kind"`
-		TargetIDs []string `json:"targetIds"`
+		Kind      string              `json:"kind"`
+		TargetIDs []string            `json:"targetIds"`
+		LootItems []lootOperationItem `json:"lootItems"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid operation preview", http.StatusBadRequest)
 		return
 	}
 	body.Kind = strings.ToLower(strings.TrimSpace(body.Kind))
-	if body.Kind != "friend-remove" && body.Kind != "friend-invite" && body.Kind != "request-accept" && body.Kind != "request-decline" {
+	if body.Kind != "friend-remove" && body.Kind != "friend-invite" && body.Kind != "request-accept" && body.Kind != "request-decline" && body.Kind != "loot-craft" {
 		httpError(w, "Unsupported reviewed operation", http.StatusBadRequest)
 		return
 	}
-	if len(body.TargetIDs) == 0 || len(body.TargetIDs) > 100 {
+	if body.Kind == "loot-craft" {
+		body.TargetIDs = nil
+		if len(body.LootItems) == 0 || len(body.LootItems) > 20 {
+			httpError(w, "Select between 1 and 20 loot recipes", http.StatusBadRequest)
+			return
+		}
+	} else if len(body.TargetIDs) == 0 || len(body.TargetIDs) > 100 {
 		httpError(w, "Select between 1 and 100 targets", http.StatusBadRequest)
 		return
 	}
@@ -79,6 +98,49 @@ func operationPreviewHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	seen := make(map[string]struct{}, len(body.TargetIDs))
 	clean := make([]string, 0, len(body.TargetIDs))
+	resolvedLoot := make(map[string]lootOperationItem)
+	if body.Kind == "loot-craft" {
+		lf := safeLCU(w)
+		if lf == nil {
+			return
+		}
+		for index, item := range body.LootItems {
+			item.LootID, item.RecipeName, item.Label = strings.TrimSpace(item.LootID), strings.TrimSpace(item.RecipeName), strings.TrimSpace(item.Label)
+			if item.LootID == "" || item.RecipeName == "" || len(item.LootID) > 160 || len(item.RecipeName) > 160 || len(item.LootIDs) == 0 || len(item.LootIDs) > 20 || item.Repeat < 1 || item.Repeat > 100 {
+				httpError(w, "Loot recipe input is invalid", http.StatusBadRequest)
+				return
+			}
+			for idIndex := range item.LootIDs {
+				item.LootIDs[idIndex] = strings.TrimSpace(item.LootIDs[idIndex])
+				if item.LootIDs[idIndex] == "" || len(item.LootIDs[idIndex]) > 160 {
+					httpError(w, "Loot recipe input is invalid", http.StatusBadRequest)
+					return
+				}
+			}
+			recipes, err := lf.FetchLCULootRecipes(r.Context(), item.LootID)
+			if err != nil {
+				httpError(w, "League could not verify a selected loot recipe", http.StatusConflict)
+				return
+			}
+			resolved, ok := findLootRecipe(recipes, item.RecipeName)
+			if !ok {
+				httpError(w, "A selected loot recipe is no longer available", http.StatusConflict)
+				return
+			}
+			inventory, inventoryErr := lf.FetchLCULoot(r.Context())
+			if inventoryErr != nil || !lootInputsAvailable(resolved, inventory, item.LootIDs, item.Repeat) {
+				httpError(w, "A selected loot recipe does not have enough verified inputs", http.StatusConflict)
+				return
+			}
+			item.TargetID = fmt.Sprintf("loot-%d-%s", index+1, hex.EncodeToString([]byte(item.RecipeName))[:min(12, len(hex.EncodeToString([]byte(item.RecipeName))))])
+			item.Outputs = resolved["outputs"]
+			if item.Label == "" {
+				item.Label = item.RecipeName
+			}
+			clean = append(clean, item.TargetID)
+			resolvedLoot[item.TargetID] = item
+		}
+	}
 	for _, target := range body.TargetIDs {
 		target = strings.TrimSpace(target)
 		if target == "" || len(target) > 64 {
@@ -95,12 +157,125 @@ func operationPreviewHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Select at least one target", http.StatusBadRequest)
 		return
 	}
-	verb := map[string]string{"friend-remove": "REMOVE", "friend-invite": "INVITE", "request-accept": "ACCEPT", "request-decline": "DECLINE"}[body.Kind]
-	op := &reviewedOperation{ID: operationID(), Kind: body.Kind, TargetIDs: clean, Confirmation: fmt.Sprintf("%s %d %s", verb, len(clean), map[string]string{"friend-remove": "FRIENDS", "friend-invite": "FRIENDS", "request-accept": "REQUESTS", "request-decline": "REQUESTS"}[body.Kind]), State: "preview", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(2 * time.Minute).UTC(), Cancel: make(chan struct{})}
+	verb := map[string]string{"friend-remove": "REMOVE", "friend-invite": "INVITE", "request-accept": "ACCEPT", "request-decline": "DECLINE", "loot-craft": "CRAFT"}[body.Kind]
+	noun := map[string]string{"friend-remove": "FRIENDS", "friend-invite": "FRIENDS", "request-accept": "REQUESTS", "request-decline": "REQUESTS", "loot-craft": "RECIPES"}[body.Kind]
+	op := &reviewedOperation{ID: operationID(), Kind: body.Kind, TargetIDs: clean, Confirmation: fmt.Sprintf("%s %d %s", verb, len(clean), noun), State: "preview", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(2 * time.Minute).UTC(), Cancel: make(chan struct{}), LootItems: resolvedLoot}
 	reviewedOperations.Lock()
 	reviewedOperations.items[op.ID] = op
 	reviewedOperations.Unlock()
-	writeSafeJSON(w, map[string]any{"id": op.ID, "kind": op.Kind, "targetIds": op.TargetIDs, "confirmation": op.Confirmation, "expiresAt": op.ExpiresAt, "state": op.State})
+	lootPreview := make([]lootOperationItem, 0, len(op.LootItems))
+	for _, target := range op.TargetIDs {
+		if item, ok := op.LootItems[target]; ok {
+			lootPreview = append(lootPreview, item)
+		}
+	}
+	writeSafeJSON(w, map[string]any{"id": op.ID, "kind": op.Kind, "targetIds": op.TargetIDs, "lootItems": lootPreview, "confirmation": op.Confirmation, "expiresAt": op.ExpiresAt, "state": op.State})
+}
+
+func findLootRecipe(body []byte, recipeName string) (map[string]any, bool) {
+	var decoded any
+	if json.Unmarshal(body, &decoded) != nil {
+		return nil, false
+	}
+	var find func(any) (map[string]any, bool)
+	find = func(value any) (map[string]any, bool) {
+		switch current := value.(type) {
+		case []any:
+			for _, child := range current {
+				if result, ok := find(child); ok {
+					return result, true
+				}
+			}
+		case map[string]any:
+			if strings.TrimSpace(fmt.Sprint(current["recipeName"])) == recipeName {
+				return current, true
+			}
+			for _, child := range current {
+				if result, ok := find(child); ok {
+					return result, true
+				}
+			}
+		}
+		return nil, false
+	}
+	return find(decoded)
+}
+
+func lootInventoryCounts(body []byte) map[string]int {
+	var decoded any
+	if json.Unmarshal(body, &decoded) != nil {
+		return nil
+	}
+	counts := make(map[string]int)
+	var visit func(any)
+	visit = func(value any) {
+		switch current := value.(type) {
+		case []any:
+			for _, child := range current {
+				visit(child)
+			}
+		case map[string]any:
+			if id := strings.TrimSpace(fmt.Sprint(current["lootId"])); id != "" {
+				if count, ok := current["count"].(float64); ok && count >= 0 {
+					counts[id] = int(count)
+				}
+			}
+			for _, child := range current {
+				visit(child)
+			}
+		}
+	}
+	visit(decoded)
+	return counts
+}
+
+func lootInputsAvailable(recipe map[string]any, inventory []byte, selected []string, repeat int) bool {
+	counts := lootInventoryCounts(inventory)
+	if counts == nil || repeat < 1 {
+		return false
+	}
+	slots, _ := recipe["slots"].([]any)
+	if len(slots) == 0 {
+		for _, id := range selected {
+			if counts[id] < repeat {
+				return false
+			}
+		}
+		return len(selected) > 0
+	}
+	used := make(map[string]int)
+	for _, raw := range slots {
+		slot, ok := raw.(map[string]any)
+		if !ok {
+			return false
+		}
+		allowedRaw, _ := slot["lootIds"].([]any)
+		allowed := make(map[string]bool, len(allowedRaw))
+		for _, value := range allowedRaw {
+			allowed[strings.TrimSpace(fmt.Sprint(value))] = true
+		}
+		chosen := ""
+		for _, id := range selected {
+			if allowed[id] {
+				chosen = id
+				break
+			}
+		}
+		if chosen == "" {
+			return false
+		}
+		quantity := 1
+		if value, ok := slot["quantity"].(float64); ok && value > 0 {
+			quantity = int(value)
+		}
+		used[chosen] += quantity * repeat
+	}
+	for id, required := range used {
+		if counts[id] < required {
+			return false
+		}
+	}
+	return true
 }
 
 func lookupOperation(id string) *reviewedOperation {
@@ -274,7 +449,7 @@ func runReviewedOperation(op *reviewedOperation) {
 			return
 		default:
 		}
-		present, err := operationTargetPresent(ctx, lf, op.Kind, target)
+		present, err := operationTargetPresent(ctx, lf, op.Kind, target, op.LootItems[target])
 		if err != nil {
 			finishOperation(op, false, "Could not revalidate the target; no automatic retry was attempted")
 			return
@@ -293,9 +468,20 @@ func runReviewedOperation(op *reviewedOperation) {
 				actionErr = lf.UpdateFriendRequest(ctx, target, "both")
 			case "request-decline":
 				actionErr = lf.DeleteFriendRequest(ctx, target)
+			case "loot-craft":
+				item := op.LootItems[target]
+				_, actionErr = lf.CraftLCULootRecipe(ctx, item.RecipeName, item.LootIDs, item.Repeat)
 			}
 			if actionErr != nil {
 				result.Status, result.Detail = "failed", "League rejected this target"
+				if mutationResultAmbiguous(actionErr) {
+					op.mu.Lock()
+					op.Results = append(op.Results, result)
+					op.Completed++
+					op.mu.Unlock()
+					finishOperation(op, false, "League returned an ambiguous mutation result; processing stopped and no retry was attempted")
+					return
+				}
 			} else {
 				result.Status = "succeeded"
 			}
@@ -308,16 +494,30 @@ func runReviewedOperation(op *reviewedOperation) {
 		case <-ctx.Done():
 			finishOperation(op, false, "Operation timed out; no automatic retry was attempted")
 			return
-		case <-time.After(250 * time.Millisecond):
+		case <-time.After(map[bool]time.Duration{true: 500 * time.Millisecond, false: 250 * time.Millisecond}[op.Kind == "friend-invite"]):
 		}
 	}
 	finishOperation(op, false, "")
 }
 
-func operationTargetPresent(ctx context.Context, lf *riotclient.Lockfile, kind, target string) (bool, error) {
+func operationTargetPresent(ctx context.Context, lf *riotclient.Lockfile, kind, target string, lootItem lootOperationItem) (bool, error) {
 	var body []byte
 	var err error
-	if kind == "friend-remove" || kind == "friend-invite" {
+	if kind == "loot-craft" {
+		body, err = lf.FetchLCULootRecipes(ctx, lootItem.LootID)
+		if err != nil {
+			return false, err
+		}
+		recipe, present := findLootRecipe(body, lootItem.RecipeName)
+		if !present {
+			return false, nil
+		}
+		inventory, inventoryErr := lf.FetchLCULoot(ctx)
+		if inventoryErr != nil {
+			return false, inventoryErr
+		}
+		return lootInputsAvailable(recipe, inventory, lootItem.LootIDs, lootItem.Repeat), nil
+	} else if kind == "friend-remove" || kind == "friend-invite" {
 		body, err = lf.FetchLCUFriends(ctx)
 	} else {
 		body, err = lf.FetchFriendRequests(ctx)
@@ -332,6 +532,17 @@ func operationTargetPresent(ctx context.Context, lf *riotclient.Lockfile, kind, 
 	return containsTarget(decoded, target), nil
 }
 
+func mutationResultAmbiguous(err error) bool {
+	if err == nil {
+		return false
+	}
+	var lcuErr *riotclient.LCUError
+	if !errors.As(err, &lcuErr) {
+		return true
+	}
+	return lcuErr.StatusCode == http.StatusRequestTimeout || lcuErr.StatusCode == http.StatusTooManyRequests || lcuErr.StatusCode >= 500
+}
+
 func containsTarget(value any, target string) bool {
 	switch current := value.(type) {
 	case []any:
@@ -341,7 +552,7 @@ func containsTarget(value any, target string) bool {
 			}
 		}
 	case map[string]any:
-		for _, key := range []string{"id", "pid", "summonerId", "jid"} {
+		for _, key := range []string{"id", "pid", "summonerId", "jid", "lootId"} {
 			if stringValue, ok := current[key].(string); ok && stringValue == target {
 				return true
 			}
@@ -363,6 +574,8 @@ func finishOperation(op *reviewedOperation, cancelled bool, detail string) {
 	op.mu.Lock()
 	if cancelled {
 		op.State = "cancelled"
+	} else if detail != "" {
+		op.State = "failed"
 	} else if op.State != "failed" {
 		op.State = "complete"
 	}

@@ -22,11 +22,10 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
-// Riot's client-config service is rewritten to a publicly trusted hostname
-// whose DNS records resolve only to loopback. This is the same trust model as
-// the original Deceive proxy, without relying on the predecessor's domain or
-// certificate service.
-const LocalhostDomain = "riftops.backloop.dev"
+// Riot's client-config service is rewritten to a local loopback address. The
+// chat proxy certificate is generated and cached locally; no DNS record or
+// remote certificate service is involved.
+const LocalhostDomain = "127.0.0.1"
 
 type Phase string
 
@@ -464,26 +463,22 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	}
 
 	e.emit(e.phaseSnapshot(PhasePreparingProxy, game, "Preparing secure local chat proxy"))
-	if err := ensureLoopbackEndpoint(ctx, LocalhostDomain); err != nil {
-		slog.Warn("public loopback hostname is unavailable; using native Riot chat", "error", err)
-		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
-	}
 	chatListener, err := chatproxy.Listen("127.0.0.1:0")
 	if err != nil {
 		slog.Warn("local chat listener is unavailable; using native Riot chat", "error", err)
 		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
 	}
 	chatPort := chatListener.Addr().(*net.TCPAddr).Port
-	cachePath, err := certificate.DefaultPublicBundleCachePath()
+	cachePath, err := certificate.DefaultCachePath()
 	if err != nil {
 		_ = chatListener.Close()
-		slog.Warn("public certificate cache is unavailable; using native Riot chat", "error", err)
+		slog.Warn("local certificate cache is unavailable; using native Riot chat", "error", err)
 		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
 	}
-	serverCertificate, err := (certificate.PublicProvider{CachePath: cachePath, Hostname: LocalhostDomain}).Load(ctx)
+	serverCertificate, err := (certificate.Provider{CachePath: cachePath, Hostname: LocalhostDomain}).Load(ctx)
 	if err != nil {
 		_ = chatListener.Close()
-		slog.Warn("public loopback certificate is unavailable; using native Riot chat", "error", err)
+		slog.Warn("local loopback certificate is unavailable; using native Riot chat", "error", err)
 		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
 	}
 

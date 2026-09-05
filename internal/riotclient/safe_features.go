@@ -185,8 +185,6 @@ func (lf *Lockfile) FetchPendingRewards(ctx context.Context) ([]byte, error) {
 }
 
 func (lf *Lockfile) FetchProfileRegalia(ctx context.Context) ([]byte, error) {
-	// Read-only inventory surfaces. Mutation is intentionally not implemented
-	// until the League client exposes a stable ownership-checked contract.
 	return lf.DoRequest(ctx, http.MethodGet, "/lol-regalia/v2/current-summoner/regalia")
 }
 
@@ -196,6 +194,78 @@ func (lf *Lockfile) FetchChallengeTitles(ctx context.Context) ([]byte, error) {
 
 func (lf *Lockfile) FetchChallengeTokens(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, http.MethodGet, "/lol-challenges/v1/challenges/local-player")
+}
+
+func (lf *Lockfile) FetchChallengeSummary(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, http.MethodGet, "/lol-challenges/v1/summary-player-data/local-player")
+}
+
+func (lf *Lockfile) FetchRegaliaInventory(ctx context.Context, inventoryType string) ([]byte, error) {
+	inventoryType = strings.ToUpper(strings.TrimSpace(inventoryType))
+	if inventoryType != "REGALIA_BANNER" && inventoryType != "REGALIA_CREST" {
+		return nil, fmt.Errorf("unsupported regalia inventory type")
+	}
+	return lf.DoRequest(ctx, http.MethodGet, "/lol-regalia/v3/inventory/"+inventoryType)
+}
+
+// UpdateChallengePreferences writes only the documented challenge identity
+// fields. Callers must revalidate ownership against the local-player
+// catalogues immediately before using this method.
+func (lf *Lockfile) UpdateChallengePreferences(ctx context.Context, title string, challengeIDs []int, bannerAccent string) error {
+	if len(challengeIDs) > 3 {
+		return fmt.Errorf("at most three challenge tokens can be displayed")
+	}
+	payload := make(map[string]any, 3)
+	if title = strings.TrimSpace(title); title != "" {
+		if _, err := validateNumericID(title, "title id"); err != nil {
+			return err
+		}
+		payload["title"] = title
+	}
+	if challengeIDs != nil {
+		for _, id := range challengeIDs {
+			if id <= 0 {
+				return fmt.Errorf("challenge token ids must be positive")
+			}
+		}
+		payload["challengeIds"] = challengeIDs
+	}
+	if bannerAccent = strings.TrimSpace(bannerAccent); bannerAccent != "" {
+		if len(bannerAccent) > 80 {
+			return fmt.Errorf("banner id is too long")
+		}
+		payload["bannerAccent"] = bannerAccent
+	}
+	if len(payload) == 0 {
+		return fmt.Errorf("at least one challenge preference is required")
+	}
+	_, err := lf.doJSON(ctx, http.MethodPost, "/lol-challenges/v1/update-player-preferences", payload)
+	return err
+}
+
+// UpdateProfileRegalia changes the League-owned banner/crest presentation.
+// Ownership and selectable-value validation belongs to the handler because it
+// requires the live inventory response.
+func (lf *Lockfile) UpdateProfileRegalia(ctx context.Context, preferredBannerType, preferredCrestType string, selectedPrestigeCrest int) error {
+	preferredBannerType = strings.TrimSpace(preferredBannerType)
+	preferredCrestType = strings.TrimSpace(preferredCrestType)
+	if preferredBannerType == "" || preferredCrestType == "" || len(preferredBannerType) > 80 || len(preferredCrestType) > 80 || selectedPrestigeCrest < 0 {
+		return fmt.Errorf("regalia selection is invalid")
+	}
+	_, err := lf.doJSON(ctx, http.MethodPut, "/lol-regalia/v2/current-summoner/regalia", map[string]any{
+		"preferredBannerType":   preferredBannerType,
+		"preferredCrestType":    preferredCrestType,
+		"selectedPrestigeCrest": selectedPrestigeCrest,
+	})
+	return err
+}
+
+func (lf *Lockfile) FetchArenaAugments(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, http.MethodGet, "/lol-game-data/assets/v1/cherry-augments.json")
+}
+
+func (lf *Lockfile) FetchGameVersion(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, http.MethodGet, "/lol-patch/v1/game-version")
 }
 
 func (lf *Lockfile) SelectReward(ctx context.Context, grantID, rewardGroupID string, selections []string) error {

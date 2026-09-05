@@ -1,362 +1,282 @@
-# RiftOps
+<div align="center">
+  <img src="assets/branding/riftops-logo.png" alt="RiftOps Logo" width="340" />
+  <h1>RiftOps</h1>
+  <p><strong>The Local-First League of Legends Operations Deck & Companion for Windows and macOS</strong></p>
+  <p>Launch Riot games, automate safe queue workflows, track live matches, explore your skin vault, and inspect Hextech loot from one unified cockpit.</p>
 
-RiftOps is a desktop hub for Riot games, with League presence controls and
-local League Client quality-of-life tools. Native downloads are available for
-Windows and macOS. The canonical release version is stored in the root
-`VERSION` file; the local packaging scripts read it when `-Version`/the version
-argument is omitted.
+  <p>
+    <a href="https://github.com/HassanSalah120/RiftOps/releases"><img src="https://img.shields.io/github/v/release/HassanSalah120/RiftOps?display_name=tag&sort=semver&color=c8aa6e&label=release" alt="Latest Release" /></a>
+    <a href="https://github.com/HassanSalah120/RiftOps/actions/workflows/ci.yml"><img src="https://github.com/HassanSalah120/RiftOps/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status" /></a>
+    <a href="https://github.com/HassanSalah120/RiftOps/releases"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0b7285?logo=windows&logoColor=white" alt="Platform Support" /></a>
+    <a href="#-ban-safe-architecture"><img src="https://img.shields.io/badge/security-100%25%20Ban--Safe-059669" alt="Ban-Safe" /></a>
+    <a href="PRIVACY.md"><img src="https://img.shields.io/badge/privacy-Zero%20Telemetry-10b981" alt="Zero Telemetry" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue" alt="License" /></a>
+  </p>
 
-Download links and Windows signing details are in [Downloads](DOWNLOADS.md).
-See the [Privacy Policy](PRIVACY.md) for local storage, Riot-service requests,
-and optional LAN phone control.
-The competitor feature inventory and planned safe additions are in
-[Feature comparison and roadmap](COMPETITOR_COMPARISON.md).
-The implemented safe feature contract and desktop/phone boundaries are in
-[SAFE_FEATURES.md](SAFE_FEATURES.md).
+  <p>
+    <a href="#-feature-showcase">Explore Features</a> ·
+    <a href="#-quick-start">Quick Start</a> ·
+    <a href="#-ban-safe-architecture">Ban-Safe Architecture</a> ·
+    <a href="#-phone-companion-mimic-style-lan-control">Phone Control</a> ·
+    <a href="DOWNLOADS.md">Downloads</a> ·
+    <a href="PRIVACY.md">Privacy Policy</a>
+  </p>
+</div>
 
-## Start here
+---
 
-1. Download the latest `RiftOps-<version>-win-x64.exe` from the
-   [GitHub Releases page](https://github.com/HassanSalah120/RiftOps/releases).
-2. Put the file in a permanent folder, such as `C:\RiftOps`.
-3. Start **RiftOps**, choose the game you want, then press **Launch**.
-4. For League tools, open and sign in to the League Client first. In RiftOps,
-   select **Quality of Life** from the sidebar.
+<div align="center">
+  <img src="assets/screenshots/command-center.png" alt="RiftOps Command Center" width="100%" style="border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.7);" />
+  <p><em>Command Center: Real-time summoner rank and LP telemetry, 1-click Riot title launchpad, instant Presence Shield, and DPAPI-encrypted account switching.</em></p>
+</div>
 
-Windows release trust: while the SignPath Foundation application is pending,
-Windows releases are published unsigned and may show a SmartScreen “Unknown
-publisher” prompt. Verify the downloaded file against its `.sha256` checksum
-before running it. The release workflow can enable SignPath signing after
-approval; signed releases are Authenticode-verified and published with a
-refreshed checksum.
+---
 
-League does not have to be inside the Riot Client folder. On Windows, RiftOps
-also reads Riot's install registry and checks the registered League folder
-directly, including custom drives such as `D:\Games\League of Legends`. If a
-friend's PC still shows **Client unavailable**, update to the latest release,
-start League and sign in once, then use the refresh button in the RiftOps
-health card; do not copy or share the League `lockfile` because it contains a
-temporary local credential.
+## ⚡ Highlights at a Glance
 
-On macOS, RiftOps checks both `/Applications/League of Legends.app` and
-`~/Applications`. If League is installed elsewhere, open **Settings → Riot
-Client location**, then use **Browse**, **Auto-detect**, or paste the `.app`
-path. RiftOps validates the selection and stores the resolved executable in
-`settings.json`.
+- 🛡️ **100% Ban-Safe & Memory-Free**: Operates exclusively via Riot's official League Client API (LCU) and Game Client Data API (`127.0.0.1:2999`). Zero DLL injection, zero hooking, and zero Pengu Loader.
+- 🚀 **Multi-Game Launchpad**: One-click launcher for League of Legends, VALORANT, Legends of Runeterra, 2XKO, and the Riot Client.
+- 🎭 **Native Streamer & Privacy Mode**: One toggle anonymizes summoner names, profile IDs, and friend identities with lore-friendly aliases across all screens.
+- 💎 **Cosmetic Vault**: Explore and filter all 1,940+ skins with real ownership indicators, splash art, chromas, and craftable loot shards.
+- 🛠️ **Hextech Loot Workshop**: Real spendable balances with authentic in-game currency icons (BE, OE, RP, Mythic Essence, Keys) and 1-click recipe inspector.
+- 🤖 **Grind Mode Automation**: Persistent auto-accept queue pops, auto-return to lobby, auto-honor ally, and auto-claim event battle pass milestones.
+- 📱 **Zero-Cloud Phone Companion**: Pair any phone on your local Wi-Fi with a 5-minute single-use QR code to accept queues and manage champion select remotely.
 
-There is no Riot password field in RiftOps. Riot Client handles the initial
-sign-in. You can then save the active Riot login to a named launch profile for
-30 days. Launching another saved profile closes Riot Client, restores that
-profile's encrypted local session, and starts Riot again without a password
-prompt. If the saved session is missing or expired, Riot shows its normal
-sign-in screen and you can save the refreshed session afterward.
+---
 
-Saved sessions are protected with Windows DPAPI on Windows and the macOS
-Keychain on macOS. RiftOps never stores a Riot password, and session data stays
-on the local machine.
+## 📸 Feature Showcase
 
-### macOS first launch
+### 1. Cosmetic Vault & Skin Collection
+Browse every skin on your account alongside the ones still missing with instant multi-filtering, splash artwork, and craftable shard indicators.
 
-The GitHub build is ad-hoc signed but is not yet Apple-notarized. After
-extracting `RiftOps-macOS.zip`, move `RiftOps.app` to Applications, then
-Control-click the app and choose **Open** on first launch. If macOS still says
-the app is damaged, remove the download quarantine in Terminal:
+<div align="center">
+  <img src="assets/screenshots/skins-vault.png" alt="Cosmetic Vault" width="100%" style="border-radius: 8px;" />
+</div>
 
-```sh
-xattr -dr com.apple.quarantine /Applications/RiftOps.app
+- **Authentic Collection Stats**: Live counts for owned normal skins, champion coverage percentage, and shard readiness.
+- **Deep Filtering**: Filter by champion, ownership status (All / Owned / Missing), tier (Epic, Legendary, Mythic, Standard, Legacy), and chromas.
+- **Splash Art Resolution**: Instant high-resolution artwork loaded from Riot Data Dragon and CommunityDragon caching.
+
+---
+
+### 2. Hextech Loot Workshop
+Spendable wallet and crafting workstation with authentic League of Legends currency iconography and interactive recipe inspection.
+
+<div align="center">
+  <img src="assets/screenshots/loot-workshop.png" alt="Hextech Loot Workshop" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **Genuine Currency Icons**: Live spendable balances for Blue Essence, Orange Essence, Riot Points, Mythic Essence, Hextech Keys, and Event Tokens.
+- **Recipe Inspector**: Select any champion shard, skin shard, or chest to inspect its upgrade, disenchant, or reroll recipes.
+- **Batch Processing**: Disenchant duplicate champion shards or forge keys without tedious client lag.
+
+---
+
+### 3. Profile Studio & Live Regalia
+Personalize how your summoner card, profile background, and prestige badges appear to others without leaving the workspace.
+
+<div align="center">
+  <img src="assets/screenshots/profile-studio.png" alt="Profile Studio" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **Composite Summoner Inspector**: Live preview of your summoner card, level badge, equipped challenge tokens, and rank regalia.
+- **Custom Background Scenes**: Set your League client profile backdrop to any owned champion splash art.
+- **Owned Icon Library**: Visual search and instant selection across your entire library of owned summoner icons.
+
+---
+
+### 4. Quality of Life & Automation Engine
+Automate repetitive League Client tasks, save queue position presets, manage chat presence, and create safe settings snapshots.
+
+<div align="center">
+  <img src="assets/screenshots/qol-cockpit.png" alt="Quality of Life Cockpit" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **Grind Mode Master Loop**: Automatically accept queue pops, return to lobby post-game, honor teammates, auto-requeue, and claim rewards.
+- **Stealth Presence Switcher**: Seamlessly switch between Online, Away, Mobile, or completely Offline (invisible presence via loopback XMPP).
+- **Phase-Aware Controls**: UI buttons dynamically enable and disable based on the active League matchflow phase (Lobby, Queue, Ready Check, Champ Select, In-Game, Post Game).
+
+---
+
+### 5. Play Flow & Matchmaking Pipeline
+One-click matchmaking runbook: set primary and secondary lane preferences, create lobbies, and queue up with instant feedback.
+
+<div align="center">
+  <img src="assets/screenshots/play-flow.png" alt="Play Flow" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **Role & Lane Preferences**: Validate and save primary/secondary roles (Top, Jungle, Mid, Bot, Support, Fill) directly to the lobby.
+- **Mode Selector**: Jump straight into Ranked Solo, Ranked Flex, Normal Draft, ARAM, or Arena.
+- **Safe Rehearsal**: Practice and test draft workflows safely in Practice Tool before live queues.
+
+---
+
+### 6. Canonical Live Session
+Follow your match from queue pop through Champion Select, loading screen, active in-game telemetry, and post-game debrief.
+
+<div align="center">
+  <img src="assets/screenshots/live-session.png" alt="Live Session" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **Continuous 6-Phase Pipeline**: Real-time transition tracking across Queue, Ready Check, Champ Select, Loading, In Game, and Post Game.
+- **Live Game Client Telemetry**: Reads Riot's official Game Client Data API (`https://127.0.0.1:2999/liveclientdata/allgamedata`) during active games for gold, KDA, CS, and objectives.
+- **Arena Telemetry**: Dedicated tracking for Arena rounds, placements, augments, and partner health.
+
+---
+
+### 7. Social Center & Privacy Shield
+Fast, lightweight friend directory with built-in Streamer Mode and bulk lobby invitations.
+
+<div align="center">
+  <img src="assets/screenshots/social-center.png" alt="Social Center" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **Streamer Privacy Shield**: Obfuscates friend names into lore-friendly aliases (e.g., *Targon Stargazer*, *Bandle Gunner*, *Piltover Scout*) to prevent stream sniping.
+- **Direct Profile Links**: One-click access to OP.GG profiles for teammates and friends.
+- **Lobby Invitations**: Invite online friends directly from the social center into your active party.
+
+---
+
+### 8. Application Settings & Encrypted Account Switcher
+Granular workspace control, Riot Client executable auto-detection, and DPAPI-secured session storage.
+
+<div align="center">
+  <img src="assets/screenshots/settings-cockpit.png" alt="Settings Cockpit" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **One-Click Account Switching**: Save remembered Riot logins to named launch profiles. Swap accounts without typing passwords.
+- **Operating System Protection**: Sessions are encrypted with **Windows DPAPI** on Windows and the **macOS Keychain** on macOS. RiftOps never stores plaintext passwords.
+- **Auto-Detection**: Scans the Windows Registry and macOS `/Applications` to automatically locate Riot Client and League executables on any drive.
+
+---
+
+## 📱 Phone Companion (Mimic-Style LAN Control)
+
+RiftOps includes a local-first mobile companion inspired by Mimic. It communicates directly with your desktop over your home Wi-Fi network—**no external servers or cloud relays are involved**.
+
+```
+┌─────────────────┐       Wi-Fi LAN (HTTP)       ┌────────────────────────┐
+│  Mobile Device  │ ◄──────────────────────────► │  RiftOps Desktop Hub   │
+│  (Phone / Pad)  │  Single-use QR / Session     │  (Port 24080 / Local)  │
+└─────────────────┘                              └───────────┬────────────┘
+                                                             │ Loopback API
+                                                 ┌───────────▼────────────┐
+                                                 │   League Client (LCU)  │
+                                                 │   (127.0.0.1:Port)     │
+                                                 └────────────────────────┘
 ```
 
-## What you can do
+1. Open **Remote Access** under System in RiftOps.
+2. Click **Turn on** to activate the local network listener.
+3. Scan the displayed QR code with your smartphone camera.
+4. Accept queue pops, lock in your hover pick, swap rune pages, and monitor live match status from anywhere in your house.
 
-- Launch League, VALORANT, Runeterra, 2XKO, or Riot Client from one app.
-- Set your League presence to online, offline, or mobile-style masking.
-- View your live summoner identity and rank in Command Center, plus match
-  history and skin collection.
-- Customize your League profile background with any champion skin and browse
-  your owned profile icons from Collection → Profile Studio.
-- Automatically accept ready checks or return to the lobby after a match.
-- Start or stop matchmaking, save lane preferences, and dodge during champion
-  select with a clear safety confirmation.
-- Browse profile icons visually, use any champion skin as your background,
-  honor players, and claim available event-track rewards.
-- Use the League Client quick-action bar for launch, accept, queue, stop, and
-  Play Again actions with phase-aware disabled states.
-- Control a live Champion Select workspace: inspect timer, team, opponent,
-  pick/ban actions, lock-in state, and the full ban board.
-- Request, accept, decline, or cancel supported teammate pick-order and role
-  swaps directly from Champion Select (League exposes these only in compatible
-  queues and phases).
-- Search the LCU's pickable and bannable champions, hover a choice, lock it in,
-  choose owned skins and summoner spells, switch rune pages, and use ARAM
-  rerolls or bench swaps when League exposes them.
-- Configure Play Flow draft policies: act immediately, after a delay, or in the
-  last seconds; apply a selected rune page before picking; and automatically
-  fall back when a pick or ban is already occupied by the draft.
-- In Arena, optionally choose League's Bravery special pick (`-3`) instead of
-  sending a normal champion ID; the option is guarded so it cannot be used for
-  bans or non-Arena queues.
-- Arena Champion Select also surfaces the live LCU choice pool (including
-  Crowd Favorites when League publishes it), resolves Bravery into the actual
-  champion before skin selection, and keeps the post-resolution skin step
-  explicit instead of guessing a champion.
-- Keep local six-item reference plans for both the primary and fallback pick;
-  RiftOps uses them as a planning aid and does not silently mutate League's
-  item inventory.
-- Follow one canonical **Live Session** page from queue and ready check through
-  Champion Select, loading, active game, reconnecting, and immediate post-game.
-- When a match is running, Live Session can read the documented League Game
-  Client Data API for live players, KDA/CS, items, active-player stats, game
-  time, and objective events. This is read-only; RiftOps never injects input
-  into the game client.
-- Arena Live Session and Match History show event, round, teams remaining,
-  placement, fame, partner, and augment fields when the current League payload
-  exposes them. Missing Arena fields remain labelled unavailable rather than
-  being inferred by RiftOps.
-- Search and filter a reconnecting League friend list from the Social area.
-- Use Loot Workshop for live resource balances, League-backed crafting
-  recipes, explicit reroll/disenchant/open/upgrade labels when League exposes
-  them, and recent inventory changes.
-- If LCU match history is unavailable and public Riot API authentication is
-  configured, Match History can fall back to Match-V5 data. Set the optional
-  `riftops.riot.region` local preference to your platform code when needed.
-- Open the command palette with `Ctrl+K` (Windows) or `Cmd+K` (macOS), or use
-  `Alt+1` through `Alt+9` to switch desktop workspaces.
-- Use tray controls, diagnostics, update checks, and Windows startup settings.
-- Scan the Phone control QR code to open a paired, mobile-friendly RiftOps
-  dashboard from any phone on the same Wi-Fi network (opt-in, see below).
+> [!NOTE]
+> Pairing QR codes expire after 5 minutes and become invalid immediately upon first use. Mobile sessions are strictly bounded to safe gameflow actions; sensitive capabilities (account credentials, settings, loot crafting, and diagnostics) remain desktop-only.
 
-## Phone control (Mimic-style)
+---
 
-RiftOps includes a LAN-first phone mode inspired by Mimic. It does not send
-League data through a RiftOps relay server: the desktop keeps the LCU connection
-and the phone talks directly to the desktop over the local network.
+## 🛡️ Ban-Safe Architecture
 
-1. Start RiftOps and open **Remote Access** under System.
-2. Turn on phone control with the **Turn on** button in the Phone control card
-   (it stays off until you enable it, including after restarting RiftOps).
-3. Make sure the phone and computer are on the same Wi-Fi network.
-4. Scan the **Phone control** QR code with the phone camera.
-5. Keep the resulting page open for the phone-safe League workflow: current
-   client state, lobby and queue controls, ready check, friends, reversible LCU
-   presence, Champion Select, existing rune-page selection, match history, and
-   a read-only skin catalogue and the read-only Active Game dashboard. Phone
-   permissions are enforced by the server, not only hidden in the interface.
+RiftOps was engineered from the ground up to ensure complete compliance with Riot Games' policies and Vanguard anti-cheat rules:
 
-Desktop settings, saved-login/profile data, Riot Client paths, update checks,
-autostart, automation-policy editing, loot and crafting, rune-page editing,
-profile cosmetics, diagnostics, RiftOps engine start/stop, and app quit are not
-available to paired phones. Launching the League Client itself remains a named
-phone capability so an authenticated device can reconnect the local client;
-it does not expose a process command or filesystem path.
+| Category | Unsafe Third-Party Tools | RiftOps Architecture |
+|---|---|---|
+| **Process Memory** | Reads/writes game RAM; injects DLLs | **Zero memory access**. Does not attach to `League of Legends.exe`. |
+| **DirectX / GPU Hooks** | Injects overlay hooks into DirectX/Vulkan pipelines | **Standalone desktop app**. Uses native OS windowing with zero graphics hooking. |
+| **Client Code Injection** | Injects JS/CSS into client DOM via Pengu Loader | **Zero client modification**. Interacts only through standard HTTP/WebSocket LCU APIs. |
+| **Credential Safety** | Stores passwords or sends tokens to third-party servers | **Zero password storage**. Uses OS DPAPI / Keychain encryption locally. |
+| **Network Safety** | Routes traffic through hosted cloud relays | **100% Local Loopback**. All operations execute between your PC and local LCU. |
 
-Each pairing QR expires after five minutes and is invalid immediately after one
-phone uses it. The phone receives a separate in-memory session that lasts up to
-eight hours. The desktop card lists active devices and can disconnect one or all
-of them without replacing every QR. Sessions are also revoked when RiftOps
-exits. The mobile listener uses a separate LAN port; if Windows Firewall asks,
-allow RiftOps on private networks only. Pairing traffic is plain HTTP on your
-local network, so use only your own devices on trusted private Wi-Fi and never
-expose the listener to the internet.
+---
 
-The mobile dashboard loads League artwork from Riot Data Dragon and the local
-CommunityDragon fallback catalogue. The phone therefore needs normal internet
-access for those external images; the RiftOps API itself remains on the local
-LAN listener.
+## 🚀 Quick Start
 
-The Live Session scoreboard uses Riot's documented Game Client Data API on the
-local game client port (2999). It may be temporarily unavailable during loading,
-reconnect, or when League has not started its game data service; RiftOps keeps
-the last phase visible and does not invent missing statistics.
+### Windows (10 / 11)
 
-## League QoL quick guide
+1. Download the latest `RiftOps-<version>-win-x64.exe` from the [Releases Page](https://github.com/HassanSalah120/RiftOps/releases).
+2. Place the executable in a preferred folder (e.g., `C:\RiftOps` or `D:\RiftOps`).
+3. Launch **RiftOps.exe**. It will automatically detect your Riot Client and League installations.
+4. Launch League of Legends, sign in, and enjoy your new operations deck!
 
-Open League first, then use RiftOps → **Quality of Life** for client utilities,
-**Collection** for skins and profile identity, or **Loot Workshop** for
-inventory and crafting.
+> [!TIP]
+> **Windows SmartScreen Note**: While our open-source application with the SignPath Foundation is pending, Windows releases are published unsigned and may trigger an *Unknown Publisher* SmartScreen alert. Click **More Info** → **Run Anyway**. You can verify the build integrity against the published `.sha256` checksum.
 
-| You want to… | In RiftOps |
+### macOS (12+)
+
+1. Download `RiftOps-macOS.zip` from [Releases](https://github.com/HassanSalah120/RiftOps/releases).
+2. Extract the archive and move `RiftOps.app` to your `/Applications` directory.
+3. Control-click `RiftOps.app` and select **Open** on first launch.
+4. If macOS flags the download quarantine, run this in Terminal:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/RiftOps.app
+   ```
+
+---
+
+## ⌨️ Command Palette & Keyboard Shortcuts
+
+Press `Ctrl+K` (Windows) or `Cmd+K` (macOS) from anywhere in RiftOps to open the fuzzy-search command palette.
+
+| Shortcut | Action |
 |---|---|
-| Change your profile background | Collection → Profile Studio → Champion → Skin → Apply |
-| Browse profile icons | Collection → Profile Studio → search an owned icon → select → Apply |
-| Inspect or run a loot recipe | Loot Workshop → choose a material → Recipe Inspector |
-| Change presence or bio | Social → choose presence or update status message |
-| Save lane preferences | Queue Command → choose roles → Save Roles |
-| Automatically accept queue pops | Automation → Auto-accept ready checks |
-| Start or stop matchmaking | Queue Command → Start Queue / Stop Queue |
-| Dodge | Champion Select → Dodge Game → confirm |
-| Return to the lobby | Post Game → Play Again |
-| Claim event rewards | Post Game → Claim Event Rewards |
+| <kbd>Ctrl</kbd> + <kbd>K</kbd> / <kbd>Cmd</kbd> + <kbd>K</kbd> | Open Command Palette |
+| <kbd>Alt</kbd> + <kbd>1</kbd> | Navigate to Command Center |
+| <kbd>Alt</kbd> + <kbd>2</kbd> | Navigate to Play Flow |
+| <kbd>Alt</kbd> + <kbd>3</kbd> | Navigate to Live Session |
+| <kbd>Alt</kbd> + <kbd>4</kbd> | Navigate to Social Center |
+| <kbd>Alt</kbd> + <kbd>5</kbd> | Navigate to Match History |
+| <kbd>Alt</kbd> + <kbd>6</kbd> | Navigate to Skin Collection |
+| <kbd>Alt</kbd> + <kbd>7</kbd> | Navigate to Loot Workshop |
+| <kbd>Alt</kbd> + <kbd>8</kbd> | Navigate to Quality of Life |
+| <kbd>Alt</kbd> + <kbd>9</kbd> | Navigate to Application Settings |
 
-| View and control Champion Select | Champion Select → Live Client Control |
-| Pick or ban a champion | Champion Select → search → choose → Lock in |
-| Change spells, skin, or runes | Champion Select → Loadout |
-| Use ARAM reroll/bench | Champion Select → ARAM Bench |
-| Find a friend | Social → Friends → Search friends |
-| Run a common client action | Dashboard → Quick actions |
+---
 
-Controls become available only when League is in the right phase. If the
-Champion dropdown does not load after League opens, choose **Retry loading
-champions**.
+## 🛠️ Building from Source
 
-## Implemented
+### Prerequisites
+- **Go**: 1.24 or newer
+- **Node.js**: 20.x or newer & `npm`
+- **CGO Compiler**: MinGW-w64 (Windows) or Xcode Command Line Tools (macOS)
 
-- Riot Client discovery, launch, restart, and process monitoring
-- Loopback client-config and TLS chat proxies with affinity-aware routing
-- Incremental XMPP framing and online/offline/mobile presence masking
-- Lobby/MUC behavior and an in-game RiftOps control contact with notifications
-- Game selection for League, VALORANT, Runeterra, 2XKO, and Riot Client
-- Versioned local preferences and migration from earlier installations
-- Saved launch, presence, and desktop-startup preferences
-- Purpose-based workspaces grouped as **Operate**, **Review**, and **System**,
-  with one primary action and nearby feedback for each workflow
-- Command Center summoner/rank overview, phase-aware Play Flow, canonical Live
-  Session, match history, Collection, and action-first Loot Workshop
-- League friend list, client health/server status, dedicated Remote Access,
-  settings, diagnostics, keyboard command palette, and release update checks
-
-See [FEATURE_PARITY.md](FEATURE_PARITY.md) for feature evidence and
-[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the public-release gates.
-
-## Development
-
-The headless core builds without a C compiler:
-
+### 1. Build the Frontend
 ```sh
-go test ./...
-go vet ./...
-go run ./cmd/riftops --help
+cd cmd/riftops-ui/frontend
+npm install
+npm test
+npm run build
+cd ../../..
 ```
 
-The native desktop application uses Fyne and CGO. Windows requires MinGW-w64
-and `go-winres`; macOS requires Xcode command-line tools and the Fyne packaging
-CLI:
-
-```powershell
-go install github.com/tc-hib/go-winres@v0.3.3
-```
-
-```sh
-go install fyne.io/tools/cmd/fyne@v1.7.2 # macOS packaging
-```
-
-Build a native package:
-
+### 2. Build the Desktop App
+**Windows:**
 ```powershell
 ./scripts/build-windows.ps1 -Build 1
 ```
 
+**macOS:**
 ```sh
 bash ./scripts/build-macos.sh
 ```
 
-Outputs are `dist/RiftOps-<version>-win-x64.exe` and
-`dist/RiftOps-macOS.zip`, each with a matching `.sha256` checksum. The Windows
-and macOS release workflows run the same locked frontend install, lint, tests,
-production build, race-enabled desktop Go tests, and vet gates. Public releases
-still require platform signing and macOS Developer ID notarization.
+The output binary will be generated under `dist/RiftOps-<version>-win-x64.exe` (or `dist/RiftOps-macOS.zip`).
 
-### Windows signing for maintainers
+---
 
-RiftOps plans to use [SignPath Foundation](https://signpath.org/) for free
-signing of eligible open-source releases. Until approval, no signing secret or
-certificate is needed: the Windows workflow publishes an unsigned portable
-executable. After approval, create the GitHub trusted-build project and
-release-signing policy, then configure these GitHub Actions values:
+## 🔒 Privacy & Data Commitment
 
-- Secret: `SIGNPATH_API_TOKEN`
-- Repository variables: `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`,
-  `SIGNPATH_SIGNING_POLICY_SLUG`, and `SIGNPATH_ENABLED=true`
+RiftOps adheres to strict local-first privacy principles:
+- **No telemetry or analytics trackers**.
+- **No account data or passwords sent to remote servers**.
+- **Diagnostic logs are scrubbed** of authorization headers, tokens, and file paths.
+- Read our full [Privacy Policy](PRIVACY.md) and [Safe Feature Manifesto](SAFE_FEATURES.md).
 
-When enabled, the Windows workflow uploads the unsigned artifact to SignPath,
-downloads the signed artifact, verifies that its publisher is SignPath
-Foundation, and then attaches it to the GitHub release. The private signing
-key never enters this repository or GitHub Actions.
+---
 
-If Windows reports that the standard executable is in use, close RiftOps and
-build again. The script safely writes a versioned fallback such as
-`dist/RiftOps-<version>-win-x64-copy.exe` instead of replacing a running file.
+## 📄 License
 
-The desktop dashboard prefers loopback port `24080`. If another local service
-or a Windows excluded-port policy blocks it, RiftOps tries `24081` through
-`24089`, then asks Windows for a free loopback port automatically. The selected
-port is remembered for the single-instance “show RiftOps” action and is removed
-when the app exits.
+RiftOps is licensed under the [GNU General Public License v3.0](LICENSE).  
+Third-party notices and open-source licenses are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## League Quality of Life controls
-
-League must be open before using these local-client controls. RiftOps detects
-the active League Client API and ignores stale lockfiles left after a prior
-League session.
-
-- **Automation:** persistent auto-accept and auto-return-to-lobby options work
-  while RiftOps is running, even if the QoL page is closed.
-- **Social:** use live Online, Away, Mobile, or Offline presence and update the
-  chat status message.
-- **Profile cosmetics:** use Collection → Profile Studio to select any champion
-  skin as a background and search the owned visual profile-icon library.
-- **Queue & Lobby:** accept a ready check, start or stop matchmaking, and save
-  validated primary/secondary role preferences from a lobby.
-- **Champion Select:** pick, ban, and lock champions through the LCU action
-  queue; change spells, owned skin, and rune page; use ARAM rerolls/bench
-  swaps; configure timing, safe fallback picks/bans, and Arena Bravery; and
-  dodge only during champion select.
-- **End of Game:** return to the lobby, submit an honor vote, and claim
-  available event-track rewards using current League Client routes.
-
-Buttons are disabled outside their valid League phase. If profile data was
-requested before League finished connecting, use **Retry loading champions**.
-
-## Ownership and compatibility
-
-The Go module and release updater use <https://github.com/HassanSalah120/RiftOps>.
-RiftOps stores data under the `RiftOps` user configuration directory and imports
-compatible settings from the previous `Deceive` directory on first launch.
-
-RiftOps rewrites Riot chat to `riftops.backloop.dev`, which resolves only to the
-local machine, and keeps both the local and upstream XMPP legs TLS encrypted.
-It downloads and privately caches the current public-CA certificate bundle from
-the open-source [backloop.dev](https://github.com/perki/backloop.dev) service,
-then verifies its hostname, chain, validity window, matching key, and loopback
-DNS records before use. If that certificate cannot be obtained or Riot rejects
-its TLS handshake, RiftOps automatically restarts once with Riot's untouched
-chat configuration so friends and chat work normally; presence masking and
-RiftOps chat notifications are unavailable for that compatibility run. This
-does not use the predecessor's domain/service or modify the machine trust store.
-
-RiftOps does not expose account switching or store Riot credentials in its
-dashboard. It keeps normal launch and presence preferences locally, while Riot
-Client remains responsible for authentication and remembered-login behavior.
-
-League-only panels use the locally running League Client API. They require the
-League Client to be open, and actions such as dodge, play again, reward claims,
-or profile customization are sent only when the local client confirms success.
-
-## Crash and hang reports
-
-On Windows, RiftOps keeps its diagnostic files here:
-
-- `%LOCALAPPDATA%\riftops\debug.log` — the current bounded application log;
-  the previous segment is retained as `debug.log.1`.
-- `%LOCALAPPDATA%\riftops\reports\` — timestamped panic, hang, unexpected-exit,
-  and unclean-exit reports.
-
-An `unclean-exit` report is created on the next launch when the previous process
-ended before RiftOps could run its normal shutdown path. Reports contain runtime
-state and goroutine stacks. They are scrubbed for authorization values, pairing
-and session tokens, query secrets, and local home paths; stored with private
-permissions where the platform supports Unix modes; and limited to the newest
-20 reports with a 30-day maximum age.
-
-## Safety boundary
-
-The main dashboard and Riot proxies bind only to loopback. Optional Phone
-control binds a separate private-LAN listener, consumes a short-lived one-time
-pairing token, creates expiring/revocable in-memory device sessions, and exposes
-only an explicit, named mobile capability manifest. A route inventory test
-ensures phone permissions cannot reference an unregistered endpoint, and new
-desktop APIs remain remote-denied by default. The config proxy forwards only
-Riot's required headers, the outgoing chat connection verifies Riot's TLS
-hostname, downloaded loopback certificate material is accepted only after
-public-chain, hostname, key, validity, and loopback-DNS checks, and diagnostics
-exclude tokens and chat content. Third-party licensing is recorded in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+*RiftOps isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.*

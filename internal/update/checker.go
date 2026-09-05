@@ -17,9 +17,13 @@ const DefaultLatestReleaseURL = "https://api.github.com/repos/HassanSalah120/Rif
 const maxReleaseResponseBytes = 1 << 20
 
 type Release struct {
-	Version string
-	URL     string
-	Name    string
+	Version            string
+	URL                string
+	Name               string
+	Notes              string
+	ChecksumAvailable  bool
+	SignatureStatus    string
+	DownloadAssetNames []string
 }
 
 type Checker struct {
@@ -51,9 +55,13 @@ func (c Checker) Latest(ctx context.Context) (Release, error) {
 		return Release{}, fmt.Errorf("release service returned %s", response.Status)
 	}
 	var payload struct {
-		Tag  string `json:"tag_name"`
-		URL  string `json:"html_url"`
-		Name string `json:"name"`
+		Tag    string `json:"tag_name"`
+		URL    string `json:"html_url"`
+		Name   string `json:"name"`
+		Body   string `json:"body"`
+		Assets []struct {
+			Name string `json:"name"`
+		} `json:"assets"`
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxReleaseResponseBytes+1))
 	if err != nil {
@@ -72,7 +80,31 @@ func (c Checker) Latest(ctx context.Context) (Release, error) {
 	if err != nil || parsedURL.Scheme != "https" || parsedURL.Hostname() == "" || parsedURL.User != nil {
 		return Release{}, fmt.Errorf("release service returned an unsafe download page")
 	}
-	return Release{Version: payload.Tag, URL: payload.URL, Name: payload.Name}, nil
+	assetNames := make([]string, 0, len(payload.Assets))
+	checksumAvailable := false
+	for _, asset := range payload.Assets {
+		name := strings.TrimSpace(asset.Name)
+		if name == "" || len(name) > 180 {
+			continue
+		}
+		assetNames = append(assetNames, name)
+		if strings.HasSuffix(strings.ToLower(name), ".sha256") || strings.Contains(strings.ToLower(name), "checksums") {
+			checksumAvailable = true
+		}
+	}
+	notes := strings.TrimSpace(payload.Body)
+	if len(notes) > 8000 {
+		notes = notes[:8000]
+	}
+	return Release{
+		Version:            payload.Tag,
+		URL:                payload.URL,
+		Name:               payload.Name,
+		Notes:              notes,
+		ChecksumAvailable:  checksumAvailable,
+		SignatureStatus:    "not-verified-by-updater",
+		DownloadAssetNames: assetNames,
+	}, nil
 }
 
 func IsNewer(current, candidate string) (bool, error) {

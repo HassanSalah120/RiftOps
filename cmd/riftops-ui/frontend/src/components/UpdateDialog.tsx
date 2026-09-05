@@ -1,11 +1,13 @@
-import { Shield, Download, X } from 'lucide-react';
-import { useRef } from 'react';
+import { Shield, Download, X, BadgeCheck, FileCheck2 } from 'lucide-react';
+import { useRef, useState } from 'react';
 import type { Release } from '../types';
 import { safeReleaseURL } from '../externalURL';
+import { skipUpdate } from '../api';
 import { useDialogFocus } from './useDialogFocus';
 
 export default function UpdateDialog({ release, onDismiss }: { release: Release | null; onDismiss: () => void }) {
   const primaryActionRef = useRef<HTMLAnchorElement>(null);
+  const [skipBusy, setSkipBusy] = useState(false);
   const dialogRef = useDialogFocus<HTMLDivElement>(Boolean(release), onDismiss, primaryActionRef);
   if (!release) return null;
   const downloadURL = safeReleaseURL(release.url);
@@ -33,9 +35,19 @@ export default function UpdateDialog({ release, onDismiss }: { release: Release 
           </p>
         </div>
 
+        <div className="update-dialog__trust" aria-label="Release verification">
+          <span><FileCheck2 />Checksums {release.checksumAvailable ? 'published' : 'not listed'}</span>
+          <span><BadgeCheck />Code signature not verified by the updater</span>
+        </div>
+
+        {release.notes && <div className="update-dialog__notes"><small>RELEASE NOTES</small><p>{release.notes}</p></div>}
+
         <div className="flex justify-end gap-2.5 pt-2 border-t border-white/[0.08]">
           <button type="button" onClick={onDismiss} className="px-4 py-2 rounded-xl text-xs font-bold text-text-muted hover:text-white bg-white/[0.04] transition cursor-pointer border border-white/[0.06]">
             Later
+          </button>
+          <button type="button" disabled={skipBusy} onClick={() => { setSkipBusy(true); void skipUpdate(release.version).then(onDismiss).catch(() => undefined).finally(() => setSkipBusy(false)); }} className="px-4 py-2 rounded-xl text-xs font-bold text-text-muted hover:text-white bg-white/[0.04] transition cursor-pointer border border-white/[0.06]">
+            {skipBusy ? 'Saving…' : 'Skip version'}
           </button>
           {downloadURL ? <a ref={primaryActionRef}
             href={downloadURL} target="_blank" rel="noopener noreferrer"

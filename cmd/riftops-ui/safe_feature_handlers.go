@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,23 @@ func writeSafeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// summarizeFieldResults keeps mutation responses honest. A request may have
+// applied some fields and skipped or deferred others; callers must not infer
+// full success from an unconditional {"ok":true} envelope.
+func summarizeFieldResults(results map[string]string) (ok, partial bool) {
+	hasIssue, hasSuccess := false, false
+	for _, status := range results {
+		value := strings.ToLower(strings.TrimSpace(status))
+		switch {
+		case strings.HasPrefix(value, "failed"), strings.HasPrefix(value, "skipped"), strings.HasPrefix(value, "unavailable"), strings.HasPrefix(value, "waiting"):
+			hasIssue = true
+		case strings.HasPrefix(value, "applied"), strings.HasPrefix(value, "created"):
+			hasSuccess = true
+		}
+	}
+	return !hasIssue, hasIssue && hasSuccess
 }
 
 func safeLCU(w http.ResponseWriter) *riotclient.Lockfile {
@@ -53,6 +71,7 @@ type safeSocialResponse struct {
 	FriendRequests json.RawMessage `json:"friendRequests"`
 	FriendGroups   json.RawMessage `json:"friendGroups"`
 	Lobby          json.RawMessage `json:"lobby,omitempty"`
+	Warnings       []string        `json:"warnings,omitempty"`
 	FetchedAt      time.Time       `json:"fetchedAt"`
 }
 
@@ -68,19 +87,36 @@ func lcuSocialHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	friends, err := lf.FetchLCUFriends(ctx)
-	if err != nil {
+	friends = bytesTrimSpace(friends)
+	if err != nil || !isJSONObjectOrArray(friends) {
 		httpError(w, "Could not load League friends", http.StatusServiceUnavailable)
 		return
 	}
-	result := safeSocialResponse{Friends: friends, FriendRequests: json.RawMessage(`[]`), FriendGroups: json.RawMessage(`[]`), FetchedAt: time.Now().UTC()}
-	if requests, requestErr := lf.FetchFriendRequests(ctx); requestErr == nil && json.Valid(requests) {
+	result := safeSocialResponse{Friends: friends, FetchedAt: time.Now().UTC()}
+	if requests, requestErr := lf.FetchFriendRequests(ctx); requestErr == nil && isJSONObjectOrArray(requests) {
 		result.FriendRequests = requests
+	} else {
+		// Keep an unavailable endpoint distinct from an empty list. Returning []
+		// here would make a route change look like "no pending requests".
+		result.Warnings = append(result.Warnings, "Friend requests are unavailable for this League patch")
 	}
-	if groups, groupsErr := lf.FetchFriendGroups(ctx); groupsErr == nil && json.Valid(groups) {
+	if groups, groupsErr := lf.FetchFriendGroups(ctx); groupsErr == nil && isJSONObjectOrArray(groups) {
 		result.FriendGroups = groups
+	} else {
+		result.Warnings = append(result.Warnings, "Friend folders are unavailable for this League patch")
 	}
-	if lobby, lobbyErr := lf.FetchCurrentLobby(ctx); lobbyErr == nil && json.Valid(lobby) {
+	if lobby, lobbyErr := lf.FetchCurrentLobby(ctx); lobbyErr == nil && isJSONObjectOrArray(lobby) {
 		result.Lobby = lobby
+	} else {
+		var lcuErr *riotclient.LCUError
+		// A 404 from the lobby endpoint is the normal idle state, not a
+		// capability failure. Keep the membership set empty without showing a
+		// warning on every social refresh.
+		if errors.As(lobbyErr, &lcuErr) && lcuErr.StatusCode == http.StatusNotFound {
+			result.Lobby = json.RawMessage(`{}`)
+		} else {
+			result.Warnings = append(result.Warnings, "Lobby membership is unavailable for this League patch")
+		}
 	}
 	writeSafeJSON(w, result)
 }
@@ -97,32 +133,103 @@ func lcuCapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 	if lf == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	statuses := make([]map[string]string, 0, 4)
+	patch := fetchGameVersionLabel(ctx, lf)
+	statuses := make([]map[string]string, 0, 12)
+	appendStatus := func(id, status, detail string) {
+		entry := map[string]string{"id": id, "status": status, "patch": patch}
+		if detail != "" {
+			entry["detail"] = detail
+		}
+		statuses = append(statuses, entry)
+	}
 	if _, err := lf.GetGameflowPhase(ctx); err == nil {
-		statuses = append(statuses, map[string]string{"id": "gameflow", "status": "supported"})
+		appendStatus("gameflow", "supported", "")
 	} else {
-		statuses = append(statuses, map[string]string{"id": "gameflow", "status": "unavailable", "detail": "League did not expose the gameflow route"})
+		appendStatus("gameflow", "unavailable", "Unavailable for this League patch")
 	}
 	probes := []struct {
 		id    string
+		shape byte
 		probe func(context.Context) ([]byte, error)
 	}{
-		{id: "social", probe: lf.FetchLCUFriends},
-		{id: "profile-icons", probe: func(ctx context.Context) ([]byte, error) {
+		{id: "social", shape: '[', probe: lf.FetchLCUFriends},
+		{id: "profile-icons", shape: '[', probe: func(ctx context.Context) ([]byte, error) {
 			return lf.DoRequest(ctx, http.MethodGet, "/lol-game-data/assets/v1/summoner-icons.json")
 		}},
-		{id: "pending-rewards", probe: lf.FetchPendingRewards},
+		{id: "profile-regalia", shape: '{', probe: lf.FetchProfileRegalia},
+		{id: "challenge-profile", shape: '{', probe: lf.FetchChallengeSummary},
+		{id: "available-queues", shape: '[', probe: lf.FetchAvailableQueues},
+		{id: "custom-bots", shape: 0, probe: lf.FetchCustomBots},
+		{id: "arena-augments", shape: '[', probe: lf.FetchArenaAugments},
+		{id: "game-settings", shape: '{', probe: lf.FetchGameSettings},
+		{id: "input-settings", shape: '{', probe: lf.FetchInputSettings},
+		{id: "pending-rewards", shape: 0, probe: lf.FetchPendingRewards},
 	}
 	for _, capability := range probes {
-		if _, err := capability.probe(ctx); err == nil {
-			statuses = append(statuses, map[string]string{"id": capability.id, "status": "supported"})
-		} else {
-			statuses = append(statuses, map[string]string{"id": capability.id, "status": "unavailable", "detail": "Unavailable for this League patch"})
+		raw, err := capability.probe(ctx)
+		if err != nil {
+			var lcuErr *riotclient.LCUError
+			detail := "Unavailable for this League patch"
+			if errors.As(err, &lcuErr) && lcuErr.StatusCode != http.StatusNotFound && lcuErr.StatusCode != http.StatusMethodNotAllowed {
+				detail = "League Client did not make this capability available"
+			}
+			appendStatus(capability.id, "unavailable", detail)
+			continue
 		}
+		trimmed := bytesTrimSpace(raw)
+		if len(trimmed) == 0 || !json.Valid(trimmed) || (capability.shape != 0 && trimmed[0] != capability.shape) {
+			appendStatus(capability.id, "changed", "League returned an unexpected response shape")
+			continue
+		}
+		appendStatus(capability.id, "supported", "")
 	}
 	writeSafeJSON(w, statuses)
+}
+
+// fetchGameVersionLabel normalizes the two response shapes used by League's
+// patch endpoint. Unknown object shapes stay explicitly unknown instead of
+// leaking a serialized JSON object into the UI's patch badge.
+func fetchGameVersionLabel(ctx context.Context, lf *riotclient.Lockfile) string {
+	raw, err := lf.FetchGameVersion(ctx)
+	if err != nil {
+		return "unknown"
+	}
+	return normalizeGameVersionLabel(raw)
+}
+
+func normalizeGameVersionLabel(raw []byte) string {
+	var value any
+	if json.Unmarshal(raw, &value) == nil {
+		switch typed := value.(type) {
+		case string:
+			if patch := strings.TrimSpace(typed); patch != "" {
+				return patch
+			}
+		case map[string]any:
+			for _, key := range []string{"gameVersion", "patchline", "version"} {
+				if patch := strings.TrimSpace(fmt.Sprint(typed[key])); patch != "" && patch != "<nil>" {
+					return patch
+				}
+			}
+		}
+	}
+	return "unknown"
+}
+
+func bytesTrimSpace(value []byte) []byte {
+	return []byte(strings.TrimSpace(string(value)))
+}
+
+func isJSONObjectOrArray(value []byte) bool {
+	trimmed := bytesTrimSpace(value)
+	return len(trimmed) > 0 && json.Valid(trimmed) && (trimmed[0] == '[' || trimmed[0] == '{')
+}
+
+func isJSONArray(value []byte) bool {
+	trimmed := bytesTrimSpace(value)
+	return len(trimmed) > 0 && json.Valid(trimmed) && trimmed[0] == '['
 }
 
 func lcuFriendRequestActionHandler(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +301,8 @@ func lcuSocialInviteHandler(w http.ResponseWriter, r *http.Request) {
 	seen := make(map[string]struct{}, len(body.SummonerIDs))
 	for _, id := range body.SummonerIDs {
 		id = strings.TrimSpace(id)
-		if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		parsed, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || parsed <= 0 {
 			httpError(w, "Summoner IDs must be numeric", http.StatusBadRequest)
 			return
 		}
@@ -287,9 +395,15 @@ func profilePresetsHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Preset name, id, or status message is invalid", http.StatusBadRequest)
 		return
 	}
-	if preset.IconID < 0 || preset.BackgroundSkinID < 0 || preset.TitleID < 0 || preset.BannerID < 0 || len(preset.TokenIDs) > 3 {
+	if preset.IconID < 0 || preset.BackgroundSkinID < 0 || preset.TitleID < 0 || preset.BannerID < 0 || len(preset.TokenIDs) > 3 || preset.SelectedPrestigeCrest < 0 || len(preset.BannerAccent) > 80 || len(preset.PreferredBannerType) > 80 || len(preset.PreferredCrestType) > 80 {
 		httpError(w, "Preset asset ids are invalid", http.StatusBadRequest)
 		return
+	}
+	for _, tokenID := range preset.TokenIDs {
+		if tokenID <= 0 {
+			httpError(w, "Challenge token ids must be positive", http.StatusBadRequest)
+			return
+		}
 	}
 	if err := store.Update(func(data *featurestore.Data) error {
 		presets := data.ProfilePresets[accountKey]
@@ -328,7 +442,8 @@ func profilePresetApplyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID string `json:"id"`
+		ID        string `json:"id"`
+		PreviewID string `json:"previewId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ID) == "" {
 		httpError(w, "Preset id is required", http.StatusBadRequest)
@@ -345,6 +460,10 @@ func profilePresetApplyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if selected == nil {
 		httpError(w, "Profile preset was not found", http.StatusNotFound)
+		return
+	}
+	if !consumePresetPreview(strings.TrimSpace(body.PreviewID), "profile", selected.ID, accountKey) {
+		httpError(w, "Preview this preset again before applying it", http.StatusConflict)
 		return
 	}
 	result := map[string]string{}
@@ -372,10 +491,11 @@ func profilePresetApplyHandler(w http.ResponseWriter, r *http.Request) {
 			result["statusMessage"] = "applied"
 		}
 	}
-	if selected.TitleID > 0 || selected.BannerID > 0 || len(selected.TokenIDs) > 0 {
-		result["regalia"] = "unavailable: this League client does not expose a safe owned-regalia mutation"
+	for field, status := range applyOwnedProfileRegalia(r.Context(), lf, *selected) {
+		result[field] = status
 	}
-	writeSafeJSON(w, map[string]any{"ok": true, "preset": selected, "results": result})
+	ok, partial := summarizeFieldResults(result)
+	writeSafeJSON(w, map[string]any{"ok": ok, "partial": partial, "preset": selected, "results": result})
 }
 
 func safePresetPreviewHandler(w http.ResponseWriter, r *http.Request) {
@@ -422,7 +542,11 @@ func safePresetPreviewHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	currentView := map[string]any{"iconId": 0}
 	currentView["iconId"] = current.Summoner.ProfileIconID
-	writeSafeJSON(w, map[string]any{"expiresAt": time.Now().Add(2 * time.Minute).UTC(), "current": currentView, "proposed": proposed, "requiresConfirmation": true})
+	if regalia, regaliaErr := loadProfileRegaliaInventory(r.Context(), lf); regaliaErr == nil {
+		currentView["regalia"] = regalia.Current
+	}
+	grant := newPresetPreview("profile", proposed.ID, accountKey)
+	writeSafeJSON(w, map[string]any{"previewId": grant.ID, "expiresAt": grant.ExpiresAt, "current": currentView, "proposed": proposed, "requiresConfirmation": true})
 }
 
 func lcuCustomBotsHandler(w http.ResponseWriter, r *http.Request) {
@@ -442,6 +566,12 @@ func lcuCustomBotsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Bot mutations are valid only while the current custom lobby is open.
+	// Requiring the phase here prevents a stale phone/desktop request from
+	// reaching the LCU after the lobby has advanced or ended.
+	if !requireLCUPhase(w, r, lf, "Lobby") {
 		return
 	}
 	var body struct {
@@ -473,7 +603,7 @@ func lcuProfileCustomizationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	metadata, metadataErr := lf.DoRequest(r.Context(), http.MethodGet, "/lol-game-data/assets/v1/summoner-icons.json")
 	inventory, inventoryErr := lf.FetchLCUProfileIconInventory(r.Context())
-	if metadataErr != nil || inventoryErr != nil || !json.Valid(metadata) {
+	if metadataErr != nil || inventoryErr != nil || !isJSONArray(metadata) {
 		httpError(w, "Profile customization is unavailable for this League patch", http.StatusServiceUnavailable)
 		return
 	}
@@ -481,31 +611,35 @@ func lcuProfileCustomizationHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuProfileRegaliaHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	lf := safeLCU(w)
 	if lf == nil {
 		return
 	}
-	regalia, regaliaErr := lf.FetchProfileRegalia(r.Context())
-	titles, titlesErr := lf.FetchChallengeTitles(r.Context())
-	tokens, tokensErr := lf.FetchChallengeTokens(r.Context())
-	if regaliaErr != nil && titlesErr != nil && tokensErr != nil {
-		httpError(w, "Profile regalia is unavailable for this League patch", http.StatusServiceUnavailable)
+	if r.Method == http.MethodGet {
+		inventory, err := loadProfileRegaliaInventory(r.Context(), lf)
+		if err != nil {
+			httpError(w, "Profile regalia is unavailable for this League patch", http.StatusServiceUnavailable)
+			return
+		}
+		writeSafeJSON(w, inventory)
 		return
 	}
-	if !json.Valid(regalia) {
-		regalia = []byte("null")
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-	if !json.Valid(titles) {
-		titles = []byte("null")
+	var request featurestore.ProfilePreset
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		httpError(w, "Invalid profile-regalia selection", http.StatusBadRequest)
+		return
 	}
-	if !json.Valid(tokens) {
-		tokens = []byte("null")
+	results := applyOwnedProfileRegalia(r.Context(), lf, request)
+	if len(results) == 0 {
+		httpError(w, "Select an owned title, token, banner, or crest", http.StatusBadRequest)
+		return
 	}
-	writeSafeJSON(w, map[string]any{"regalia": json.RawMessage(regalia), "titles": json.RawMessage(titles), "tokens": json.RawMessage(tokens), "mutation": "unavailable until League exposes a stable ownership-checked route"})
+	ok, partial := summarizeFieldResults(results)
+	writeSafeJSON(w, map[string]any{"ok": ok, "partial": partial, "results": results})
 }
 
 func lcuChampSelectMuteHandler(w http.ResponseWriter, r *http.Request) {
@@ -515,6 +649,9 @@ func lcuChampSelectMuteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	lf := safeLCU(w)
 	if lf == nil {
+		return
+	}
+	if !requireLCUPhase(w, r, lf, "ChampSelect") {
 		return
 	}
 	var body struct {
@@ -541,7 +678,22 @@ func lcuBalanceCatalogHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	httpError(w, "Unavailable for this League patch", http.StatusServiceUnavailable)
+	lf := safeLCU(w)
+	if lf == nil {
+		return
+	}
+	augments, augmentErr := lf.FetchArenaAugments(r.Context())
+	trimmedAugments := bytesTrimSpace(augments)
+	if augmentErr != nil || len(trimmedAugments) == 0 || !json.Valid(trimmedAugments) || trimmedAugments[0] != '[' {
+		httpError(w, "Arena augment catalogue is unavailable for this League patch", http.StatusServiceUnavailable)
+		return
+	}
+	patch := fetchGameVersionLabel(r.Context(), lf)
+	writeSafeJSON(w, map[string]any{
+		"patch": patch, "arenaAugments": json.RawMessage(trimmedAugments),
+		"arenaStatus": "supported", "aramBalance": []any{},
+		"aramStatus": "unavailable", "aramDetail": "League does not expose an owned local ARAM balance catalogue on this patch",
+	})
 }
 
 func lcuReplayHandler(w http.ResponseWriter, r *http.Request) {
@@ -565,11 +717,11 @@ func lcuReplayHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		body, err := lf.FetchReplayMetadata(r.Context(), gameID)
 		if err != nil {
-			httpError(w, "Replay metadata is unavailable", http.StatusNotFound)
+			writeSafeJSON(w, replayStatusResponse{GameID: func() int64 { value, _ := strconv.ParseInt(gameID, 10, 64); return value }(), Status: "unavailable", Error: "Replay is unavailable or expired"})
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+		status, _ := normalizeReplayMetadata(gameID, body)
+		writeSafeJSON(w, status)
 	case http.MethodPost:
 		action := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("action")))
 		var err error
@@ -583,7 +735,9 @@ func lcuReplayHandler(w http.ResponseWriter, r *http.Request) {
 			// Revalidate availability immediately before opening the replay. A
 			// match can expire or be removed between the list refresh and this
 			// action; never tell the client that Watch succeeded in that case.
-			if metadata, metadataErr := lf.FetchReplayMetadata(r.Context(), gameID); metadataErr != nil || !json.Valid(metadata) {
+			metadata, metadataErr := lf.FetchReplayMetadata(r.Context(), gameID)
+			status, valid := normalizeReplayMetadata(gameID, metadata)
+			if metadataErr != nil || !valid || status.Status != "ready" {
 				httpError(w, "Replay is no longer available", http.StatusConflict)
 				return
 			}
@@ -689,11 +843,81 @@ func lcuPendingRewardsHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Invalid reward selection", http.StatusBadRequest)
 		return
 	}
+	pending, pendingErr := lf.FetchPendingRewards(r.Context())
+	if pendingErr != nil || !rewardSelectionPresent(pending, body.GrantID, body.RewardGroupID, body.Selections) {
+		httpError(w, "Reward selection is no longer available", http.StatusConflict)
+		return
+	}
 	if err := lf.SelectReward(r.Context(), body.GrantID, body.RewardGroupID, body.Selections); err != nil {
 		httpError(w, "League rejected the reward selection", http.StatusBadGateway)
 		return
 	}
 	writeSafeJSON(w, map[string]bool{"ok": true})
+}
+
+func rewardSelectionPresent(body []byte, grantID, groupID string, selections []string) bool {
+	grantID, groupID = strings.TrimSpace(grantID), strings.TrimSpace(groupID)
+	if grantID == "" || groupID == "" || len(selections) == 0 || !json.Valid(body) {
+		return false
+	}
+	wanted := make(map[string]bool, len(selections))
+	for _, selection := range selections {
+		selection = strings.TrimSpace(selection)
+		if selection == "" {
+			return false
+		}
+		wanted[selection] = false
+	}
+	var root any
+	if json.Unmarshal(body, &root) != nil {
+		return false
+	}
+	var visit func(any, string, string)
+	visit = func(value any, inheritedGrant, inheritedGroup string) {
+		switch current := value.(type) {
+		case []any:
+			for _, child := range current {
+				visit(child, inheritedGrant, inheritedGroup)
+			}
+		case map[string]any:
+			localGrant, localGroup := inheritedGrant, inheritedGroup
+			for _, key := range []string{"grantId", "grantID"} {
+				if candidate := strings.TrimSpace(fmt.Sprint(current[key])); candidate != "" && candidate != "<nil>" {
+					localGrant = candidate
+				}
+			}
+			for _, key := range []string{"rewardGroupId", "rewardGroupID", "groupId", "groupID"} {
+				if candidate := strings.TrimSpace(fmt.Sprint(current[key])); candidate != "" && candidate != "<nil>" {
+					localGroup = candidate
+				}
+			}
+			if localGrant == "" {
+				if _, hasGroups := current["rewardGroups"]; hasGroups {
+					if candidate := strings.TrimSpace(fmt.Sprint(current["id"])); candidate != "" && candidate != "<nil>" {
+						localGrant = candidate
+					}
+				}
+			}
+			if localGrant == grantID && localGroup == groupID {
+				for _, key := range []string{"id", "rewardId", "rewardID", "itemId", "itemID"} {
+					candidate := strings.TrimSpace(fmt.Sprint(current[key]))
+					if _, ok := wanted[candidate]; ok {
+						wanted[candidate] = true
+					}
+				}
+			}
+			for _, child := range current {
+				visit(child, localGrant, localGroup)
+			}
+		}
+	}
+	visit(root, "", "")
+	for _, found := range wanted {
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func preparationPresetsHandler(w http.ResponseWriter, r *http.Request) {
@@ -804,7 +1028,8 @@ func preparationPresetApplyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID string `json:"id"`
+		ID        string `json:"id"`
+		PreviewID string `json:"previewId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ID) == "" {
 		httpError(w, "Preset id is required", http.StatusBadRequest)
@@ -821,6 +1046,10 @@ func preparationPresetApplyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if selected == nil {
 		httpError(w, "Preparation preset was not found", http.StatusNotFound)
+		return
+	}
+	if !consumePresetPreview(strings.TrimSpace(body.PreviewID), "preparation", selected.ID, accountKey) {
+		httpError(w, "Preview this preset again before applying it", http.StatusConflict)
 		return
 	}
 	result := map[string]string{}
@@ -848,7 +1077,50 @@ func preparationPresetApplyHandler(w http.ResponseWriter, r *http.Request) {
 	if len(selected.ItemIDs) > 0 {
 		result["items"] = "saved plan; item-set apply is explicit"
 	}
-	writeSafeJSON(w, map[string]any{"ok": true, "preset": selected, "results": result})
+	ok, partial := summarizeFieldResults(result)
+	writeSafeJSON(w, map[string]any{"ok": ok, "partial": partial, "preset": selected, "results": result})
+}
+
+func preparationPresetPreviewHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	store := requireFeatureStore(w)
+	lf := safeLCU(w)
+	if store == nil || lf == nil {
+		return
+	}
+	accountKey, err := currentAccountKey(r.Context(), lf)
+	if err != nil {
+		httpError(w, "The signed-in account is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.ID) == "" {
+		httpError(w, "Preset id is required", http.StatusBadRequest)
+		return
+	}
+	var selected *featurestore.PreparationPreset
+	for _, preset := range store.Snapshot().PreparationPresets[accountKey] {
+		if preset.ID == strings.TrimSpace(body.ID) {
+			copy := preset
+			selected = &copy
+			break
+		}
+	}
+	if selected == nil {
+		httpError(w, "Preparation preset was not found", http.StatusNotFound)
+		return
+	}
+	phase, _ := lf.GetGameflowPhase(r.Context())
+	grant := newPresetPreview("preparation", selected.ID, accountKey)
+	writeSafeJSON(w, map[string]any{
+		"previewId": grant.ID, "expiresAt": grant.ExpiresAt, "proposed": selected,
+		"current": map[string]any{"gameflowPhase": phase}, "requiresConfirmation": true,
+	})
 }
 
 func lobbyPresetsHandler(w http.ResponseWriter, r *http.Request) {
@@ -892,6 +1164,10 @@ func lobbyPresetsHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	lf := safeLCU(w)
+	if lf == nil {
+		return
+	}
 	var preset featurestore.LobbyPreset
 	if err := json.NewDecoder(r.Body).Decode(&preset); err != nil {
 		httpError(w, "Invalid lobby preset", http.StatusBadRequest)
@@ -905,6 +1181,12 @@ func lobbyPresetsHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Lobby preset name, id, and queue are required", http.StatusBadRequest)
 		return
 	}
+	queue, queueErr := findAvailableQueue(r.Context(), lf, preset.QueueID)
+	if queueErr != nil {
+		httpError(w, "That queue is unavailable for this League patch", http.StatusConflict)
+		return
+	}
+	preset.QueueName, preset.GameMode, preset.MapID = queue.Name, queue.GameMode, queue.MapID
 	if err := store.Update(func(data *featurestore.Data) error {
 		for index := range data.LobbyPresets {
 			if data.LobbyPresets[index].ID == preset.ID {
@@ -935,7 +1217,8 @@ func lobbyPresetApplyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID string `json:"id"`
+		ID        string `json:"id"`
+		PreviewID string `json:"previewId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ID) == "" {
 		httpError(w, "Preset id is required", http.StatusBadRequest)
@@ -957,14 +1240,73 @@ func lobbyPresetApplyHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Lobby queue is invalid", http.StatusBadRequest)
 		return
 	}
-	if err := lf.CreateQueueLobby(r.Context(), selected.QueueID); err != nil {
+	if !consumePresetPreview(strings.TrimSpace(body.PreviewID), "lobby", selected.ID, "") {
+		httpError(w, "Preview this preset again before applying it", http.StatusConflict)
+		return
+	}
+	queue, queueErr := findAvailableQueue(r.Context(), lf, selected.QueueID)
+	if queueErr != nil {
+		httpError(w, "That queue is unavailable for this League patch", http.StatusConflict)
+		return
+	}
+	if err := createAvailableQueueLobby(r.Context(), lf, queue); err != nil {
 		httpError(w, "League rejected the lobby preset", http.StatusBadGateway)
 		return
 	}
+	results := map[string]string{"lobby": "created"}
 	if selected.FirstRole != "" && selected.SecondRole != "" {
-		_ = lf.AutoSetRoles(r.Context(), selected.FirstRole, selected.SecondRole)
+		if err := lf.AutoSetRoles(r.Context(), selected.FirstRole, selected.SecondRole); err != nil {
+			results["rolePreferences"] = "unavailable for this queue or League patch"
+		} else {
+			results["rolePreferences"] = "applied"
+		}
 	}
-	writeSafeJSON(w, map[string]any{"ok": true, "preset": selected})
+	ok, partial := summarizeFieldResults(results)
+	writeSafeJSON(w, map[string]any{"ok": ok, "partial": partial, "preset": selected, "results": results})
+}
+
+func lobbyPresetPreviewHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	store := requireFeatureStore(w)
+	lf := safeLCU(w)
+	if store == nil || lf == nil {
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.ID) == "" {
+		httpError(w, "Preset id is required", http.StatusBadRequest)
+		return
+	}
+	var selected *featurestore.LobbyPreset
+	for _, preset := range store.Snapshot().LobbyPresets {
+		if preset.ID == strings.TrimSpace(body.ID) {
+			copy := preset
+			selected = &copy
+			break
+		}
+	}
+	if selected == nil {
+		httpError(w, "Lobby preset was not found", http.StatusNotFound)
+		return
+	}
+	queue, err := findAvailableQueue(r.Context(), lf, selected.QueueID)
+	if err != nil {
+		httpError(w, "That queue is unavailable for this League patch", http.StatusConflict)
+		return
+	}
+	current := json.RawMessage(`null`)
+	if lobby, lobbyErr := lf.FetchCurrentLobby(r.Context()); lobbyErr == nil && json.Valid(lobby) {
+		current = lobby
+	}
+	proposed := *selected
+	proposed.QueueName, proposed.GameMode, proposed.MapID = queue.Name, queue.GameMode, queue.MapID
+	grant := newPresetPreview("lobby", selected.ID, "")
+	writeSafeJSON(w, map[string]any{"previewId": grant.ID, "expiresAt": grant.ExpiresAt, "current": current, "proposed": proposed, "requiresConfirmation": true})
 }
 
 func lcuItemSetsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1009,12 +1351,12 @@ func lcuItemSetsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		RollbackID  string           `json:"rollbackId"`
-		Name        string           `json:"name"`
-		ChampionIDs []string         `json:"championIds"`
-		Mode        string           `json:"mode"`
-		Map         string           `json:"map"`
-		Blocks      []map[string]any `json:"blocks"`
+		RollbackID  string                `json:"rollbackId"`
+		Name        string                `json:"name"`
+		ChampionIDs []string              `json:"championIds"`
+		Mode        string                `json:"mode"`
+		Map         string                `json:"map"`
+		Blocks      []managedItemSetBlock `json:"blocks"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		httpError(w, "Invalid item-set request", http.StatusBadRequest)
@@ -1045,47 +1387,16 @@ func lcuItemSetsHandler(w http.ResponseWriter, r *http.Request) {
 		writeSafeJSON(w, map[string]any{"ok": true, "rollbackId": snapshot.ID})
 		return
 	}
-	request.Name = strings.TrimSpace(request.Name)
-	if request.Name == "" || len([]rune(request.Name)) > 48 || len(request.Blocks) > 20 {
-		httpError(w, "Item-set name or blocks are invalid", http.StatusBadRequest)
-		return
-	}
 	current, err := lf.FetchItemSets(r.Context(), summoner.SummonerID)
 	if err != nil {
 		httpError(w, "League item sets are unavailable", http.StatusBadGateway)
 		return
 	}
-	var wrapper map[string]any
-	if err := json.Unmarshal(current, &wrapper); err != nil {
-		httpError(w, "League returned an invalid item-set document", http.StatusBadGateway)
+	encoded, managed, mergeErr := mergeManagedItemSet(current, managedItemSetSpec{Name: request.Name, ChampionIDs: request.ChampionIDs, Mode: request.Mode, Map: request.Map, Blocks: request.Blocks})
+	if mergeErr != nil {
+		httpError(w, mergeErr.Error(), http.StatusBadRequest)
 		return
 	}
-	sets, ok := wrapper["itemSets"].([]any)
-	if !ok {
-		sets = []any{}
-	}
-	identity, _ := json.Marshal(struct {
-		Name        string           `json:"name"`
-		ChampionIDs []string         `json:"championIds"`
-		Mode        string           `json:"mode"`
-		Map         string           `json:"map"`
-		Blocks      []map[string]any `json:"blocks"`
-	}{request.Name, request.ChampionIDs, request.Mode, request.Map, request.Blocks})
-	identityHash := sha256.Sum256(identity)
-	managed := map[string]any{"uid": "riftops-" + hex.EncodeToString(identityHash[:8]), "name": "RiftOps: " + request.Name, "championIds": request.ChampionIDs, "mode": request.Mode, "map": request.Map, "blocks": request.Blocks, "type": "custom"}
-	replaced := false
-	for index, existing := range sets {
-		if existingMap, ok := existing.(map[string]any); ok && existingMap["uid"] == managed["uid"] {
-			sets[index] = managed
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		sets = append(sets, managed)
-	}
-	wrapper["itemSets"] = sets
-	encoded, _ := json.Marshal(wrapper)
 	// Keep a bounded recovery point before every managed write. The snapshot is
 	// local-only and can be used by a future explicit rollback action.
 	store := requireFeatureStore(w)
@@ -1250,7 +1561,55 @@ func clientSettingsBackupPreviewHandler(w http.ResponseWriter, r *http.Request) 
 		httpError(w, "Current League settings are unavailable", http.StatusBadGateway)
 		return
 	}
-	writeSafeJSON(w, map[string]any{"backup": backup, "current": settingsBackupPayload{General: currentGeneral, Input: currentInput}, "restoreConfirmation": "RESTORE SETTINGS"})
+	var proposed settingsBackupPayload
+	if json.Unmarshal(backup.Payload, &proposed) != nil {
+		httpError(w, "Settings backup is invalid", http.StatusBadGateway)
+		return
+	}
+	changes := append(settingsDiffPaths("game", currentGeneral, proposed.General), settingsDiffPaths("input", currentInput, proposed.Input)...)
+	sort.Strings(changes)
+	changeCount := len(changes)
+	if len(changes) > 200 {
+		changes = changes[:200]
+	}
+	redactedBackup := *backup
+	redactedBackup.Payload = nil
+	writeSafeJSON(w, map[string]any{"backup": redactedBackup, "changes": changes, "changeCount": changeCount, "restoreConfirmation": "RESTORE SETTINGS"})
+}
+
+func settingsDiffPaths(prefix string, currentBody, proposedBody []byte) []string {
+	var current, proposed any
+	if json.Unmarshal(currentBody, &current) != nil || json.Unmarshal(proposedBody, &proposed) != nil {
+		return []string{prefix}
+	}
+	result := make([]string, 0)
+	var compare func(string, any, any)
+	compare = func(path string, left, right any) {
+		leftMap, leftOK := left.(map[string]any)
+		rightMap, rightOK := right.(map[string]any)
+		if leftOK && rightOK {
+			keys := make(map[string]struct{}, len(leftMap)+len(rightMap))
+			for key := range leftMap {
+				keys[key] = struct{}{}
+			}
+			for key := range rightMap {
+				keys[key] = struct{}{}
+			}
+			for key := range keys {
+				next := key
+				if path != "" {
+					next = path + "." + key
+				}
+				compare(next, leftMap[key], rightMap[key])
+			}
+			return
+		}
+		if !reflect.DeepEqual(left, right) {
+			result = append(result, path)
+		}
+	}
+	compare(prefix, current, proposed)
+	return result
 }
 
 func clientSettingsBackupRestoreHandler(w http.ResponseWriter, r *http.Request) {
@@ -1330,20 +1689,34 @@ func clientSettingsBackupRestoreHandler(w http.ResponseWriter, r *http.Request) 
 		httpError(w, "Could not create the pre-restore snapshot; no settings were changed", http.StatusInternalServerError)
 		return
 	}
+	rollback := func() error {
+		if rollbackErr := lf.PatchGameSettings(r.Context(), currentGeneral); rollbackErr != nil {
+			return rollbackErr
+		}
+		return lf.PatchInputSettings(r.Context(), currentInput)
+	}
 	if err := lf.PatchGameSettings(r.Context(), payload.General); err != nil {
-		httpError(w, "Could not restore general League settings", http.StatusBadGateway)
+		if rollbackErr := rollback(); rollbackErr != nil {
+			httpError(w, "Could not restore general League settings; the previous settings could not be confirmed", http.StatusBadGateway)
+		} else {
+			httpError(w, "Could not restore general League settings; previous settings were restored", http.StatusBadGateway)
+		}
 		return
 	}
 	if err := lf.PatchInputSettings(r.Context(), payload.Input); err != nil {
-		_ = lf.PatchGameSettings(r.Context(), currentGeneral)
-		_ = lf.PatchInputSettings(r.Context(), currentInput)
-		httpError(w, "Could not restore input settings; previous settings were restored", http.StatusBadGateway)
+		if rollbackErr := rollback(); rollbackErr != nil {
+			httpError(w, "Could not restore input settings; the previous settings could not be confirmed", http.StatusBadGateway)
+		} else {
+			httpError(w, "Could not restore input settings; previous settings were restored", http.StatusBadGateway)
+		}
 		return
 	}
 	if err := lf.SaveGameSettings(r.Context()); err != nil {
-		_ = lf.PatchGameSettings(r.Context(), currentGeneral)
-		_ = lf.PatchInputSettings(r.Context(), currentInput)
-		httpError(w, "Could not save restored settings; previous settings were restored", http.StatusBadGateway)
+		if rollbackErr := rollback(); rollbackErr != nil {
+			httpError(w, "Could not save restored settings; the previous settings could not be confirmed", http.StatusBadGateway)
+		} else {
+			httpError(w, "Could not save restored settings; previous settings were restored", http.StatusBadGateway)
+		}
 		return
 	}
 	writeSafeJSON(w, map[string]bool{"ok": true})

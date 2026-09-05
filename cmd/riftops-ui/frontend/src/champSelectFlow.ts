@@ -49,6 +49,11 @@ export type ChampSelectSession = {
     assignedRole?: string;
     position?: string;
     role?: string;
+    puuid?: string;
+    muted?: boolean;
+    isMuted?: boolean;
+    team?: number;
+    teamId?: number;
   }>;
   timer?: {
     phase?: string;

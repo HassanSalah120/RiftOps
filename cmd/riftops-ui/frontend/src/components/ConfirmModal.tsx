@@ -42,7 +42,7 @@ export default function ConfirmModal({
           </div>
           <div>
             <h4 id="confirm-title" className="text-sm font-black text-white">{action.title}</h4>
-            <p className="text-xs text-text-muted mt-1 leading-relaxed">{action.message}</p>
+            <p className="text-xs text-text-muted mt-1 leading-relaxed whitespace-pre-line">{action.message}</p>
           </div>
         </div>
 

@@ -22,16 +22,19 @@ export default function GameSelector({
 
   return (
     <div className="grid grid-cols-2 gap-2.5">
-      {GAMES.map((g) => {
+      {GAMES.map((g, index) => {
         const selected = value === g.value;
         const img = GAME_IMGS[g.value];
         const imgFailed = imgErrors[g.value];
+        const isFullWidth = g.value === 'riot-client' || (index === GAMES.length - 1 && GAMES.length % 2 !== 0);
         return (
           <button
             key={g.value}
             disabled={disabled}
             onClick={() => onChange(g.value)}
             className={`relative overflow-hidden rounded-2xl h-24 transition duration-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed group border ${
+              isFullWidth ? 'col-span-2' : ''
+            } ${
               selected
                 ? 'border-[#c8aa6e] shadow-[0_0_25px_rgba(200,170,110,0.35)] scale-[1.02]'
                 : 'border-white/[0.08] hover:border-white/20 hover:scale-[1.01]'

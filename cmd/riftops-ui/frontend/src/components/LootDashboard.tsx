@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Clock3, Gem, Hammer, Loader2, PackageOpen, RefreshCw, XCircle } from 'lucide-react';
-import { craftLCULootRecipe, fetchLCULoot, fetchLCULootRecipes, fetchLCUWallet } from '../api';
+import { CheckSquare, Clock3, Gem, Hammer, Loader2, PackageOpen, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import { craftLCULootRecipe, executeReviewedOperation, fetchLCULoot, fetchLCULootRecipes, fetchLCUWallet, fetchReviewedOperation, previewLootOperation, type LootOperationItem } from '../api';
 import { recipeActionLabel } from '../lootActions';
 import type { ConfirmAction } from '../types';
 import ConfirmModal from './ConfirmModal';
@@ -30,12 +30,60 @@ type Recipe = {
 type ActivityEntry = { id: string; name: string; delta: number; time: string };
 
 const RESOURCE_DEFS = [
-  { key: 'blue', label: 'Blue essence', match: (id: string) => id === 'CURRENCY_champion', fallback: 'BE', color: '#4ba5d8', icon: '/lol-game-data/assets/ASSETS/Currencies/images/blue-essence-icon.svg' },
-  { key: 'orange', label: 'Orange essence', match: (id: string) => id === 'CURRENCY_cosmetic', fallback: 'OE', color: '#e69a68', icon: '/lol-game-data/assets/ASSETS/Currencies/images/orange-essence-icon.png' },
-  { key: 'rp', label: 'Riot Points', match: (id: string) => id === 'CURRENCY_RP', fallback: 'RP', color: '#d8be76', icon: '/lol-game-data/assets/ASSETS/Currencies/images/riot-points-icon.svg' },
-  { key: 'mythic', label: 'Mythic essence', match: (id: string) => id === 'CURRENCY_mythic', fallback: 'ME', color: '#b58bf1', icon: '/lol-game-data/assets/ASSETS/Currencies/images/mythic-essence-icon.svg' },
-  { key: 'keys', label: 'Hextech keys', match: (id: string) => id === 'MATERIAL_key', fallback: 'KEY', color: '#d5b768', icon: '' },
-  { key: 'tokens', label: 'Event tokens', match: (id: string) => /token|event/i.test(id), fallback: 'EV', color: '#57cbb0', icon: '' },
+  {
+    key: 'blue',
+    label: 'Blue essence',
+    match: (id: string) => id === 'CURRENCY_champion',
+    fallback: 'BE',
+    color: '#4ba5d8',
+    icon: '/lol-game-data/assets/ASSETS/Currencies/images/blue-essence-icon.svg',
+    cdn: 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/currencies/images/blue-essence-icon.svg',
+  },
+  {
+    key: 'orange',
+    label: 'Orange essence',
+    match: (id: string) => id === 'CURRENCY_cosmetic',
+    fallback: 'OE',
+    color: '#e69a68',
+    icon: '/lol-game-data/assets/ASSETS/Currencies/images/orange-essence-icon.png',
+    cdn: 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/currencies/images/orange-essence-icon.png',
+  },
+  {
+    key: 'rp',
+    label: 'Riot Points',
+    match: (id: string) => id === 'CURRENCY_RP',
+    fallback: 'RP',
+    color: '#d8be76',
+    icon: '/lol-game-data/assets/ASSETS/Currencies/images/riot-points-icon.svg',
+    cdn: 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/currencies/images/riot-points-icon.svg',
+  },
+  {
+    key: 'mythic',
+    label: 'Mythic essence',
+    match: (id: string) => id === 'CURRENCY_mythic',
+    fallback: 'ME',
+    color: '#b58bf1',
+    icon: '/lol-game-data/assets/ASSETS/Currencies/images/mythic-essence-icon.svg',
+    cdn: 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/currencies/images/mythic-essence-icon.svg',
+  },
+  {
+    key: 'keys',
+    label: 'Hextech keys',
+    match: (id: string) => id === 'MATERIAL_key',
+    fallback: 'KEY',
+    color: '#d5b768',
+    icon: '/lol-game-data/assets/v1/loot/MATERIAL_key.png',
+    cdn: 'https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-loot/global/default/assets/loot_item_icons/material_key.png',
+  },
+  {
+    key: 'tokens',
+    label: 'Event tokens',
+    match: (id: string) => /token|event/i.test(id),
+    fallback: 'EV',
+    color: '#57cbb0',
+    icon: '/lol-game-data/assets/ASSETS/Currencies/images/ancient-spark-icon.svg',
+    cdn: 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/currencies/images/ancient-spark-icon.svg',
+  },
 ] as const;
 
 function itemName(item: LootItem): string {
@@ -43,10 +91,25 @@ function itemName(item: LootItem): string {
 }
 
 
-function GameAsset({ item, fallback, icon }: { item?: LootItem; fallback: string; icon?: string }) {
-  const candidates = [icon || '', item?.asset || '', item ? `/lol-game-data/assets/v1/loot/${encodeURIComponent(item.lootId)}.png` : ''].filter(Boolean);
+function GameAsset({ item, fallback, icon, cdn }: { item?: LootItem; fallback: string; icon?: string; cdn?: string }) {
+  const candidates = [
+    icon || '',
+    cdn || '',
+    item?.asset || '',
+    item ? `/lol-game-data/assets/v1/loot/${encodeURIComponent(item.lootId)}.png` : '',
+    fallback === 'EV' ? 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/currencies/images/jade_pass_token.png' : '',
+  ].filter(Boolean);
   const [index, setIndex] = useState(0);
-  if (!candidates[index]) return <span className="loot-resource__fallback">{fallback}</span>;
+  if (!candidates[index]) {
+    if (fallback === 'LOOT') {
+      return (
+        <span className="loot-resource__fallback loot-resource__fallback--icon flex items-center justify-center text-amber-300/80" title={item ? itemName(item) : 'Material'}>
+          <Gem className="w-4 h-4" />
+        </span>
+      );
+    }
+    return <span className="loot-resource__fallback">{fallback}</span>;
+  }
   return <img src={candidates[index]} alt="" width="52" height="52" loading="lazy" onError={() => setIndex((current) => current + 1)} />;
 }
 
@@ -63,6 +126,7 @@ export default function LootDashboard() {
   const [crafting, setCrafting] = useState('');
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [batchItems, setBatchItems] = useState<LootOperationItem[]>([]);
 
   const loadLoot = useCallback(async () => {
     setLoading(true);
@@ -129,6 +193,36 @@ export default function LootDashboard() {
     }
   };
 
+  const addToBatch = (recipe: Recipe, label: string) => {
+    if (!recipe.recipeName || !selectedLootId) return;
+    const key = `${selectedLootId}:${recipe.recipeName}`;
+    setBatchItems((current) => current.some((item) => `${item.lootId}:${item.recipeName}` === key) ? current : [...current, { lootId: selectedLootId, recipeName: recipe.recipeName!, lootIds: [selectedLootId], repeat: 1, label }].slice(0, 20));
+  };
+
+  const executeBatch = async () => {
+    if (!batchItems.length) return;
+    setCrafting('batch');
+    try {
+      const preview = await previewLootOperation(batchItems);
+      const outputs = (preview.lootItems || []).map((item) => `${item.label || item.recipeName} ×${item.repeat}`).join('\n');
+      const confirmation = window.prompt(`Review ${batchItems.length} League loot recipes:\n\n${outputs}\n\nType ${preview.confirmation} to continue.`) || '';
+      if (confirmation.trim() !== preview.confirmation) { setFeedback({ tone: 'info', message: 'Bulk crafting cancelled.' }); return; }
+      await executeReviewedOperation(preview.id, confirmation.trim());
+      for (;;) {
+        const status = await fetchReviewedOperation(preview.id);
+        if (['complete', 'failed', 'cancelled', 'expired'].includes(status.state)) {
+          const failures = status.results.filter((item) => item.status !== 'succeeded').length;
+          setFeedback({ tone: failures ? 'error' : 'success', message: `${status.completed}/${status.total} recipes processed${failures ? ` · ${failures} need review` : ''}.` });
+          if (!failures) setBatchItems([]);
+          break;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 450));
+      }
+      await loadLoot();
+    } catch (reason: any) { setFeedback({ tone: 'error', message: reason?.message || 'Bulk crafting failed.' }); }
+    finally { setCrafting(''); }
+  };
+
   return (
     <div className="loot-workshop">
       {confirmAction && <ConfirmModal action={confirmAction} onClose={() => setConfirmAction(null)} />}
@@ -138,7 +232,7 @@ export default function LootDashboard() {
 
       {!error && <>
         <WorkspaceSection eyebrow="RESOURCE WALLET" title="Spendable balances" description={`${craftableItems.length} materials with possible recipes · ${affordableUpgrades} affordable upgrades`} className="loot-wallet">
-          <div className="loot-wallet__grid">{resources.map((resource) => <article className="loot-resource" key={resource.key} style={{ '--resource-color': resource.color } as React.CSSProperties}><div className="loot-resource__icon"><GameAsset item={resource.item} fallback={resource.fallback} icon={resource.icon} /></div><div><strong>{loading ? '—' : resource.value.toLocaleString()}</strong><span>{resource.label}</span></div></article>)}</div>
+          <div className="loot-wallet__grid">{resources.map((resource) => <article className="loot-resource" key={resource.key} style={{ '--resource-color': resource.color } as React.CSSProperties}><div className="loot-resource__icon"><GameAsset item={resource.item} fallback={resource.fallback} icon={resource.icon} cdn={resource.cdn} /></div><div><strong>{loading ? '—' : resource.value.toLocaleString()}</strong><span>{resource.label}</span></div></article>)}</div>
         </WorkspaceSection>
 
         <div className="loot-workshop__flow">
@@ -156,10 +250,13 @@ export default function LootDashboard() {
             {recipes.map((recipe, index) => {
               const label = recipe.contextMenuText || recipe.name || recipe.type || recipe.recipeName || `Recipe ${index + 1}`;
               const actionLabel = recipeActionLabel(recipe);
-              return <article className="loot-recipe" key={recipe.recipeName || `${label}-${index}`}><div><strong>{label}</strong><span>{recipe.type || 'League crafting recipe'} · {(recipe.outputs || []).length || 1} output</span></div><button type="button" disabled={!recipe.recipeName || crafting !== ''} onClick={() => setConfirmAction({ open: true, title: `${actionLabel} ${label}?`, message: 'League will consume the recipe inputs immediately. This inventory action cannot be undone.', actionLabel: `${actionLabel} item`, danger: false, onConfirm: () => { setConfirmAction(null); void runCraft(recipe); } })}>{crafting === recipe.recipeName ? <Loader2 className="animate-spin" /> : <Hammer />}{actionLabel}</button></article>;
+              const queued = batchItems.some((item) => item.lootId === selectedLootId && item.recipeName === recipe.recipeName);
+              return <article className="loot-recipe" key={recipe.recipeName || `${label}-${index}`}><div><strong>{label}</strong><span>{recipe.type || 'League crafting recipe'} · {(recipe.outputs || []).length || 1} output</span></div><div className="loot-recipe__actions"><button type="button" className="btn-secondary" disabled={!recipe.recipeName || crafting !== '' || queued} onClick={() => addToBatch(recipe, label)}><CheckSquare />{queued ? 'Queued' : 'Add to review'}</button><button type="button" disabled={!recipe.recipeName || crafting !== ''} onClick={() => setConfirmAction({ open: true, title: `${actionLabel} ${label}?`, message: 'League will consume the recipe inputs immediately. This inventory action cannot be undone.', actionLabel: `${actionLabel} item`, danger: false, onConfirm: () => { setConfirmAction(null); void runCraft(recipe); } })}>{crafting === recipe.recipeName ? <Loader2 className="animate-spin" /> : <Hammer />}{actionLabel}</button></div></article>;
             })}
           </ContextPanel>
         </div>
+
+        {batchItems.length > 0 && <WorkspaceSection eyebrow="REVIEWED BATCH" title={`${batchItems.length} queued recipe${batchItems.length === 1 ? '' : 's'}`} description="RiftOps revalidates every recipe and inventory item immediately before crafting, runs sequentially, and never retries an ambiguous result."><div className="loot-batch-list">{batchItems.map((item) => <div key={`${item.lootId}:${item.recipeName}`}><span><strong>{item.label || item.recipeName}</strong><small>{item.lootId} · repeat {item.repeat}</small></span><button type="button" className="btn-danger" onClick={() => setBatchItems((current) => current.filter((entry) => entry !== item))} disabled={crafting !== ''}><Trash2 /></button></div>)}</div><button type="button" className="btn-primary" onClick={() => void executeBatch()} disabled={crafting !== ''}>{crafting === 'batch' ? <Loader2 className="animate-spin" /> : <Hammer />}Preview & craft selected</button></WorkspaceSection>}
 
         <WorkspaceSection eyebrow="LOCAL LEDGER" title="Recent inventory changes" description="Changes detected between refreshes on this device." className="loot-activity">
           {activity.length === 0 ? <EmptyState icon={Clock3} title="No changes recorded" description="Refresh after a craft or reward to record the difference here." /> : <div className="loot-activity__list">{activity.map((entry, index) => <div key={`${entry.id}-${entry.time}-${index}`}><span className={entry.delta > 0 ? 'is-positive' : 'is-negative'}>{entry.delta > 0 ? '+' : ''}{entry.delta}</span><strong>{entry.name}</strong><time>{entry.time}</time></div>)}</div>}

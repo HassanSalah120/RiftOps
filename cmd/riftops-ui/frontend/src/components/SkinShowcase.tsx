@@ -22,6 +22,14 @@ import {
 } from 'lucide-react';
 import PageHeader from './PageHeader';
 import { useDialogFocus } from './useDialogFocus';
+import {
+  type SkinView,
+  getSkinArtSources,
+  resolveChampionAlias,
+  getCachedWorkingIndex,
+  setCachedWorkingIndex,
+  clearWorkingSourceCache,
+} from '../skinAssets';
 
 const TIER_MAP: Record<string, { label: string; color: string; rank: number }> = {
   transcendent: { label: 'Transcendent', color: '#45d8c1', rank: 8 },
@@ -35,7 +43,6 @@ const TIER_MAP: Record<string, { label: string; color: string; rank: number }> =
 };
 
 type SkinCategory = 'normal' | 'classic';
-type SkinView = 'grid' | 'list';
 type SkinDensity = 'comfortable' | 'compact';
 type SkinSort = 'rarity' | 'name';
 type SkinStatusFilter = 'all' | 'owned' | 'missing' | 'available' | 'shard' | 'rental' | 'wishlist' | 'unavailable';
@@ -198,6 +205,44 @@ function buildChampionTotals(skins: any[]) {
   return Array.from(totals.values());
 }
 
+function SkinCardArt({
+  skin,
+  viewMode,
+  alt,
+}: {
+  skin: any;
+  viewMode: SkinView;
+  alt: string;
+}) {
+  const [stage, setStage] = useState(() => getCachedWorkingIndex(viewMode, skin.id));
+
+  const sources = useMemo(() => {
+    return getSkinArtSources(skin, viewMode);
+  }, [skin, viewMode]);
+
+  if (stage >= sources.length) {
+    return <div className="skin-vault-card__art is-missing" />;
+  }
+
+  return (
+    <img
+      key={stage}
+      className="skin-vault-card__art"
+      src={sources[stage]}
+      alt={alt}
+      width="320"
+      height="180"
+      loading="lazy"
+      onLoad={() => {
+        setCachedWorkingIndex(viewMode, skin.id, stage);
+      }}
+      onError={() => {
+        setStage((prev) => (prev < sources.length ? prev + 1 : prev));
+      }}
+    />
+  );
+}
+
 export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnly?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -280,6 +325,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   };
 
   const loadData = useCallback(async () => {
+    clearWorkingSourceCache();
     let cached: any[] = [];
     let cacheKeys: ReturnType<typeof skinCacheKeys> | null = null;
     setLoading(true);
@@ -327,7 +373,8 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
         });
       }
 
-      const champNames = new Map();
+      const champNames = new Map<number, string>();
+      const champAliases = new Map<number, string>();
       const champArray = Array.isArray(champsSummary)
         ? champsSummary
         : champsSummary && typeof champsSummary === 'object'
@@ -335,7 +382,10 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
         : [];
       champArray.forEach((c: any) => {
         const championId = numberField(c.id, c.championId);
-        if (championId !== null) champNames.set(championId, c.name || c.alias || `#${championId}`);
+        if (championId !== null) {
+          champNames.set(championId, c.name || c.alias || `#${championId}`);
+          if (c.alias) champAliases.set(championId, String(c.alias));
+        }
       });
 
       const ownedArr = flattenSkinRecords(ownedRaw);
@@ -359,6 +409,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
         const isClassic = /^classic(?:\s|$)/i.test(String(skinName)) || (sourceChampionId >= 60000 && skinId >= 60000000);
         const cId = isClassic && sourceChampionId >= 60000 ? sourceChampionId - 60000 : sourceChampionId;
         const cName = champNames.get(cId) || dbEntry.championName || `Champion ${cId}`;
+        const championAlias = resolveChampionAlias(cName, cId, champAliases.get(cId) || dbEntry.alias || dbEntry.championAlias);
         const rawRarity = (dbEntry.rarity || s.rarity || '').replace(/^k/i, '').toLowerCase();
         const isLegacy = !!(dbEntry.isLegacy ?? s.isLegacy);
         const stillObtainable = dbEntry.stillObtainable ?? s.stillObtainable;
@@ -374,6 +425,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
           championId: cId,
           assetChampionId: sourceChampionId,
           championName: cName,
+          championAlias,
           skinNum,
           name: skinName,
           owned: isOwned,
@@ -782,7 +834,6 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
                 const isWishlisted = wishlist.has(skinKey(skin));
                 const tier = TIER_MAP[skin.rarity] || TIER_MAP.standard;
                 const status = skin.owned ? 'Owned' : skin.rental ? 'Rental' : skin.shard ? 'Shard ready' : skin.unavailable ? 'Legacy' : 'Missing';
-                const assetChampion = skin.assetChampionId || skin.championId;
                 return (
                   <article
                     key={skin.id}
@@ -793,36 +844,31 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
                     onClick={() => setPreviewSkin(skin)}
                     onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setPreviewSkin(skin); } }}
                   >
-                    <img
-                      className="skin-vault-card__art"
-                      src={`/lol-game-data/assets/v1/champion-tiles/${assetChampion}/${skin.id}.jpg`}
-                      alt={skin.name}
-                      width="320"
-                      height="180"
-                      loading="lazy"
-                      onError={(event) => {
-                        const image = event.currentTarget;
-                        const stage = image.dataset.fallbackStage || 'tile';
-                        if (stage === 'tile') {
-                          image.dataset.fallbackStage = 'splash';
-                          image.src = `/lol-game-data/assets/v1/champion-splashes/${assetChampion}/${skin.id}.jpg`;
-                        } else if (stage === 'splash') {
-                          image.dataset.fallbackStage = 'ddragon';
-                          image.src = `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${skin.championName.replace(/[^a-zA-Z0-9]/g, '')}_${skin.skinNum}.jpg`;
-                        } else {
-                          image.classList.add('is-missing');
-                        }
-                      }}
-                    />
-                    <div className="skin-vault-card__wash" />
-                    <div className="skin-vault-card__tools">
-                      <button type="button" className={isWishlisted ? 'is-selected' : ''} onClick={(event) => { event.stopPropagation(); toggleWishlist(skin); }} aria-label={isWishlisted ? `Remove ${skin.name} from wishlist` : `Add ${skin.name} to wishlist`}><Bookmark className={isWishlisted ? 'fill-current' : ''} /></button>
-                      <button type="button" className={isFav ? 'is-favorite' : ''} onClick={(event) => { event.stopPropagation(); toggleFav(skin); }} aria-label={isFav ? `Remove ${skin.name} from favorites` : `Add ${skin.name} to favorites`}><Heart className={isFav ? 'fill-current' : ''} /></button>
+                    <div className="skin-vault-card__media">
+                      <SkinCardArt
+                        key={`${viewMode}-${skin.id}`}
+                        skin={skin}
+                        viewMode={viewMode}
+                        alt={skin.name}
+                      />
+                      <div className="skin-vault-card__wash" />
                     </div>
-                    <div className="skin-vault-card__copy">
-                      <div><span style={{ '--tier-color': tier.color } as React.CSSProperties}><i />{tier.label}</span><em className={`is-${status.toLowerCase().replaceAll(' ', '-')}`}>{status}</em></div>
-                      <strong>{skin.name}</strong>
-                      <small>{skin.chromaCount > 0 ? `${skin.chromaCount} chroma${skin.chromaCount === 1 ? '' : 's'}` : skin.isLegacy ? 'Legacy cosmetic' : 'League cosmetic'}</small>
+                    <div className="skin-vault-card__body">
+                      <div className="skin-vault-card__header">
+                        <div className="skin-vault-card__badges">
+                          <span style={{ '--tier-color': tier.color } as React.CSSProperties}><i />{tier.label}</span>
+                          <em className={`is-${status.toLowerCase().replaceAll(' ', '-')}`}>{status}</em>
+                          {skin.shard && <em className="is-shard-tag">◆ Shard</em>}
+                        </div>
+                        <div className="skin-vault-card__tools">
+                          <button type="button" className={isWishlisted ? 'is-selected' : ''} onClick={(event) => { event.stopPropagation(); toggleWishlist(skin); }} aria-label={isWishlisted ? `Remove ${skin.name} from wishlist` : `Add ${skin.name} to wishlist`} title={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}><Bookmark className={isWishlisted ? 'fill-current' : ''} /></button>
+                          <button type="button" className={isFav ? 'is-favorite' : ''} onClick={(event) => { event.stopPropagation(); toggleFav(skin); }} aria-label={isFav ? `Remove ${skin.name} from favorites` : `Add ${skin.name} to favorites`} title={isFav ? 'Remove from favorites' : 'Add to favorites'}><Heart className={isFav ? 'fill-current' : ''} /></button>
+                        </div>
+                      </div>
+                      <div className="skin-vault-card__copy">
+                        <strong>{skin.name}</strong>
+                        <small>{skin.chromaCount > 0 ? `${skin.chromaCount} chroma${skin.chromaCount === 1 ? '' : 's'}` : skin.isLegacy ? 'Legacy cosmetic' : 'League cosmetic'}</small>
+                      </div>
                     </div>
                   </article>
                 );
@@ -1106,13 +1152,15 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
             </button>
 
             <img
+              key={previewSkin.id}
               src={`/lol-game-data/assets/v1/champion-splashes/${previewSkin.assetChampionId || previewSkin.championId}/${previewSkin.id}.jpg`}
               alt={previewSkin.name}
               width="1280"
               height="720"
               className="w-full h-96 object-cover rounded-xl border border-white/10"
               onError={(e: any) => {
-                e.target.src = `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${previewSkin.championName.replace(/[^a-zA-Z0-9]/g, '')}_${previewSkin.skinNum || 0}.jpg`;
+                const alias = resolveChampionAlias(previewSkin.championName, previewSkin.championId, previewSkin.championAlias);
+                e.currentTarget.src = `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${alias}_${previewSkin.skinNum || 0}.jpg`;
               }}
             />
 

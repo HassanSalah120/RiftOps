@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog, fetchLCUProfile, fetchRiotMatchIDs, fetchRiotMatch, fetchLCUReplay, replayAction } from '../api';
-import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download, Coins, Crosshair, Target, Trophy, Users } from 'lucide-react';
+import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog, fetchLCUProfile, fetchRiotMatchIDs, fetchRiotMatch, fetchReplayStatus, replayAction, type ReplayStatus } from '../api';
+import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download, Coins, Copy, Crosshair, Target, Trophy, Users } from 'lucide-react';
 import PageHeader from './PageHeader';
 import { RiotAssetImage } from '../riotAssets';
 import { normalizeArenaMatch } from '../arenaTelemetry';
+import { useLCUConnection } from './lcuConnectionContext';
 
 type AssetEntry = { id: number; name: string; iconPath?: string; inStore?: boolean; displayInItemSets?: boolean; specialRecipe?: number; from?: number[] | string[]; to?: number[] | string[] };
 type MatchAssets = { items: Map<number, AssetEntry>; spells: Map<number, AssetEntry>; perks: Map<number, AssetEntry>; styles: Map<number, AssetEntry> };
@@ -154,11 +155,15 @@ function ParticipantLoadout({ participant, assets }: { participant: any; assets:
   );
 }
 
-function MatchDetails({ match, detail, loading, player, queueName, championName, championNames, assets }: { match: any; detail: any; loading: boolean; player: any; queueName: string; championName: string; championNames: Record<number, string>; assets: MatchAssets }) {
+function MatchDetails({ match, detail, loading, player, queueName, championName, championNames, assets, streamerMode = false }: { match: any; detail: any; loading: boolean; player: any; queueName: string; championName: string; championNames: Record<number, string>; assets: MatchAssets; streamerMode?: boolean }) {
   const allParticipants: any[] = detail?.participants || match?.participants || [player];
   const identities = detail?.participantIdentities || match?.participantIdentities || [];
   const nameMap: Record<number, string> = {};
   identities.forEach((identity: any) => {
+    if (streamerMode) {
+      nameMap[identity.participantId] = identity.participantId === (player?.participantId || identities[0]?.participantId) ? 'Demo Player' : `Player ${identity.participantId}`;
+      return;
+    }
     const name = identity?.player?.summonerName || identity?.player?.gameName || identity?.player?.riotIdGameName;
     if (identity?.participantId && name) nameMap[identity.participantId] = name;
   });
@@ -238,6 +243,7 @@ function MatchDetails({ match, detail, loading, player, queueName, championName,
 }
 
 export default function MatchHistory({ remoteClient = false }: { remoteClient?: boolean }) {
+  const { pageVisible, streamerMode } = useLCUConnection();
   const showLegacyMatchDetails = false;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -256,7 +262,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
   const [loadingMore, setLoadingMore] = useState(false);
   const [paginationError, setPaginationError] = useState('');
   const [dataSource, setDataSource] = useState<'LCU' | 'Riot API'>('LCU');
-  const [replayStatus, setReplayStatus] = useState<Record<number, any>>({});
+  const [replayStatus, setReplayStatus] = useState<Record<number, ReplayStatus>>({});
   const [replayBusy, setReplayBusy] = useState<number | null>(null);
 
   const loadData = useCallback(async () => {
@@ -369,17 +375,38 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
     setReplayBusy(gameId);
     try {
       if (!action) {
-        const status = await fetchLCUReplay(gameId);
+        const status = await fetchReplayStatus(gameId);
         setReplayStatus((current) => ({ ...current, [gameId]: status }));
         return;
       }
       if (action === 'watch' && remoteClient && !window.confirm(`Watch replay for Game ID ${gameId}?`)) return;
       await replayAction(gameId, action);
-      const status = await fetchLCUReplay(gameId).catch(() => null);
+      const status = await fetchReplayStatus(gameId).catch(() => null);
       if (status) setReplayStatus((current) => ({ ...current, [gameId]: status }));
     } catch (reason: any) {
-      setReplayStatus((current) => ({ ...current, [gameId]: { status: 'failed', error: reason?.message || 'Replay action failed.' } }));
+      setReplayStatus((current) => ({ ...current, [gameId]: { gameId, status: 'failed', error: reason?.message || 'Replay action failed.' } }));
     } finally { setReplayBusy(null); }
+  };
+
+  const downloadingReplayIDs = Object.entries(replayStatus)
+    .filter(([, value]) => value?.status === 'downloading')
+    .map(([gameId]) => Number(gameId))
+    .sort((left, right) => left - right);
+  const downloadingReplayKey = downloadingReplayIDs.join(',');
+
+  useEffect(() => {
+    const downloading = downloadingReplayKey.split(',').filter(Boolean).map(Number);
+    if (!pageVisible || downloading.length === 0) return undefined;
+    const controller = new AbortController();
+    const poll = () => downloading.forEach((gameId) => void fetchReplayStatus(gameId, controller.signal).then((status) => setReplayStatus((current) => ({ ...current, [gameId]: status }))).catch(() => undefined));
+    const timer = window.setInterval(poll, 1000);
+    poll();
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [pageVisible, downloadingReplayKey]);
+
+  const copyGameID = async (gameId: number) => {
+    try { await navigator.clipboard.writeText(String(gameId)); }
+    catch { window.prompt('Copy Game ID', String(gameId)); }
   };
 
   // Robust timestamp parser for LCU games
@@ -505,39 +532,52 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
 
       {/* Summary Statistics Bar */}
       {!loading && !error && filteredMatches.length > 0 && (
-        <div className="glass-card p-4 space-y-2">
-          <div className="grid grid-cols-6 gap-2 text-center">
-            <div>
-              <p className="text-[10px] text-text-dim font-bold uppercase">Winrate</p>
-              <p className="text-base font-black text-white">{wrPct}% <span className="text-xs text-text-muted font-bold">({wins}W {totalGames - wins}L)</span></p>
+        <div className="glass-card p-4 space-y-3 border border-white/[0.08]">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center">
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+              <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Winrate</p>
+              <p className={`text-base font-black ${wrPct >= 50 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {wrPct}% <span className="text-[11px] text-text-muted font-bold font-mono">({wins}W {totalGames - wins}L)</span>
+              </p>
             </div>
-            <div>
-              <p className="text-[10px] text-text-dim font-bold uppercase">Avg KDA</p>
-              <p className="text-base font-black text-primary">{avgKda}</p>
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+              <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Avg KDA</p>
+              <p className="text-base font-black text-primary font-mono">{avgKda}</p>
             </div>
-            <div>
-              <p className="text-[10px] text-text-dim font-bold uppercase">Streak</p>
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+              <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Streak</p>
               <p className={`text-base font-black ${streakDirection > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{streakText}</p>
             </div>
-            <div>
-              <p className="text-[10px] text-text-dim font-bold uppercase">Avg Damage</p>
-              <p className="text-base font-black text-amber-400">{avgDmg.toLocaleString()}</p>
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+              <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Avg Damage</p>
+              <p className="text-base font-black text-amber-400 font-mono">{avgDmg.toLocaleString()}</p>
             </div>
-            <div>
-              <p className="text-[10px] text-text-dim font-bold uppercase">Avg Gold</p>
-              <p className="text-base font-black text-yellow-400">{avgGold.toLocaleString()}</p>
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+              <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Avg Gold</p>
+              <p className="text-base font-black text-yellow-400 font-mono">{avgGold.toLocaleString()}</p>
             </div>
-            <div>
-              <p className="text-[10px] text-text-dim font-bold uppercase">Avg Vision</p>
-              <p className="text-base font-black text-cyan-400">{avgVis}</p>
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+              <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Avg Vision</p>
+              <p className="text-base font-black text-cyan-400 font-mono">{avgVis}</p>
             </div>
           </div>
-          <div className="flex items-center gap-3 pt-2 border-t border-white/[0.05]">
-            <span className="text-[10px] text-text-dim font-bold uppercase shrink-0">Recent trend</span>
-            <div className="flex items-end gap-1 h-5 flex-1">
-              {trend.map((win, index) => <span key={index} title={win ? 'Victory' : 'Defeat'} className={`flex-1 max-w-5 rounded-sm ${win ? 'bg-emerald-400' : 'bg-rose-400'}`} style={{ height: win ? '100%' : '58%' }} />)}
+          <div className="flex items-center gap-3 pt-2.5 border-t border-white/[0.06]">
+            <span className="text-[10px] text-text-dim font-bold uppercase tracking-wider shrink-0">Recent trend</span>
+            <div className="flex items-end gap-1.5 h-6 flex-1 bg-black/30 p-1 rounded-lg border border-white/[0.04]">
+              {trend.map((win, index) => (
+                <span
+                  key={index}
+                  title={win ? 'Victory' : 'Defeat'}
+                  className={`flex-1 max-w-5 rounded-sm transition-all duration-200 ${
+                    win
+                      ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.4)]'
+                      : 'bg-rose-500/70'
+                  }`}
+                  style={{ height: win ? '100%' : '50%' }}
+                />
+              ))}
             </div>
-            <span className="text-[9px] text-text-dim">oldest → newest</span>
+            <span className="text-[9px] text-text-dim font-mono">oldest → newest</span>
           </div>
         </div>
       )}
@@ -551,7 +591,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
       )}
 
       {/* Filter Toolbar */}
-      <div className="page-toolbar page-toolbar--history flex items-center justify-between gap-2 overflow-x-auto pb-1">
+      <div className="page-toolbar page-toolbar--history flex items-center justify-between gap-2 overflow-x-auto p-1.5 rounded-xl bg-black/40 border border-white/[0.08]">
         {/* Queue Filters */}
         <div className="flex items-center gap-1 shrink-0">
           <Filter className="w-3.5 h-3.5 text-primary mr-1" />
@@ -566,10 +606,10 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
             <button
               key={q.id.toString()}
               onClick={() => setQueueFilter(q.id as any)}
-              className={`px-2.5 py-1 rounded-xl text-xs font-bold transition shrink-0 border cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 border cursor-pointer ${
                 queueFilter === q.id
                   ? 'bg-primary/20 text-primary border-primary/40 shadow-[0_0_12px_rgba(200,170,110,0.25)]'
-                  : 'text-text-dim border-white/[0.06] hover:text-white hover:bg-white/[0.04]'
+                  : 'text-text-muted border-transparent hover:text-white hover:bg-white/[0.04]'
               }`}
             >
               {q.label}
@@ -578,16 +618,16 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
         </div>
 
         {/* Period Filters */}
-        <div className="flex items-center gap-1 shrink-0">
-          <Clock className="w-3.5 h-3.5 text-text-dim mr-1" />
+        <div className="flex items-center gap-1 shrink-0 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
+          <Clock className="w-3.5 h-3.5 text-text-dim mx-1.5" />
           {Object.entries(PERIODS).map(([k, p]) => (
             <button
               key={k}
               onClick={() => setPeriodFilter(k)}
-              className={`px-2 py-1 rounded-xl text-[11px] font-bold transition shrink-0 border cursor-pointer ${
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition shrink-0 cursor-pointer ${
                 periodFilter === k
-                  ? 'bg-white/10 text-white border-white/20'
-                  : 'text-text-dim border-transparent hover:text-white'
+                  ? 'bg-white/10 text-white shadow-sm'
+                  : 'text-text-dim hover:text-white'
               }`}
             >
               {p.label}
@@ -742,7 +782,15 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
                       <ItemStrip stats={stats} assets={assets} compact />
 
                       <div className="history-match__replay" onClick={(event) => event.stopPropagation()}>
-                        {replayStatus[Number(gameId)]?.status === 'ready' ? <button type="button" className="btn-secondary" onClick={() => void handleReplay(Number(gameId), 'watch')} disabled={replayBusy === Number(gameId)}>Watch</button> : <button type="button" className="btn-secondary" onClick={() => void handleReplay(Number(gameId), 'download')} disabled={replayBusy === Number(gameId)}>{replayBusy === Number(gameId) ? <Loader2 className="animate-spin" /> : <Download />} {replayStatus[Number(gameId)]?.status === 'downloading' ? 'Downloading…' : 'Replay'}</button>}
+                        <button type="button" className="btn-secondary" title="Copy Game ID" onClick={() => void copyGameID(Number(gameId))}><Copy />Game ID</button>
+                        {(() => {
+                          const status = replayStatus[Number(gameId)] || {};
+                          const busy = replayBusy === Number(gameId);
+                          if (status.status === 'ready') return <button type="button" className="btn-secondary" onClick={() => void handleReplay(Number(gameId), 'watch')} disabled={busy}>{busy ? <Loader2 className="animate-spin" /> : <Eye />}Watch</button>;
+                          if (status.status === 'downloading') return <button type="button" className="btn-secondary" disabled><Loader2 className="animate-spin" />{Math.round(Number(status.progress || 0))}%</button>;
+                          if (['expired', 'unavailable', 'failed'].includes(status.status)) return <button type="button" className="btn-secondary" disabled title={status.detail || status.error || 'Replay unavailable'}>{status.status === 'expired' ? 'Expired' : 'Unavailable'}</button>;
+                          return <button type="button" className="btn-secondary" onClick={() => void handleReplay(Number(gameId), 'download')} disabled={busy}>{busy ? <Loader2 className="animate-spin" /> : <Download />}Replay</button>;
+                        })()}
                       </div>
 
                       <button className="text-text-dim hover:text-white transition">
@@ -751,7 +799,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
                     </div>
                   </div>
 
-                  {isExpanded && <MatchDetails match={m} detail={gameDetails[gameId]} loading={loadingDetail === gameId} player={participant} queueName={queueName} championName={championName} championNames={championNames} assets={assets} />}
+                  {isExpanded && <MatchDetails match={m} detail={gameDetails[gameId]} loading={loadingDetail === gameId} player={participant} queueName={queueName} championName={championName} championNames={championNames} assets={assets} streamerMode={streamerMode} />}
 
                   {/* Previous detail renderer retained unreachable for one migration release. */}
                   {showLegacyMatchDetails && isExpanded && (
@@ -826,13 +874,21 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
                           }
 
                           // Helper: resolve name from participant
-                          const resolveName = (p: any, fallback: string): string =>
-                            p.summonerName
-                            || p.gameName
-                            || p.riotIdGameName
-                            || nameMap[p.participantId]
-                            || nameMap[p.participantIdentityId]
-                            || fallback;
+                          const resolveName = (p: any, fallback: string): string => {
+                            if (streamerMode) {
+                              if (p.participantId === participant?.participantId) return 'Demo Player';
+                              const isBlue = (p.teamId ?? 100) === 100;
+                              return `${isBlue ? 'Blue' : 'Red'} ${championNames[p.championId] || 'Summoner'}`;
+                            }
+                            return (
+                              p.summonerName
+                              || p.gameName
+                              || p.riotIdGameName
+                              || nameMap[p.participantId]
+                              || nameMap[p.participantIdentityId]
+                              || fallback
+                            );
+                          };
 
                           // Max damage in game for scaling the damage bar
                           const maxDmg = Math.max(...allParticipants.map((p: any) => p.stats?.totalDamageDealtToChampions || 0), 1);

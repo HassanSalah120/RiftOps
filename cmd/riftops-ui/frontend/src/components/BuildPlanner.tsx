@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bookmark, Check, Search, Trash2 } from 'lucide-react';
+import { Bookmark, Check, ExternalLink, Search, Trash2 } from 'lucide-react';
 import { normalizeBuildItems, type BuildItem, type BuildPlan } from '../buildPlanner';
+import { externalBuildURL } from '../externalURL';
 
 const STORAGE_KEY = 'riftops.buildPlans';
 
@@ -18,13 +19,14 @@ function planKey(championId: number, role: string): string {
   return `${championId}:${String(role || 'FILL').toUpperCase()}`;
 }
 
-export default function BuildPlanner({ championId, championName, fallbackChampionId, fallbackChampionName, role, onNotice }: {
+export default function BuildPlanner({ championId, championName, fallbackChampionId, fallbackChampionName, role, onNotice, onPlanSaved }: {
   championId: number;
   championName: string;
   fallbackChampionId: number;
   fallbackChampionName: string;
   role: string;
   onNotice?: (message: string, type?: 'info' | 'success' | 'error') => void;
+  onPlanSaved?: (plan: BuildPlan) => void;
 }) {
   const [items, setItems] = useState<BuildItem[]>([]);
   const [plans, setPlans] = useState<Record<string, BuildPlan>>(loadPlans);
@@ -53,6 +55,8 @@ export default function BuildPlanner({ championId, championName, fallbackChampio
     return items.filter((item) => item.name.toLowerCase().includes(term)).slice(0, 8);
   }, [items, query]);
   const selectedItems = selected.map((id) => items.find((item) => item.id === id) || { id, name: `Item ${id}` });
+  const opggURL = externalBuildURL('opgg', targetName, role);
+  const uggURL = externalBuildURL('ugg', targetName, role);
 
   const addItem = (id: number) => {
     if (selected.includes(id) || selected.length >= 6) return;
@@ -64,9 +68,11 @@ export default function BuildPlanner({ championId, championName, fallbackChampio
       onNotice?.('Choose a champion and at least one item before saving a build.', 'info');
       return;
     }
-    const next = { ...plans, [key]: { championId: targetId, role: role || 'FILL', itemIds: selected, updatedAt: new Date().toISOString() } };
+	const plan = { championId: targetId, role: role || 'FILL', itemIds: selected, updatedAt: new Date().toISOString() };
+	const next = { ...plans, [key]: plan };
     setPlans(next);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* Local planning is optional. */ }
+    onPlanSaved?.(plan);
     onNotice?.(`${targetName || 'Champion'} build saved for ${role || 'Fill'}.`, 'success');
   };
 
@@ -75,6 +81,6 @@ export default function BuildPlanner({ championId, championName, fallbackChampio
     <div className="play-flow__build-targets"><button type="button" className={target === 'primary' ? 'is-selected' : ''} onClick={() => setTarget('primary')} disabled={!championId}><span>PRIMARY</span><strong>{championName || 'Choose a pick'}</strong></button><button type="button" className={target === 'fallback' ? 'is-selected' : ''} onClick={() => setTarget('fallback')} disabled={!fallbackChampionId}><span>FALLBACK</span><strong>{fallbackChampionName || 'Choose a fallback'}</strong></button></div>
     <div className="play-flow__build-selected">{selectedItems.length ? selectedItems.map((item, index) => <button type="button" key={`${item.id}-${index}`} title="Remove item" onClick={() => setSelected((current) => current.filter((_, itemIndex) => itemIndex !== index))}><span>{index + 1}</span><strong>{item.name}</strong><Trash2 /></button>) : <p>No items saved for this pick yet.</p>}</div>
     <div className="play-flow__build-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search an item to add…" aria-label="Search build items" />{matches.length > 0 && <div className="play-flow__build-results">{matches.map((item) => <button type="button" key={item.id} onClick={() => addItem(item.id)} disabled={selected.includes(item.id) || selected.length >= 6}><span>{item.name}</span>{selected.includes(item.id) ? <Check /> : <small>{item.id}</small>}</button>)}</div>}</div>
-    <div className="play-flow__build-footer"><span>{plans[key] ? `Saved ${new Date(plans[key].updatedAt).toLocaleDateString()}` : 'Not saved yet'}</span><button type="button" className="btn-secondary" onClick={save} disabled={!targetId || selected.length === 0}>Save item plan</button></div>
+    <div className="play-flow__build-footer"><span>{plans[key] ? `Saved ${new Date(plans[key].updatedAt).toLocaleDateString()}` : 'Not saved yet'}</span><div className="play-flow__build-links">{opggURL && <a href={opggURL} target="_blank" rel="noopener noreferrer"><ExternalLink />OP.GG</a>}{uggURL && <a href={uggURL} target="_blank" rel="noopener noreferrer"><ExternalLink />U.GG</a>}<button type="button" className="btn-secondary" onClick={save} disabled={!targetId || selected.length === 0}>Save item plan</button></div></div>
   </section>;
 }

@@ -33,9 +33,24 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
   const overviewSignature = useRef('');
   const lastPublishedAt = useRef(0);
 
+  const [streamerMode, setStreamerModeState] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('riftops.streamerMode');
+      if (saved !== null) return saved === 'true';
+      return true; // Safe streamer & privacy mode enabled by default
+    } catch {
+      return true;
+    }
+  });
+
   const setPerformanceMode = useCallback((mode: PerformanceMode) => {
     setPerformanceModeState(mode);
     try { localStorage.setItem('riftops.performanceMode', mode); } catch { /* Optional preference. */ }
+  }, []);
+
+  const setStreamerMode = useCallback((enabled: boolean) => {
+    setStreamerModeState(enabled);
+    try { localStorage.setItem('riftops.streamerMode', String(enabled)); } catch { /* Optional preference. */ }
   }, []);
 
   useEffect(() => {
@@ -141,11 +156,13 @@ export function LCUConnectionProvider({ children }: { children: React.ReactNode 
     lastUpdated,
     performanceMode,
     setPerformanceMode,
+    streamerMode,
+    setStreamerMode,
     pageVisible,
     pollInterval,
     realtimeInterval,
     refresh,
-  }), [status, health, qol, gameflowSession, gameflowSessionAvailable, activeGame, activeGameAvailable, loading, stale, error, lastUpdated, performanceMode, setPerformanceMode, pageVisible, pollInterval, realtimeInterval, refresh]);
+  }), [status, health, qol, gameflowSession, gameflowSessionAvailable, activeGame, activeGameAvailable, loading, stale, error, lastUpdated, performanceMode, setPerformanceMode, streamerMode, setStreamerMode, pageVisible, pollInterval, realtimeInterval, refresh]);
 
   return <LCUConnectionContext.Provider value={value}>{children}</LCUConnectionContext.Provider>;
 }

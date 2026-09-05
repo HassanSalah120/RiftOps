@@ -191,6 +191,15 @@ export async function checkUpdate(): Promise<{ available: boolean; release?: Rel
   return res.json();
 }
 
+export async function skipUpdate(version: string): Promise<void> {
+  const res = await fetch('/api/skip-update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version }),
+  });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Could not skip this update');
+}
+
 export interface Preferences {
   game: string;
   startupStatus: string;
@@ -509,8 +518,16 @@ export function fetchLCUOwnedProfileIcons(): Promise<LCUProfileIconInventory> {
     };
   });
 }
-export function fetchLCUProfileRegalia(): Promise<{ regalia: unknown; titles: unknown; tokens: unknown; mutation: string }> {
+export interface ProfileRegaliaChoice { id: string; name: string; description?: string; assetPath?: string; regaliaType?: string }
+export interface ProfileRegaliaInventory { current: Record<string, unknown>; titles: ProfileRegaliaChoice[]; tokens: ProfileRegaliaChoice[]; banners: ProfileRegaliaChoice[]; crests: ProfileRegaliaChoice[]; mutation: string }
+export function fetchLCUProfileRegalia(): Promise<ProfileRegaliaInventory> {
   return fetch('/api/lcu/profile-regalia', { cache: 'no-store' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Profile regalia is unavailable'); return response.json(); });
+}
+export function applyLCUProfileRegalia(selection: Partial<ProfilePreset>): Promise<{ ok: boolean; partial?: boolean; results: Record<string, string> }> {
+  return fetch('/api/lcu/profile-regalia', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(selection) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the profile-regalia change');
+    return response.json();
+  });
 }
 
 export const DDBASE = 'https://ddragon.leagueoflegends.com';
@@ -1149,6 +1166,7 @@ export interface SocialSnapshot {
   friendRequests: unknown;
   friendGroups: unknown;
   lobby?: unknown;
+  warnings?: string[];
   fetchedAt: string;
 }
 
@@ -1197,7 +1215,34 @@ export function addLCUCustomBot(championId: number, difficulty: string, teamId: 
   });
 }
 
-export function fetchLCUReplay(gameId: number): Promise<any> {
+export function muteLCUChampSelectPlayer(puuid: string, muted: boolean): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/champ-select/mute', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ puuid, muted }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the mute action');
+    return response.json();
+  });
+}
+
+export interface BalanceCatalog {
+  patch: string;
+  arenaAugments: Array<{ id?: number; name?: string; nameTRA?: string; simpleNameTRA?: string; rarity?: string; augmentSmallIconPath?: string }>;
+  arenaStatus: 'supported' | 'unavailable';
+  aramBalance: unknown[];
+  aramStatus: 'supported' | 'unavailable';
+  aramDetail?: string;
+}
+
+export function fetchLCUBalanceCatalog(signal?: AbortSignal): Promise<BalanceCatalog> {
+  return fetch('/api/lcu/balance-catalog', { signal, cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Balance catalogue is unavailable for this League patch');
+    const body = await response.json();
+    return { ...body, arenaAugments: Array.isArray(body.arenaAugments) ? body.arenaAugments : [], aramBalance: Array.isArray(body.aramBalance) ? body.aramBalance : [] };
+  });
+}
+
+export interface ReplayStatus { gameId: number; status: 'ready' | 'downloading' | 'available' | 'expired' | 'failed' | 'unavailable'; progress?: number; leagueState?: string; error?: string; detail?: string }
+export function fetchLCUReplay(gameId: number): Promise<ReplayStatus> {
   return fetch(`/api/lcu/replay?gameId=${encodeURIComponent(gameId)}`).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Replay metadata is unavailable');
     return response.json();
@@ -1210,8 +1255,8 @@ export function replayAction(gameId: number, action: 'download' | 'watch'): Prom
     return response.json();
   });
 }
-export function fetchReplayStatus(gameId: number): Promise<any> {
-  return fetch(`/api/lcu/replay-status?gameId=${encodeURIComponent(gameId)}`, { cache: 'no-store' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Replay status is unavailable'); return response.json(); });
+export function fetchReplayStatus(gameId: number, signal?: AbortSignal): Promise<ReplayStatus> {
+  return fetch(`/api/lcu/replay-status?gameId=${encodeURIComponent(gameId)}`, { cache: 'no-store', signal }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Replay status is unavailable'); return response.json(); });
 }
 
 export interface ProfilePreset {
@@ -1222,7 +1267,11 @@ export interface ProfilePreset {
   backgroundSkinId?: number;
   titleId?: number;
   bannerId?: number;
+  bannerAccent?: string;
   tokenIds?: number[];
+  preferredBannerType?: string;
+  preferredCrestType?: string;
+  selectedPrestigeCrest?: number;
   statusMessage?: string;
 }
 
@@ -1249,15 +1298,15 @@ export function deleteProfilePreset(id: string): Promise<void> {
   });
 }
 
-export function applyProfilePreset(id: string): Promise<{ ok: boolean; results: Record<string, string> }> {
+export function applyProfilePreset(id: string, previewId: string): Promise<{ ok: boolean; partial?: boolean; results: Record<string, string> }> {
   return fetch('/api/profile-presets/apply', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, previewId }),
   }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Could not apply profile preset');
     return response.json();
   });
 }
-export function previewProfilePreset(id: string): Promise<{ current: unknown; proposed: ProfilePreset; expiresAt: string; requiresConfirmation: boolean }> {
+export function previewProfilePreset(id: string): Promise<{ previewId: string; current: unknown; proposed: ProfilePreset; expiresAt: string; requiresConfirmation: boolean }> {
   return fetch('/api/profile-presets/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not preview profile preset'); return response.json(); });
 }
 
@@ -1283,11 +1332,14 @@ export function fetchPreparationPresets(): Promise<PreparationPreset[]> {
   });
 }
 
-export function applyPreparationPreset(id: string): Promise<{ ok: boolean; results: Record<string, string> }> {
-  return fetch('/api/lcu/preparation-presets/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => {
+export function applyPreparationPreset(id: string, previewId: string): Promise<{ ok: boolean; partial?: boolean; preset: PreparationPreset; results: Record<string, string> }> {
+  return fetch('/api/lcu/preparation-presets/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, previewId }) }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Could not apply preparation preset');
     return response.json();
   });
+}
+export function previewPreparationPreset(id: string): Promise<{ previewId: string; current: { gameflowPhase?: string }; proposed: PreparationPreset; expiresAt: string; requiresConfirmation: boolean }> {
+  return fetch('/api/lcu/preparation-presets/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not preview preparation preset'); return response.json(); });
 }
 export function savePreparationPreset(preset: Omit<PreparationPreset, 'accountKey' | 'id'> & { id?: string }): Promise<PreparationPreset> {
   return fetch('/api/lcu/preparation-presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preset) }).then(async (response) => {
@@ -1308,11 +1360,14 @@ export function fetchLobbyPresets(): Promise<LobbyPreset[]> {
   });
 }
 
-export function applyLobbyPreset(id: string): Promise<{ ok: boolean; preset: LobbyPreset }> {
-  return fetch('/api/lcu/lobby-presets/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => {
+export function applyLobbyPreset(id: string, previewId: string): Promise<{ ok: boolean; partial?: boolean; preset: LobbyPreset; results: Record<string, string> }> {
+  return fetch('/api/lcu/lobby-presets/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, previewId }) }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Could not apply lobby preset');
     return response.json();
   });
+}
+export function previewLobbyPreset(id: string): Promise<{ previewId: string; current: unknown; proposed: LobbyPreset; expiresAt: string; requiresConfirmation: boolean }> {
+  return fetch('/api/lcu/lobby-presets/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not preview lobby preset'); return response.json(); });
 }
 export function saveLobbyPreset(preset: Omit<LobbyPreset, 'id'> & { id?: string }): Promise<LobbyPreset> {
   return fetch('/api/lcu/lobby-presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preset) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not save lobby preset'); return response.json(); });
@@ -1321,11 +1376,39 @@ export function deleteLobbyPreset(id: string): Promise<void> {
   return fetch(`/api/lcu/lobby-presets?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not delete lobby preset'); });
 }
 
-export interface ReviewedOperationPreview { id: string; kind: string; targetIds: string[]; confirmation: string; expiresAt: string; state: string }
+export interface ItemSetSnapshot { id: string; accountKey: string; createdAt: string }
+export function applyManagedItemSet(input: { name: string; championIds: string[]; mode?: string; map?: string; blocks: Array<{ type: string; items: Array<{ id: string; count: number }> }> }): Promise<{ ok: boolean; itemSet: { uid: string; name: string } }> {
+  return fetch('/api/lcu/item-sets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the managed item set');
+    return response.json();
+  });
+}
+export function fetchItemSetSnapshots(): Promise<ItemSetSnapshot[]> {
+  return fetch('/api/lcu/item-sets?snapshots=1', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Item-set snapshots are unavailable');
+    const body = await response.json(); return Array.isArray(body) ? body : [];
+  });
+}
+export function rollbackManagedItemSet(rollbackId: string): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/item-sets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rollbackId }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'League rejected the item-set rollback');
+    return response.json();
+  });
+}
+
+export interface LootOperationItem { targetId?: string; lootId: string; recipeName: string; lootIds: string[]; repeat: number; label?: string; outputs?: unknown }
+export interface ReviewedOperationPreview { id: string; kind: string; targetIds: string[]; lootItems?: LootOperationItem[]; confirmation: string; expiresAt: string; state: string }
 
 export function previewReviewedOperation(kind: string, targetIds: string[]): Promise<ReviewedOperationPreview> {
   return fetch('/api/operations/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, targetIds }) }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Could not prepare the reviewed operation');
+    return response.json();
+  });
+}
+
+export function previewLootOperation(lootItems: LootOperationItem[]): Promise<ReviewedOperationPreview> {
+  return fetch('/api/operations/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'loot-craft', lootItems }) }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Could not prepare the reviewed loot operation');
     return response.json();
   });
 }
@@ -1395,7 +1478,7 @@ export function deleteClientSettingsBackup(id: string): Promise<void> {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Could not delete settings backup');
   });
 }
-export function previewClientSettingsRestore(id: string): Promise<{ backup: ClientSettingsBackup; current: unknown; restoreConfirmation: string }> {
+export function previewClientSettingsRestore(id: string): Promise<{ backup: ClientSettingsBackup; changes: string[]; changeCount: number; restoreConfirmation: string }> {
   return fetch('/api/lcu/client-settings-backups/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Could not preview settings restore');
     return response.json();
@@ -1429,10 +1512,6 @@ export function fetchLCUCapabilities(): Promise<CapabilityStatus[]> {
   });
 }
 
-export interface ItemSetSnapshot { id: string; accountKey: string; createdAt: string }
-export function fetchItemSetSnapshots(): Promise<ItemSetSnapshot[]> {
-  return fetch('/api/lcu/item-sets?snapshots=1', { cache: 'no-store' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Item-set snapshots are unavailable'); const body = await response.json(); return Array.isArray(body) ? body : []; });
-}
 export function rollbackItemSets(rollbackId: string): Promise<{ ok: boolean; rollbackId: string }> {
   return fetch('/api/lcu/item-sets/rollback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rollbackId }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()).trim() || 'Could not roll back item sets'); return response.json(); });
 }

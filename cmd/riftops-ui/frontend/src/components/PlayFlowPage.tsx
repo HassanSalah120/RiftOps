@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Ban, BookOpen, Check, CheckCircle2, CircleStop, Clock3, GitBranch, Loader2, Play,
+  Ban, BookOpen, Check, CheckCircle2, ChevronRight, CircleStop, Clock3, GitBranch, Loader2, Play,
   Pencil, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, Square, Swords, Users, WifiOff, X, Zap,
 } from 'lucide-react';
 import {
@@ -34,6 +34,7 @@ import { PRACTICE_TOOL_QUEUE_ID, queueStartMode } from '../playFlowQueue';
 import { recommendedRoleQuestSpells, roleQuestPlan } from '../roleQuest';
 import { ARENA_BRAVERY_CHAMPION_ID, shouldUseArenaBravery } from '../arenaBravery';
 import { arenaEventKey, arenaEventLabel } from '../arenaTelemetry';
+import type { BuildPlan } from '../buildPlanner';
 
 type ToastFn = (message: string, type?: 'info' | 'success' | 'error') => void;
 
@@ -84,6 +85,7 @@ type FlowPrefs = {
   autoRoles: boolean;
   autoQueue: boolean;
   autoAccept: boolean;
+  autoAcceptDelaySeconds: number;
   autoBan: boolean;
   autoPick: boolean;
   instantLock: boolean;
@@ -98,7 +100,7 @@ function loadPrefs(): FlowPrefs {
     pickTimingMode: 'immediate', pickTimingSeconds: 2,
     banTimingMode: 'immediate', banTimingSeconds: 2,
     selectedQueue: 0,
-    autoRoles: true, autoQueue: true, autoAccept: true, autoBan: true, autoPick: true, instantLock: false,
+    autoRoles: true, autoQueue: true, autoAccept: true, autoAcceptDelaySeconds: 0, autoBan: true, autoPick: true, instantLock: false,
     autoRoleQuestLoadout: false, arenaBraveryPick: false,
   };
   try {
@@ -257,6 +259,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const [draftTone, setDraftTone] = useState<DraftTone>('idle');
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [detectedRole, setDetectedRole] = useState<string | null>(null);
+  const [readyAcceptRemaining, setReadyAcceptRemaining] = useState<number | null>(null);
+  const [savedBuildPlan, setSavedBuildPlan] = useState<BuildPlan | null>(null);
 
   const showToast = useCallback<ToastFn>((message, type = 'info') => {
     setFeedback({ tone: type === 'success' ? 'success' : type === 'error' ? 'error' : 'info', message });
@@ -269,6 +273,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
 
   // General phase guards are separate from the server-confirmed draft state.
   const cycleRef = useRef('');
+  const lastPhaseRef = useRef('');
+  const readyCheckStartedAtRef = useRef(0);
   const doneRef = useRef<Record<string, boolean>>({});
   const actionSeenRef = useRef<Record<string, number>>({});
   const draftRef = useRef<DraftAttempt | null>(null);
@@ -674,6 +680,16 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         return;
       }
       setPhase(current);
+	  if (lastPhaseRef.current !== current) {
+		lastPhaseRef.current = current;
+		if (current === 'ReadyCheck') {
+			readyCheckStartedAtRef.current = Date.now();
+			doneRef.current.accepted = false;
+		} else {
+			readyCheckStartedAtRef.current = 0;
+			setReadyAcceptRemaining(null);
+		}
+	  }
       if (current === 'ChampSelect') console.debug('[PlayFlow] phase ChampSelect', { autoMode: autoRef.current, prefs: prefsRef.current });
 
       if (current === 'None' || current === 'Lobby') resetCycle('lobby');
@@ -731,8 +747,15 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
           }
         } else if (current === 'ReadyCheck') {
           if (config.autoAccept && !doneRef.current.accepted) {
+			const delay = Math.max(0, Math.min(8, Number(config.autoAcceptDelaySeconds) || 0));
+			const startedAt = readyCheckStartedAtRef.current || Date.now();
+			readyCheckStartedAtRef.current = startedAt;
+			const remaining = Math.max(0, delay * 1000 - (Date.now() - startedAt));
+			setReadyAcceptRemaining(Math.ceil(remaining / 1000));
+			if (remaining > 0) return;
             await lcuAutoAccept();
             doneRef.current.accepted = true;
+			setReadyAcceptRemaining(null);
           }
         } else if (current === 'ChampSelect') {
           await handleChampSelectTick();
@@ -822,20 +845,32 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         </div>
       )}
 
-      <section className="glass-card play-flow__progress" aria-label="Current play progress">
-        <ol className="play-flow__steps">
+      <div className="live-pipeline-bar" role="navigation" aria-label="Current play progress">
+        <div className="live-pipeline-bar__steps">
           {STEPS.map((step, index) => {
             const stepIndex = STEPS.findIndex((item) => item.key === activeStep);
-            const state = index < stepIndex ? 'done' : index === stepIndex ? 'active' : 'pending';
+            const isDone = index < stepIndex;
+            const isActive = index === stepIndex;
             return (
-              <li key={step.key} className={`play-flow__step is-${state}`}>
-                <span className="play-flow__step-dot">{state === 'done' ? <Check className="h-3 w-3" /> : index + 1}</span>
-                <span><strong>{step.label}</strong><small>{step.hint}</small></span>
-              </li>
+              <div
+                key={step.key}
+                className={`live-pipeline-step ${isDone ? 'is-complete' : ''} ${isActive ? 'is-active' : ''}`}
+              >
+                <span className="live-pipeline-step__num">
+                  {isDone ? <Check className="w-3 h-3 text-emerald-400 stroke-[3]" /> : index + 1}
+                </span>
+                <div className="flex flex-col min-w-0">
+                  <span className="live-pipeline-step__title">{step.label}</span>
+                  <span className="text-[9.5px] text-text-dim truncate">{step.hint}</span>
+                </div>
+                {index < STEPS.length - 1 && (
+                  <ChevronRight className={`live-pipeline-step__arrow ${isActive ? 'text-primary' : 'text-white/20'}`} />
+                )}
+              </div>
             );
           })}
-        </ol>
-      </section>
+        </div>
+      </div>
 
       <section className="glass-card play-flow__runbook">
         <div className="play-flow__section-heading">
@@ -847,8 +882,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         <div className="play-flow__runbook-grid">
           <div className="play-flow__row">
             <div>
-              <strong>1 · League client</strong>
-              <small>Start League of Legends through the Riot Client.</small>
+              <strong>1 · League client launchpad</strong>
+              <small>Start League of Legends through the official Riot Client.</small>
             </div>
             <button type="button" disabled={launching || connected} onClick={() => void launchLeague()} className="btn-primary flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-40">
               {launching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />}
@@ -858,16 +893,22 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
 
           <div className="play-flow__row">
             <div>
-              <strong>2 · Roles</strong>
-              <small>{isCustomSelection ? 'Custom games do not use lane preferences.' : 'Save your lane preferences in the lobby.'}</small>
+              <strong>2 · Roles & lane preferences</strong>
+              <small>{isCustomSelection ? 'Custom games do not use lane preferences.' : 'Set primary and secondary lane preferences.'}</small>
             </div>
-            <div className="flex items-center gap-2">
-              <select value={prefs.primaryRole} onChange={(event) => update('primaryRole', event.target.value)} className="play-flow__select" aria-label="Primary role" disabled={isCustomSelection}>
-                {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-              <select value={prefs.secondaryRole} onChange={(event) => update('secondaryRole', event.target.value)} className="play-flow__select" aria-label="Secondary role" disabled={isCustomSelection}>
-                {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
+                <span className="text-[11px] font-bold text-text-dim px-1.5">Primary</span>
+                <select value={prefs.primaryRole} onChange={(event) => update('primaryRole', event.target.value)} className="play-flow__select" aria-label="Primary role" disabled={isCustomSelection}>
+                  {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
+                <span className="text-[11px] font-bold text-text-dim px-1.5">Secondary</span>
+                <select value={prefs.secondaryRole} onChange={(event) => update('secondaryRole', event.target.value)} className="play-flow__select" aria-label="Secondary role" disabled={isCustomSelection}>
+                  {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </div>
               <button type="button" disabled={!connected || isCustomSelection || acting === 'roles'} onClick={() => void runStep('roles', () => lcuAutoRoles(prefs.primaryRole, prefs.secondaryRole), 'Position preferences saved.')} className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40">
                 <RefreshCw className={`h-3.5 w-3.5 ${acting === 'roles' ? 'animate-spin' : ''}`} /> Apply
               </button>
@@ -955,6 +996,16 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         runePageId={prefs.pickRunePageId}
         fallbackRunePageId={prefs.fallbackPickRunePageId}
         runePages={runePages}
+        itemIds={savedBuildPlan?.championId === prefs.pickChampionId ? savedBuildPlan.itemIds : []}
+        onPreparationApplied={(preset) => {
+          setPrefs((current) => ({
+            ...current,
+            pickChampionId: preset.championId || current.pickChampionId,
+            pickRunePageId: preset.runePageId || current.pickRunePageId,
+            fallbackPickRunePageId: preset.fallbackRunePageId || current.fallbackPickRunePageId,
+          }));
+          if (preset.championId && preset.itemIds?.length) setSavedBuildPlan({ championId: preset.championId, role: preset.role || '', itemIds: preset.itemIds, updatedAt: new Date().toISOString() });
+        }}
         onToast={showToast}
       />
 
@@ -1019,7 +1070,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
           </label>
           <label className="play-flow__toggle">
             <input type="checkbox" checked={prefs.autoAccept} onChange={(event) => update('autoAccept', event.target.checked)} />
-            <span><strong>Ready check</strong><small>Accept when a match is found</small></span>
+			<span><strong>Ready check</strong><small>{phase === 'ReadyCheck' && readyAcceptRemaining !== null && readyAcceptRemaining > 0 ? `Accepting in ${readyAcceptRemaining}s` : `Accept after ${prefs.autoAcceptDelaySeconds}s`}</small></span>
+			<input className="play-flow__delay-input" type="number" min="0" max="8" value={prefs.autoAcceptDelaySeconds} onChange={(event) => update('autoAcceptDelaySeconds', Math.max(0, Math.min(8, Number(event.target.value) || 0)))} aria-label="Auto-accept delay in seconds" disabled={!prefs.autoAccept} />
           </label>
           <label className="play-flow__toggle">
             <input type="checkbox" checked={prefs.autoPick} onChange={(event) => update('autoPick', event.target.checked)} />
@@ -1083,6 +1135,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                 fallbackChampionName={champions[prefs.fallbackPickChampionId]?.name || ''}
                 role={detectedRole || prefs.primaryRole}
                 onNotice={showToast}
+                onPlanSaved={setSavedBuildPlan}
               />
             </section>
             <section className="play-flow__policy-lane">

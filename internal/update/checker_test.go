@@ -10,7 +10,7 @@ import (
 
 func TestCheckerAndComparison(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v1.18.0","html_url":"https://example.test/release","name":"Release"}`))
+		_, _ = w.Write([]byte(`{"tag_name":"v1.18.0","html_url":"https://example.test/release","name":"Release","body":"Safe fixes","assets":[{"name":"RiftOps.exe"},{"name":"RiftOps.exe.sha256"}]}`))
 	}))
 	defer server.Close()
 	release, err := (Checker{URL: server.URL}).Latest(context.Background())
@@ -20,6 +20,9 @@ func TestCheckerAndComparison(t *testing.T) {
 	newer, err := IsNewer("1.17.2", release.Version)
 	if err != nil || !newer {
 		t.Fatalf("release=%+v newer=%v err=%v", release, newer, err)
+	}
+	if !release.ChecksumAvailable || release.Notes != "Safe fixes" || release.SignatureStatus != "not-verified-by-updater" || len(release.DownloadAssetNames) != 2 {
+		t.Fatalf("release metadata was not normalized: %+v", release)
 	}
 }
 

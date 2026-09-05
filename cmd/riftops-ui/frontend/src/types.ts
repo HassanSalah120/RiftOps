@@ -41,6 +41,11 @@ export interface ConfirmAction {
 export interface Release {
   version: string;
   url: string;
+  name?: string;
+  notes?: string;
+  checksumAvailable?: boolean;
+  signatureStatus?: 'not-verified-by-updater';
+  downloadAssetNames?: string[];
 }
 
 export type Tab = 'dashboard' | 'play' | 'live' | 'social' | 'history' | 'skins' | 'loot' | 'qol' | 'remote' | 'settings';
