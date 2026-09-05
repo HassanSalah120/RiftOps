@@ -1588,7 +1588,7 @@ func settingsDiffPaths(prefix string, currentBody, proposedBody []byte) []string
 		leftMap, leftOK := left.(map[string]any)
 		rightMap, rightOK := right.(map[string]any)
 		if leftOK && rightOK {
-			keys := make(map[string]struct{}, len(leftMap)+len(rightMap))
+			keys := make(map[string]struct{})
 			for key := range leftMap {
 				keys[key] = struct{}{}
 			}

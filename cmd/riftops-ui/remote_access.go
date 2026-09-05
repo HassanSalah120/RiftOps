@@ -311,7 +311,7 @@ func (m *remoteAccessManager) guard(next http.Handler) http.Handler {
 				http.Error(w, "This RiftOps pairing link has expired, was already used, or is invalid.", http.StatusUnauthorized)
 				return
 			}
-			m.setCookie(w, sessionToken, session.ExpiresAt)
+			m.setCookie(w, sessionToken, session.ExpiresAt, r.TLS != nil)
 			redirectWithoutPair(w, r)
 			return
 		}
@@ -328,19 +328,24 @@ func (m *remoteAccessManager) guard(next http.Handler) http.Handler {
 }
 
 func redirectWithoutPair(w http.ResponseWriter, r *http.Request) {
-	clean := *r.URL
-	query := clean.Query()
-	query.Del("pair")
-	clean.RawQuery = query.Encode()
 	w.Header().Set("Cache-Control", "no-store")
-	http.Redirect(w, r, clean.String(), http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-func (m *remoteAccessManager) setCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
+func (m *remoteAccessManager) setCookie(w http.ResponseWriter, token string, expiresAt time.Time, secure bool) {
 	// Lax allows the QR link's external camera-app navigation to complete on
 	// mobile browsers. Mutating requests still require an exact Origin in
 	// originCheck, so this does not make the LAN API cross-site writable.
-	http.SetCookie(w, &http.Cookie{Name: remoteCookie, Value: token, Path: "/", MaxAge: max(1, int(time.Until(expiresAt).Seconds())), Expires: expiresAt, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{
+		Name:     remoteCookie,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   max(1, int(time.Until(expiresAt).Seconds())),
+		Expires:  expiresAt,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func remoteRequest(r *http.Request) bool {
