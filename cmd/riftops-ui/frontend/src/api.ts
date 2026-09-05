@@ -185,9 +185,16 @@ export async function stopEngine(): Promise<void> {
   if (!res.ok) throw new Error(await res.text());
 }
 
-export async function checkUpdate(): Promise<{ available: boolean; release?: Release }> {
-  const res = await fetch('/api/check-update');
-  if (!res.ok) return { available: false };
+export async function checkUpdate(manual = false): Promise<{
+  available: boolean;
+  release?: Release;
+  currentVersion?: string;
+  latestVersion?: string;
+  skipped?: boolean;
+  error?: string;
+}> {
+  const res = await fetch(`/api/check-update${manual ? '?manual=1' : ''}`);
+  if (!res.ok) return { available: false, error: 'Update service unavailable' };
   return res.json();
 }
 

@@ -1120,31 +1120,80 @@ func getSessionStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var (
+	updateCacheMu     sync.Mutex
+	cachedRelease     update.Release
+	cachedReleaseTime time.Time
+)
+
 func checkUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	manual := r.URL.Query().Get("manual") == "1" || r.URL.Query().Get("manual") == "true"
 	prefs := backendEngine.Settings()
-	if !prefs.CheckUpdates {
+	if !manual && !prefs.CheckUpdates {
+		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"available": false})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	release, err := (update.Checker{}).Latest(ctx)
-	if err != nil || release.Version == prefs.PromptedUpdate {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"available": false})
+
+	updateCacheMu.Lock()
+	release := cachedRelease
+	useCache := !manual && !cachedReleaseTime.IsZero() && time.Since(cachedReleaseTime) < 5*time.Minute
+	updateCacheMu.Unlock()
+
+	var err error
+	if !useCache {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		release, err = (update.Checker{}).Latest(ctx)
+		if err == nil {
+			updateCacheMu.Lock()
+			cachedRelease = release
+			cachedReleaseTime = time.Now()
+			updateCacheMu.Unlock()
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		if manual {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"available": false,
+				"error":     "Could not connect to GitHub release service",
+			})
+		} else {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"available": false})
+		}
 		return
 	}
+
+	// For automated checks, do not prompt if the user previously chose to skip this specific version
+	if !manual && release.Version == prefs.PromptedUpdate {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"available":      false,
+			"skipped":        true,
+			"currentVersion": buildinfo.Version,
+			"latestVersion":  release.Version,
+		})
+		return
+	}
+
 	newer, err := update.IsNewer(buildinfo.Version, release.Version)
 	if err != nil || !newer {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"available": false})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"available":      false,
+			"currentVersion": buildinfo.Version,
+			"latestVersion":  release.Version,
+		})
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"available": true,
+		"available":      true,
+		"currentVersion": buildinfo.Version,
 		"release": map[string]interface{}{
 			"version":            release.Version,
 			"url":                release.URL,

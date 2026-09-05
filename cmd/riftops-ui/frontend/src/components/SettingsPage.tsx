@@ -6,6 +6,7 @@ import {
   Monitor,
   Play,
   Power,
+  RefreshCw,
   RotateCcw,
   Search,
   ShieldCheck,
@@ -14,7 +15,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type * as api from '../api';
-import { GAMES } from '../types';
+import { GAMES, type Release } from '../types';
 import PageHeader from './PageHeader';
 import { StatusBadge, ActionFeedback, type FeedbackState } from './DesignPrimitives';
 import ConfirmModal from './ConfirmModal';
@@ -66,6 +67,7 @@ export type SettingsPageProps = {
   clearAssetCache: () => void;
   showToast: (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
   lcuConnected: boolean;
+  onUpdateDetected?: (release: Release) => void;
 };
 
 type SettingsTab = 'all' | 'launch' | 'interface' | 'league' | 'system';
@@ -111,10 +113,31 @@ export default function SettingsPage({
   clearAssetCache,
   showToast,
   lcuConnected,
+  onUpdateDetected,
 }: SettingsPageProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('all');
   const [confirmModal, setConfirmModal] = useState<ConfirmAction | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
   const { streamerMode, setStreamerMode } = useLCUConnection();
+
+  const handleManualUpdateCheck = async () => {
+    setCheckingUpdates(true);
+    try {
+      const res = await apiActions.checkUpdate(true);
+      if (res.available && res.release) {
+        onUpdateDetected?.(res.release);
+      } else if (res.error) {
+        showToast('Update check failed', res.error, 'error');
+      } else {
+        const ver = res.currentVersion || snapshot.Version || '2.8.1';
+        showToast('Up to date', `You are using the latest version of RiftOps (v${ver}).`, 'success');
+      }
+    } catch (err: any) {
+      showToast('Update check failed', err?.message || 'Could not reach update service', 'error');
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
 
   const platformLabel = useMemo(() => {
     if (snapshot.Platform === 'darwin') return 'macOS';
@@ -610,7 +633,19 @@ export default function SettingsPage({
                 <div className="settings-specs-box">
                   <div className="settings-specs-item">
                     <span className="settings-specs-item__label">VERSION</span>
-                    <strong className="settings-specs-item__val">{snapshot.Version ? `v${snapshot.Version}` : '2.8.1'}</strong>
+                    <div className="flex items-center gap-2">
+                      <strong className="settings-specs-item__val">{snapshot.Version ? `v${snapshot.Version}` : '2.8.1'}</strong>
+                      <button
+                        type="button"
+                        disabled={checkingUpdates}
+                        onClick={handleManualUpdateCheck}
+                        className="text-[10px] px-2 py-0.5 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-text-muted hover:text-white border border-white/[0.08] transition inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Check GitHub for new updates"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${checkingUpdates ? 'animate-spin' : ''}`} />
+                        <span>{checkingUpdates ? 'Checking…' : 'Check'}</span>
+                      </button>
+                    </div>
                   </div>
                   <div className="settings-specs-item">
                     <span className="settings-specs-item__label">ARCHITECTURE</span>

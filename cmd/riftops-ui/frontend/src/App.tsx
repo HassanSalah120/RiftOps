@@ -861,6 +861,7 @@ export default function App() {
                 clearAssetCache={clearAssetCache}
                 showToast={showToast}
                 lcuConnected={lcuConnected}
+                onUpdateDetected={setUpdateAvailable}
               />
             </div>
           )}
