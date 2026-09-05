@@ -1,8 +1,8 @@
-﻿; RiftOps Inno Setup Script
+; RiftOps Inno Setup Script
 ; Builds a lightweight, user-mode Windows Setup installer for RiftOps League Companion.
 
 #ifndef AppVersion
-  #define AppVersion "2.8.0"
+  #define AppVersion "2.8.1"
 #endif
 
 #ifndef SourceExe

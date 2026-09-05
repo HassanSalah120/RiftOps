@@ -610,7 +610,7 @@ export default function SettingsPage({
                 <div className="settings-specs-box">
                   <div className="settings-specs-item">
                     <span className="settings-specs-item__label">VERSION</span>
-                    <strong className="settings-specs-item__val">{snapshot.Version ? `v${snapshot.Version}` : '2.8.0'}</strong>
+                    <strong className="settings-specs-item__val">{snapshot.Version ? `v${snapshot.Version}` : '2.8.1'}</strong>
                   </div>
                   <div className="settings-specs-item">
                     <span className="settings-specs-item__label">ARCHITECTURE</span>
