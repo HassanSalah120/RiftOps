@@ -18,7 +18,7 @@
     <a href="#-quick-start">Quick Start</a> ·
     <a href="#-ban-safe-architecture">Ban-Safe Architecture</a> ·
     <a href="#-phone-companion-mimic-style-lan-control">Phone Control</a> ·
-    <a href="DOWNLOADS.md">Downloads</a> ·
+    <a href="https://github.com/HassanSalah120/RiftOps/releases">Downloads</a> ·
     <a href="PRIVACY.md">Privacy Policy</a>
   </p>
 </div>

@@ -14,3 +14,15 @@
 .DS_Store
 Thumbs.db
 
+# Internal development notes & audits (keep local only)
+/COMPETITOR_COMPARISON.md
+/PROJECT_AUDIT.md
+/SAFE_FEATURES.md
+/FEATURE_PARITY.md
+/RELEASE_CHECKLIST.md
+/SECURITY_AUDIT.md
+/DOWNLOADS.md
+/.agents/
+/cmd/riftops-ui/frontend/README.md
+
+
