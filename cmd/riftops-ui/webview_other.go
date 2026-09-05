@@ -20,3 +20,9 @@ func destroyWebView() {}
 
 // pumpUIThread has no native window to probe outside Windows.
 func pumpUIThread(func()) bool { return false }
+
+func windowMinimize()       {}
+func windowToggleMaximize() {}
+func windowClose()          {}
+func windowStartDrag()      {}
+func windowIsMaximized() bool { return false }

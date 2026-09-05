@@ -58,3 +58,10 @@ func pumpUIThread(callback func()) (scheduled bool) {
 	w.Dispatch(callback)
 	return true
 }
+
+func windowMinimize()       {}
+func windowToggleMaximize() {}
+func windowClose()          {}
+func windowStartDrag()      {}
+func windowIsMaximized() bool { return false }
+

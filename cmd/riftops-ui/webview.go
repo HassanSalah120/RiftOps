@@ -49,6 +49,125 @@ func currentWebView() (webview2.WebView, bool) {
 	return window, opening
 }
 
+// setFramelessWindow removes the native Windows title bar while keeping
+// window resizing borders, minimize/maximize animations, and Windows 11 DWM shadow.
+func setFramelessWindow(hwnd uintptr) {
+	const (
+		GWL_STYLE        = 0xFFFFFFF0 // -16
+		WS_CAPTION       = 0x00C00000
+		WS_THICKFRAME    = 0x00040000
+		WS_MINIMIZEBOX   = 0x00020000
+		WS_MAXIMIZEBOX   = 0x00010000
+		SWP_FRAMECHANGED = 0x0020
+		SWP_NOMOVE       = 0x0002
+		SWP_NOSIZE       = 0x0001
+		SWP_NOZORDER     = 0x0004
+	)
+
+	user32 := windows.NewLazySystemDLL("user32.dll")
+	getWindowLong := user32.NewProc("GetWindowLongW")
+	setWindowLong := user32.NewProc("SetWindowLongW")
+	setWindowPos := user32.NewProc("SetWindowPos")
+
+	style, _, _ := getWindowLong.Call(hwnd, uintptr(GWL_STYLE))
+	newStyle := (style &^ WS_CAPTION) | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+	setWindowLong.Call(hwnd, uintptr(GWL_STYLE), newStyle)
+
+	// Keep Windows 11 rounded corners and native drop shadow
+	dwmapi := windows.NewLazySystemDLL("dwmapi.dll")
+	dwmExtend := dwmapi.NewProc("DwmExtendFrameIntoClientArea")
+	type MARGINS struct {
+		CxLeftWidth, CxRightWidth, CyTopHeight, CyBottomHeight int32
+	}
+	margins := MARGINS{1, 1, 1, 1}
+	dwmExtend.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
+
+	setWindowPos.Call(
+		hwnd,
+		0,
+		0, 0, 0, 0,
+		SWP_FRAMECHANGED|SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER,
+	)
+}
+
+func windowMinimize() {
+	window, _ := currentWebView()
+	if window != nil {
+		window.Dispatch(func() {
+			hwnd := window.Window()
+			if hwnd != nil {
+				user32 := windows.NewLazySystemDLL("user32.dll")
+				showWindow := user32.NewProc("ShowWindow")
+				showWindow.Call(uintptr(hwnd), 6) // SW_MINIMIZE
+			}
+		})
+	}
+}
+
+func windowToggleMaximize() {
+	window, _ := currentWebView()
+	if window != nil {
+		window.Dispatch(func() {
+			hwnd := window.Window()
+			if hwnd != nil {
+				user32 := windows.NewLazySystemDLL("user32.dll")
+				isZoomed := user32.NewProc("IsZoomed")
+				showWindow := user32.NewProc("ShowWindow")
+				res, _, _ := isZoomed.Call(uintptr(hwnd))
+				if res != 0 {
+					showWindow.Call(uintptr(hwnd), 9) // SW_RESTORE
+				} else {
+					showWindow.Call(uintptr(hwnd), 3) // SW_MAXIMIZE
+				}
+			}
+		})
+	}
+}
+
+func windowClose() {
+	window, _ := currentWebView()
+	if window != nil {
+		window.Dispatch(func() {
+			hwnd := window.Window()
+			if hwnd != nil {
+				user32 := windows.NewLazySystemDLL("user32.dll")
+				showWindow := user32.NewProc("ShowWindow")
+				showWindow.Call(uintptr(hwnd), 0) // SW_HIDE (clean minimize to tray)
+			}
+		})
+	}
+}
+
+func windowStartDrag() {
+	window, _ := currentWebView()
+	if window != nil {
+		window.Dispatch(func() {
+			hwnd := window.Window()
+			if hwnd != nil {
+				user32 := windows.NewLazySystemDLL("user32.dll")
+				releaseCapture := user32.NewProc("ReleaseCapture")
+				sendMessage := user32.NewProc("SendMessageW")
+				releaseCapture.Call()
+				sendMessage.Call(uintptr(hwnd), 0x00A1 /* WM_NCLBUTTONDOWN */, 2 /* HTCAPTION */, 0)
+			}
+		})
+	}
+}
+
+func windowIsMaximized() bool {
+	window, _ := currentWebView()
+	if window != nil {
+		hwnd := window.Window()
+		if hwnd != nil {
+			user32 := windows.NewLazySystemDLL("user32.dll")
+			isZoomed := user32.NewProc("IsZoomed")
+			res, _, _ := isZoomed.Call(uintptr(hwnd))
+			return res != 0
+		}
+	}
+	return false
+}
+
 // setDarkTitleBar enables the dark immersive title bar via DWM.
 // Must be called from the UI thread (inside w.Dispatch()).
 func setDarkTitleBar(hwnd uintptr) {
@@ -168,13 +287,30 @@ func safeOpenDashboard(url string) {
 			return
 		}
 
+		w.Bind("riftopsMinimizeWindow", func() {
+			windowMinimize()
+		})
+		w.Bind("riftopsMaximizeWindow", func() {
+			windowToggleMaximize()
+		})
+		w.Bind("riftopsCloseWindow", func() {
+			windowClose()
+		})
+		w.Bind("riftopsStartWindowDrag", func() {
+			windowStartDrag()
+		})
+		w.Bind("riftopsIsWindowMaximized", func() bool {
+			return windowIsMaximized()
+		})
+
 		setWebViewState(w, false)
 		w.Navigate(url)
 
-		// Set dark title bar and native window icons after window is ready
+		// Set frameless window, dark title bar and native window icons after window is ready
 		w.Dispatch(func() {
 			hwnd := w.Window()
 			if hwnd != nil {
+				setFramelessWindow(uintptr(hwnd))
 				setDarkTitleBar(uintptr(hwnd))
 				setWindowIcons(uintptr(hwnd))
 			}
@@ -198,7 +334,13 @@ func showWebViewWindow() {
 				user32 := windows.NewLazySystemDLL("user32.dll")
 				showWindow := user32.NewProc("ShowWindow")
 				setForeground := user32.NewProc("SetForegroundWindow")
-				showWindow.Call(uintptr(hwnd), 5) // SW_SHOW
+				isIconic := user32.NewProc("IsIconic")
+				isMin, _, _ := isIconic.Call(uintptr(hwnd))
+				if isMin != 0 {
+					showWindow.Call(uintptr(hwnd), 9) // SW_RESTORE
+				} else {
+					showWindow.Call(uintptr(hwnd), 5) // SW_SHOW
+				}
 				setForeground.Call(uintptr(hwnd))
 				setWindowIcons(uintptr(hwnd))
 			}

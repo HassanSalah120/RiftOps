@@ -3264,3 +3264,132 @@ html[data-performance='quiet'] .control-room__glow { animation: none !important;
   .live-session__action { flex: 1 1 100%; }
   .live-session__footer { align-items: flex-start; flex-direction: column; }
 }
+
+/* ==========================================================================
+   Hextech Custom Window TitleBar
+   ========================================================================== */
+.riftops-titlebar {
+  height: 34px;
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(90deg, rgba(8, 18, 36, 0.98) 0%, rgba(2, 9, 18, 0.98) 45%, rgba(8, 18, 36, 0.98) 100%);
+  border-bottom: 1px solid rgba(200, 170, 110, 0.16);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), inset 0 -1px 0 rgba(200, 170, 110, 0.08);
+  user-select: none;
+  -webkit-app-region: drag;
+  position: relative;
+  z-index: 50;
+}
+
+.riftops-titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  -webkit-app-region: drag;
+  pointer-events: none;
+}
+
+.riftops-titlebar__crest {
+  display: block;
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 119, 255, 0.4));
+}
+
+.riftops-titlebar__title {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #f0e6d2 0%, #c8aa6e 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.riftops-titlebar__subtitle {
+  font-size: 9px;
+  font-weight: 600;
+  color: #785a28;
+  letter-spacing: 0.04em;
+  padding-left: 6px;
+  border-left: 1px solid rgba(200, 170, 110, 0.2);
+}
+
+.riftops-titlebar__drag-region {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+
+.riftops-titlebar__live-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(34, 199, 169, 0.08);
+  border: 1px solid rgba(34, 199, 169, 0.22);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #22c7a9;
+}
+
+.riftops-titlebar__live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #22c7a9;
+  box-shadow: 0 0 8px #22c7a9;
+  animation: pulseGlow 2s infinite ease-in-out;
+}
+
+.riftops-titlebar__controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.riftops-titlebar__control {
+  width: 44px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8c9baf;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.riftops-titlebar__control:hover {
+  background: rgba(200, 170, 110, 0.12);
+  color: #f0e6d2;
+}
+
+.riftops-titlebar__control:active {
+  background: rgba(200, 170, 110, 0.2);
+  color: #ffffff;
+}
+
+.riftops-titlebar__control--close:hover {
+  background: #e84057 !important;
+  color: #ffffff !important;
+}
+
+.riftops-titlebar__control--close:active {
+  background: #c5293e !important;
+  color: #ffffff !important;
+}

@@ -1204,6 +1204,40 @@ func quitApp(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+func windowMinimizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	windowMinimize()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func windowMaximizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	windowToggleMaximize()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func windowCloseHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	windowClose()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func windowStateHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{
+		"maximized": windowIsMaximized(),
+	})
+}
+
 func setAutostart(w http.ResponseWriter, r *http.Request) {
 	var body struct{ Enabled bool }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

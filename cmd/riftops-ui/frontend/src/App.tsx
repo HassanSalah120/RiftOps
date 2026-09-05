@@ -16,6 +16,7 @@ import LootDashboard from './components/LootDashboard';
 import QuickActions from './components/QuickActions';
 import CommandPalette from './components/CommandPalette';
 import WorkspaceHeader from './components/WorkspaceHeader';
+import TitleBar from './components/TitleBar';
 import * as api from './api';
 import ConfirmModal from './components/ConfirmModal';
 import UpdateDialog from './components/UpdateDialog';
@@ -522,8 +523,10 @@ export default function App() {
   }
 
   return (
-    <div className={`riftops-shell flex h-screen bg-base text-text overflow-hidden ${compactMode ? 'is-compact' : ''}`} data-live={isLive ? 'true' : 'false'} data-phase={snapshot.Phase || 'idle'} data-remote={remoteClient ? 'true' : 'false'}>
-      <a className="ro-skip-link" href="#riftops-main">Skip to workspace</a>
+    <div className={`riftops-window flex flex-col h-screen bg-base text-text overflow-hidden ${compactMode ? 'is-compact' : ''}`} data-live={isLive ? 'true' : 'false'} data-phase={snapshot.Phase || 'idle'} data-remote={remoteClient ? 'true' : 'false'}>
+      <TitleBar remoteClient={remoteClient} phase={snapshot.Phase} isLive={isLive} />
+      <div className="riftops-shell flex flex-1 min-h-0 overflow-hidden">
+        <a className="ro-skip-link" href="#riftops-main">Skip to workspace</a>
       {/* Toast Notification */}
       <Toast notification={notification} onClose={() => setNotification(null)} />
       <NotificationCenter
@@ -864,5 +867,6 @@ export default function App() {
         </main>
       </div>
     </div>
-  );
+  </div>
+);
 }
