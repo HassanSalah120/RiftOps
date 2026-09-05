@@ -5,8 +5,8 @@ go 1.26
 toolchain go1.26.6
 
 require (
-	fyne.io/fyne/v2 v2.8.0
-	fyne.io/systray v1.12.2
+	fyne.io/fyne/v2 v2.8.1
+	fyne.io/systray v1.12.3-0.20260810170012-af4e8e793ec4
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
@@ -19,7 +19,6 @@ require (
 	github.com/anthonynsimon/bild v0.14.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/fredbi/uri v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fyne-io/gl-js v0.2.1-0.20260315212741-029c47fd27e8 // indirect
 	github.com/fyne-io/glfw-js v0.4.0 // indirect
