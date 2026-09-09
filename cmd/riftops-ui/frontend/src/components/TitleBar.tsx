@@ -4,10 +4,10 @@ import { Minus, X } from 'lucide-react';
 declare global {
   interface Window {
     riftopsMinimizeWindow?: () => void;
-    riftopsMaximizeWindow?: () => void;
+    riftopsMaximizeWindow?: () => void | Promise<void>;
     riftopsCloseWindow?: () => void;
     riftopsStartWindowDrag?: () => void;
-    riftopsIsWindowMaximized?: () => boolean;
+    riftopsIsWindowMaximized?: () => boolean | Promise<boolean>;
   }
 }
 
@@ -24,7 +24,10 @@ export default function TitleBar({ remoteClient = false, phase = 'idle', isLive 
   const checkMaximized = useCallback(async () => {
     if (typeof window.riftopsIsWindowMaximized === 'function') {
       try {
-        const val = window.riftopsIsWindowMaximized();
+        // WebView2 bindings always return a Promise, even for synchronous Go
+        // callbacks. Await it so the Promise object itself is not treated as
+        // truthy and the restore icon does not stay visible while restored.
+        const val = await window.riftopsIsWindowMaximized();
         setIsMaximized(Boolean(val));
       } catch {
         // Fallback or ignore
@@ -61,7 +64,7 @@ export default function TitleBar({ remoteClient = false, phase = 'idle', isLive 
 
   const handleMaximizeToggle = async () => {
     if (typeof window.riftopsMaximizeWindow === 'function') {
-      window.riftopsMaximizeWindow();
+      await window.riftopsMaximizeWindow();
     } else {
       await fetch('/api/window/maximize', { method: 'POST' }).catch(() => {});
     }

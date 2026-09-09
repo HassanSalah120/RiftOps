@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -53,33 +54,131 @@ func currentWebView() (webview2.WebView, bool) {
 // window resizing borders, minimize/maximize animations, and Windows 11 DWM shadow.
 func setFramelessWindow(hwnd uintptr) {
 	const (
-		GWL_STYLE        = 0xFFFFFFF0 // -16
-		WS_CAPTION       = 0x00C00000
-		WS_THICKFRAME    = 0x00040000
-		WS_MINIMIZEBOX   = 0x00020000
-		WS_MAXIMIZEBOX   = 0x00010000
-		SWP_FRAMECHANGED = 0x0020
-		SWP_NOMOVE       = 0x0002
-		SWP_NOSIZE       = 0x0001
-		SWP_NOZORDER     = 0x0004
+		GWL_STYLE         = 0xFFFFFFF0 // -16
+		WS_CAPTION        = 0x00C00000
+		WS_THICKFRAME     = 0x00040000
+		WS_MINIMIZEBOX    = 0x00020000
+		WS_MAXIMIZEBOX    = 0x00010000
+		WM_NCCALCSIZE     = 0x0083
+		WM_NCHITTEST      = 0x0084
+		HTCLIENT          = 1
+		HTLEFT            = 10
+		HTRIGHT           = 11
+		HTTOP             = 12
+		HTTOPLEFT         = 13
+		HTTOPRIGHT        = 14
+		HTBOTTOM          = 15
+		HTBOTTOMLEFT      = 16
+		HTBOTTOMRIGHT     = 17
+		SM_CXSIZEFRAME    = 32
+		SM_CYSIZEFRAME    = 33
+		SM_CXPADDEDBORDER = 92
+		SWP_FRAMECHANGED  = 0x0020
+		SWP_NOMOVE        = 0x0002
+		SWP_NOSIZE        = 0x0001
+		SWP_NOZORDER      = 0x0004
 	)
 
 	user32 := windows.NewLazySystemDLL("user32.dll")
 	getWindowLong := user32.NewProc("GetWindowLongW")
 	setWindowLong := user32.NewProc("SetWindowLongW")
+	getWindowLongPtr := user32.NewProc("GetWindowLongPtrW")
+	setWindowLongPtr := user32.NewProc("SetWindowLongPtrW")
 	setWindowPos := user32.NewProc("SetWindowPos")
+	callWindowProc := user32.NewProc("CallWindowProcW")
+	getWindowRect := user32.NewProc("GetWindowRect")
+	getSystemMetrics := user32.NewProc("GetSystemMetrics")
+	isZoomed := user32.NewProc("IsZoomed")
+	wndProcIndex := ^uint(3) // GWLP_WNDPROC (-4), represented without a uintptr overflow.
 
 	style, _, _ := getWindowLong.Call(hwnd, uintptr(GWL_STYLE))
 	newStyle := (style &^ WS_CAPTION) | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
 	setWindowLong.Call(hwnd, uintptr(GWL_STYLE), newStyle)
 
-	// Keep Windows 11 rounded corners and native drop shadow
+	// WS_THICKFRAME is needed for native edge resizing, but Windows otherwise
+	// reserves a 7px non-client band around a captionless window. Intercept
+	// WM_NCCALCSIZE so the WebView client fills the outer window while all
+	// other messages continue through WebView2's original window procedure.
+	// This keeps resizing and the DWM shadow without exposing a black inset.
+	previousProc, _, _ := getWindowLongPtr.Call(hwnd, uintptr(wndProcIndex))
+	if previousProc != 0 {
+		fullClientProc := syscall.NewCallback(func(window, message, wParam, lParam uintptr) uintptr {
+			if message == WM_NCCALCSIZE && wParam != 0 {
+				return 0
+			}
+			if message == WM_NCHITTEST {
+				zoomed, _, _ := isZoomed.Call(window)
+				if zoomed != 0 {
+					result, _, _ := callWindowProc.Call(previousProc, window, message, wParam, lParam)
+					return result
+				}
+				// Returning a resize hit target here restores the native edge
+				// affordance lost when the client area is extended over the
+				// non-client frame. The title bar remains client content so its
+				// JavaScript drag handler can issue HTCAPTION on mouse down.
+				type rect struct{ left, top, right, bottom int32 }
+				var bounds rect
+				if ok, _, _ := getWindowRect.Call(window, uintptr(unsafe.Pointer(&bounds))); ok != 0 {
+					x := int(int16(lParam & 0xffff))
+					y := int(int16((lParam >> 16) & 0xffff))
+					metricX, _, _ := getSystemMetrics.Call(SM_CXSIZEFRAME)
+					metricY, _, _ := getSystemMetrics.Call(SM_CYSIZEFRAME)
+					metricPadding, _, _ := getSystemMetrics.Call(SM_CXPADDEDBORDER)
+					borderX := int(metricX)
+					borderY := int(metricY)
+					padding := int(metricPadding)
+					if borderX <= 0 {
+						borderX = 8
+					}
+					if borderY <= 0 {
+						borderY = 8
+					}
+					borderX += padding
+					borderY += padding
+					left := x < int(bounds.left)+borderX
+					right := x >= int(bounds.right)-borderX
+					top := y < int(bounds.top)+borderY
+					bottom := y >= int(bounds.bottom)-borderY
+					switch {
+					case left && top:
+						return HTTOPLEFT
+					case right && top:
+						return HTTOPRIGHT
+					case left && bottom:
+						return HTBOTTOMLEFT
+					case right && bottom:
+						return HTBOTTOMRIGHT
+					case left:
+						return HTLEFT
+					case right:
+						return HTRIGHT
+					case top:
+						return HTTOP
+					case bottom:
+						return HTBOTTOM
+					default:
+						return HTCLIENT
+					}
+				}
+			}
+			result, _, _ := callWindowProc.Call(previousProc, window, message, wParam, lParam)
+			return result
+		})
+		setWindowLongPtr.Call(hwnd, uintptr(wndProcIndex), fullClientProc)
+	}
+
+	// Extend the DWM frame across the whole client area. With a custom HTML
+	// title bar, the default 1px frame leaves the WS_THICKFRAME non-client
+	// inset visible as a dark strip above and beside the app (7px on Windows
+	// 11 at the default DPI). The resize style remains enabled, so the native
+	// hit-testing/shadow behavior is preserved while the WebView fills the
+	// window edge-to-edge.
 	dwmapi := windows.NewLazySystemDLL("dwmapi.dll")
 	dwmExtend := dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 	type MARGINS struct {
 		CxLeftWidth, CxRightWidth, CyTopHeight, CyBottomHeight int32
 	}
-	margins := MARGINS{1, 1, 1, 1}
+	margins := MARGINS{-1, -1, -1, -1}
 	dwmExtend.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
 
 	setWindowPos.Call(
@@ -224,7 +323,6 @@ func setWindowIcons(hwnd uintptr) {
 		sendMessage.Call(hwnd, WM_SETICON, ICON_BIG, hBig)
 	}
 }
-
 
 // safeOpenDashboard tries WebView2 first, falls back to Chrome --app=
 func safeOpenDashboard(url string) {
