@@ -37,7 +37,10 @@ func (darwinAdapter) KnownProcesses(ctx context.Context) ([]ProcessInfo, error) 
 	if err != nil {
 		return nil, err
 	}
-	known := []string{"riotclientservices", "riot client", "leagueclient", "league of legends"}
+	known := []string{
+		"riotclientservices", "riotclientux", "riotclientuxrender", "riot client",
+		"leagueclient", "leagueclientux", "leagueclientuxrender", "league of legends",
+	}
 	var result []ProcessInfo
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)

@@ -38,15 +38,39 @@ export default function PhoneCompanionPanel({ showToast }: { showToast: Toast })
   };
 
   return (
-    <section className="phone-companion" aria-label="Phone social controls">
+    <section className="flex flex-col gap-3.5 p-4 rounded-2xl border border-primary/20 bg-surface/80 glass-card" aria-label="Phone social controls">
       <PWAInstallBanner />
-      <div className="phone-companion__heading"><span><Radio /></span><div><small>PHONE-SAFE CONTROLS</small><strong>Presence & friends</strong><p>Update reversible League presence and review your social list without exposing desktop settings.</p></div></div>
+      <div className="flex items-start gap-3 border-b border-white/[0.06] pb-3">
+        <span className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-cyan-400 flex items-center justify-center shrink-0">
+          <Radio className="w-4 h-4" />
+        </span>
+        <div>
+          <small className="text-[9px] font-black tracking-widest text-text-muted uppercase block">PHONE-SAFE CONTROLS</small>
+          <strong className="text-base font-bold text-white block">Presence & friends</strong>
+          <p className="text-[11px] text-text-muted mt-0.5">Update reversible League presence and review your social list without exposing desktop settings.</p>
+        </div>
+      </div>
       <ActionFeedback state={feedback} />
-      <div className="phone-companion__presence">
-        <label><span><Users /> Availability</span><select name="phone-league-availability" value={availability} disabled={!connected || busy !== ''} onChange={(event) => setAvailability(event.target.value)}><option value="chat">Online</option><option value="away">Away</option><option value="mobile">Mobile</option><option value="offline">Appear offline</option></select></label>
-        <button type="button" disabled={!connected || busy !== ''} onClick={() => void run('availability', () => setLCUAvailability(availability), 'League availability updated.')}><RefreshCw className={busy === 'availability' ? 'animate-spin' : ''} /> Apply</button>
-        <label className="phone-companion__message"><span><MessageSquareText /> Status message</span><input name="phone-league-status" autoComplete="off" value={message} maxLength={128} disabled={!connected || busy !== ''} onChange={(event) => setMessage(event.target.value)} placeholder="What should friends see?" /></label>
-        <button type="button" disabled={!connected || busy !== ''} onClick={() => void run('message', () => setLCUStatusMessage(message.trim()), 'League status message updated.')}><Save /> Save</button>
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2.5 items-end">
+        <label className="flex flex-col gap-1 text-xs text-text-muted font-bold">
+          <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-primary" /> Availability</span>
+          <select name="phone-league-availability" value={availability} disabled={!connected || busy !== ''} onChange={(event) => setAvailability(event.target.value)} className="w-full text-xs">
+            <option value="chat">Online</option>
+            <option value="away">Away</option>
+            <option value="mobile">Mobile</option>
+            <option value="offline">Appear offline</option>
+          </select>
+        </label>
+        <button type="button" className="btn-secondary text-xs flex items-center justify-center gap-1.5 h-[38px] px-4" disabled={!connected || busy !== ''} onClick={() => void run('availability', () => setLCUAvailability(availability), 'League availability updated.')}>
+          <RefreshCw className={`w-3.5 h-3.5 ${busy === 'availability' ? 'animate-spin' : ''}`} /> Apply
+        </button>
+        <label className="flex flex-col gap-1 text-xs text-text-muted font-bold">
+          <span className="flex items-center gap-1.5"><MessageSquareText className="w-3.5 h-3.5 text-primary" /> Status message</span>
+          <input name="phone-league-status" autoComplete="off" value={message} maxLength={128} disabled={!connected || busy !== ''} onChange={(event) => setMessage(event.target.value)} placeholder="What should friends see?" className="w-full text-xs" />
+        </label>
+        <button type="button" className="btn-primary text-xs flex items-center justify-center gap-1.5 h-[38px] px-4" disabled={!connected || busy !== ''} onClick={() => void run('message', () => setLCUStatusMessage(message.trim()), 'League status message updated.')}>
+          <Save className="w-3.5 h-3.5" /> Save
+        </button>
       </div>
       <FriendsPanel id="phone-friends" connected={connected} />
     </section>

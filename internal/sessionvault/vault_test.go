@@ -2,6 +2,7 @@ package sessionvault
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -157,5 +158,173 @@ func TestRefreshIfEnrolledKeepsProfilesIsolatedAndRenewsExpiry(t *testing.T) {
 	}
 	if _, err := vault.Status("new-profile"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unenrolled profile unexpectedly captured: %v", err)
+	}
+}
+
+func TestCaptureAndRestoreBothSettingsFiles(t *testing.T) {
+	dataDir := t.TempDir()
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}, now: time.Now}
+
+	gamesData := []byte("games-private-settings")
+	clientData := []byte("client-private-settings-with-tokens")
+
+	if err := os.WriteFile(filepath.Join(dataDir, privateSettingsFile), gamesData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, clientPrivateSettingsFile), clientData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := vault.Capture("profile-dual", 30*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	// Overwrite both with other account
+	if err := os.WriteFile(filepath.Join(dataDir, privateSettingsFile), []byte("other-games"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, clientPrivateSettingsFile), []byte("other-client"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := vault.Restore("profile-dual"); err != nil {
+		t.Fatal(err)
+	}
+
+	gotGames, err := os.ReadFile(filepath.Join(dataDir, privateSettingsFile))
+	if err != nil || !bytes.Equal(gotGames, gamesData) {
+		t.Fatalf("restored games = %q, want %q", gotGames, gamesData)
+	}
+	gotClient, err := os.ReadFile(filepath.Join(dataDir, clientPrivateSettingsFile))
+	if err != nil || !bytes.Equal(gotClient, clientData) {
+		t.Fatalf("restored client = %q, want %q", gotClient, clientData)
+	}
+
+	// Test clear removes both
+	if err := vault.ClearActiveSession(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, privateSettingsFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("privateSettingsFile was not removed")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, clientPrivateSettingsFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("clientPrivateSettingsFile was not removed")
+	}
+}
+
+func TestCaptureAndRestoreCompleteRiotRememberedLoginState(t *testing.T) {
+	dataDir := t.TempDir()
+	clientRoot := filepath.Dir(dataDir)
+	configDir := filepath.Join(clientRoot, "Config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}, now: time.Now}
+
+	files := map[string][]byte{
+		filepath.Join(dataDir, privateSettingsFile):                   []byte("games-session"),
+		filepath.Join(dataDir, clientPrivateSettingsFile):             []byte("client-session"),
+		filepath.Join(dataDir, "Cookies", "Cookies"):                  []byte("cookie-db"),
+		filepath.Join(dataDir, "Sessions", "account", "session.json"): []byte("session-json"),
+		filepath.Join(configDir, clientSettingsFile):                  []byte("client-settings"),
+	}
+	for path, contents := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := vault.Capture("complete", 30*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	// A different account leaves stale cookie/session state behind. Restore
+	// must replace the complete allowlisted set, not only the YAML files.
+	if err := os.WriteFile(filepath.Join(dataDir, "Cookies", "stale"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, privateSettingsFile), []byte("other"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := vault.Restore("complete"); err != nil {
+		t.Fatal(err)
+	}
+
+	for path, want := range files {
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("restored %s = %q, %v; want %q", path, got, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "Cookies", "stale")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale cookie was not removed, error = %v", err)
+	}
+}
+
+func TestClearActiveSessionRemovesCompleteRememberedLoginState(t *testing.T) {
+	dataDir := t.TempDir()
+	clientRoot := filepath.Dir(dataDir)
+	configPath := filepath.Join(clientRoot, "Config", clientSettingsFile)
+	paths := []string{
+		filepath.Join(dataDir, privateSettingsFile),
+		filepath.Join(dataDir, clientPrivateSettingsFile),
+		filepath.Join(dataDir, "Cookies", "Cookies"),
+		filepath.Join(dataDir, "Sessions", "session"),
+		configPath,
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("session"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}}
+	if err := vault.ClearActiveSession(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("session path %s still exists, error = %v", path, err)
+		}
+	}
+}
+
+func TestRestoreMigratesLegacyTwoFileVault(t *testing.T) {
+	dataDir := t.TempDir()
+	vaultDir := t.TempDir()
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: vaultDir, protector: testProtector{}, now: time.Now}
+	now := time.Now().UTC()
+	legacy, err := json.Marshal(payload{
+		Version:    1,
+		CapturedAt: now,
+		ExpiresAt:  now.Add(time.Hour),
+		Data:       []byte("legacy-games"),
+		ClientData: []byte("legacy-client"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := vault.protector.seal(legacy, []byte("legacy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vault.path("legacy"), sealed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := vault.Restore("legacy"); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		filepath.Join(dataDir, privateSettingsFile):       "legacy-games",
+		filepath.Join(dataDir, clientPrivateSettingsFile): "legacy-client",
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("legacy restore %s = %q, %v; want %q", path, got, err, want)
+		}
 	}
 }

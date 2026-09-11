@@ -12,13 +12,15 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Terminal,
   Trash2,
 } from 'lucide-react';
 import type * as api from '../api';
-import { GAMES, type Release } from '../types';
+import { GAMES, type LogLine, type Release } from '../types';
 import PageHeader from './PageHeader';
 import { StatusBadge, ActionFeedback, type FeedbackState } from './DesignPrimitives';
 import ConfirmModal from './ConfirmModal';
+import LogViewer from './LogViewer';
 import { PERFORMANCE_MODES, useLCUConnection } from './lcuConnectionContext';
 import type { ConfirmAction } from '../types';
 
@@ -68,9 +70,11 @@ export type SettingsPageProps = {
   showToast: (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
   lcuConnected: boolean;
   onUpdateDetected?: (release: Release) => void;
+  logs?: LogLine[];
+  onClearLogs?: () => void;
 };
 
-type SettingsTab = 'all' | 'launch' | 'interface' | 'league' | 'system';
+type SettingsTab = 'all' | 'launch' | 'interface' | 'league' | 'system' | 'diagnostics';
 
 const PRESENCE_MODES = [
   { id: 'last', label: 'Remember Last', color: 'bg-amber-400' },
@@ -114,6 +118,8 @@ export default function SettingsPage({
   showToast,
   lcuConnected,
   onUpdateDetected,
+  logs = [],
+  onClearLogs,
 }: SettingsPageProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('all');
   const [confirmModal, setConfirmModal] = useState<ConfirmAction | null>(null);
@@ -129,7 +135,7 @@ export default function SettingsPage({
       } else if (res.error) {
         showToast('Update check failed', res.error, 'error');
       } else {
-        const ver = res.currentVersion || snapshot.Version || '2.9.0';
+        const ver = res.currentVersion || snapshot.Version || '2.9.1';
         showToast('Up to date', `You are using the latest version of RiftOps (v${ver}).`, 'success');
       }
     } catch (err: any) {
@@ -197,7 +203,7 @@ export default function SettingsPage({
         }
         actions={
           <div className="flex items-center gap-2">
-            <span className="qol-rules-pill">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-extrabold text-cyan-300 bg-cyan-500/10 border border-cyan-500/30">
               <Monitor className="w-3.5 h-3.5 text-cyan-400" />
               <span>{lcuConnected ? 'LCU Connected' : 'LCU Idle'}</span>
             </span>
@@ -206,10 +212,10 @@ export default function SettingsPage({
       />
 
       {/* Category Sub-Navigation Bar */}
-      <nav className="settings-filter-tabs" aria-label="Settings categories">
+      <nav className="flex items-center gap-1.5 p-1.5 bg-dark-card/60 backdrop-blur-md rounded-2xl border border-white/5 overflow-x-auto mb-6" aria-label="Settings categories">
         <button
           type="button"
-          className={`settings-filter-btn ${activeTab === 'all' ? 'is-active' : ''}`}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'all' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('all')}
         >
           <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -217,7 +223,7 @@ export default function SettingsPage({
         </button>
         <button
           type="button"
-          className={`settings-filter-btn ${activeTab === 'launch' ? 'is-active' : ''}`}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'launch' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('launch')}
         >
           <Play className="w-3.5 h-3.5" />
@@ -225,7 +231,7 @@ export default function SettingsPage({
         </button>
         <button
           type="button"
-          className={`settings-filter-btn ${activeTab === 'interface' ? 'is-active' : ''}`}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'interface' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('interface')}
         >
           <Sparkles className="w-3.5 h-3.5" />
@@ -233,7 +239,7 @@ export default function SettingsPage({
         </button>
         <button
           type="button"
-          className={`settings-filter-btn ${activeTab === 'league' ? 'is-active' : ''}`}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'league' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('league')}
         >
           <FolderOpen className="w-3.5 h-3.5" />
@@ -241,11 +247,19 @@ export default function SettingsPage({
         </button>
         <button
           type="button"
-          className={`settings-filter-btn ${activeTab === 'system' ? 'is-active' : ''}`}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'system' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('system')}
         >
           <HardDrive className="w-3.5 h-3.5" />
           <span>System & Storage</span>
+        </button>
+        <button
+          type="button"
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'diagnostics' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
+          onClick={() => setActiveTab('diagnostics')}
+        >
+          <Terminal className="w-3.5 h-3.5" />
+          <span>Developer Tools & Logs</span>
         </button>
       </nav>
 
@@ -255,36 +269,36 @@ export default function SettingsPage({
       )}
 
       {/* Main Cockpit Grid */}
-      <div className="settings-cockpit-grid">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* LEFT COLUMN: Launch & Interface */}
-        <div className="settings-cockpit-grid__col space-y-4">
+        <div className="space-y-5">
           {/* Card 1: Launch & Presence */}
           {(activeTab === 'all' || activeTab === 'launch') && (
-            <section className="settings-card glass-card" id="settings-launch">
-              <div className="settings-card__heading">
-                <span className="settings-card__icon settings-card__icon--gold">
+            <section className="glass-card p-5 rounded-2xl space-y-4" id="settings-launch">
+              <div className="flex items-center gap-3 pb-3 border-b border-white/5">
+                <span className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400">
                   <Play className="w-4 h-4" />
                 </span>
-                <div className="settings-card__copy">
+                <div>
                   <small>LAUNCH & STARTUP</small>
                   <h3>Startup Behavior</h3>
                   <p>Choose what RiftOps launches and how your presence starts.</p>
                 </div>
               </div>
 
-              <div className="settings-card__body space-y-4">
+              <div className="space-y-4">
                 {/* Default Game */}
-                <div className="settings-field">
-                  <div className="settings-field__info">
-                    <label className="settings-field__label">Default Launch Game</label>
-                    <span className="settings-field__desc">Select which title opens by default in Command Center.</span>
+                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <label className="text-xs font-bold text-white">Default Launch Game</label>
+                    <span className="text-[11px] text-text-dim">Select which title opens by default in Command Center.</span>
                   </div>
-                  <div className="settings-segmented-grid">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 rounded-xl bg-black/40 border border-white/10">
                     {GAMES.map((game) => (
                       <button
                         key={game.value}
                         type="button"
-                        className={`settings-segmented-item ${prefGame === game.value ? 'is-selected' : ''}`}
+                        className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${prefGame === game.value ? 'bg-primary/20 text-primary border border-primary/40 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
                         onClick={() => {
                           setPrefGame(game.value);
                           void persistPreferences({ game: game.value }).catch((err: any) =>
@@ -292,7 +306,7 @@ export default function SettingsPage({
                           );
                         }}
                       >
-                        <span className="settings-segmented-item__name">{game.label}</span>
+                        <span>{game.label}</span>
                         {prefGame === game.value && <Check className="w-3.5 h-3.5 text-primary" />}
                       </button>
                     ))}
@@ -300,17 +314,17 @@ export default function SettingsPage({
                 </div>
 
                 {/* Startup Presence */}
-                <div className="settings-field">
-                  <div className="settings-field__info">
-                    <label className="settings-field__label">Initial Chat Presence</label>
-                    <span className="settings-field__desc">The availability status applied immediately upon starting Riot Client.</span>
+                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <label className="text-xs font-bold text-white">Initial Chat Presence</label>
+                    <span className="text-[11px] text-text-dim">The availability status applied immediately upon starting Riot Client.</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {PRESENCE_MODES.map((mode) => (
                       <button
                         key={mode.id}
                         type="button"
-                        className={`settings-presence-opt ${prefStartup === mode.id ? 'is-selected' : ''}`}
+                        className={`flex items-center gap-2 p-2 rounded-xl bg-dark-bg/60 border text-xs transition ${prefStartup === mode.id ? 'border-primary/40 text-white bg-primary/10 font-bold' : 'border-white/5 text-text-muted hover:text-white hover:border-white/15'}`}
                         onClick={() => {
                           setPrefStartup(mode.id);
                           void persistPreferences({ startupStatus: mode.id }).catch((err: any) =>
@@ -326,10 +340,10 @@ export default function SettingsPage({
                 </div>
 
                 {/* Keep Lobby Chat Connected (MUC) */}
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-row__copy">
-                    <span className="settings-toggle-row__title">Keep Lobby Chat Connected (MUC)</span>
-                    <span className="settings-toggle-row__desc">
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-bold text-white">Keep Lobby Chat Connected (MUC)</span>
+                    <span className="text-[11px] text-text-dim">
                       Maintains multi-user chat connection in game lobbies even while presence is masked.
                     </span>
                   </div>
@@ -354,24 +368,24 @@ export default function SettingsPage({
 
           {/* Card 2: Interface & Performance */}
           {(activeTab === 'all' || activeTab === 'interface') && (
-            <section className="settings-card glass-card" id="settings-interface">
-              <div className="settings-card__heading">
-                <span className="settings-card__icon settings-card__icon--cyan">
+            <section className="glass-card p-5 rounded-2xl space-y-4" id="settings-interface">
+              <div className="flex items-center gap-3 pb-3 border-b border-white/5">
+                <span className="w-9 h-9 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-400">
                   <Sparkles className="w-4 h-4" />
                 </span>
-                <div className="settings-card__copy">
+                <div>
                   <small>INTERFACE & ACCESSIBILITY</small>
                   <h3>Workspace Preferences</h3>
                   <p>Display language, client performance mode, and visual comfort.</p>
                 </div>
               </div>
 
-              <div className="settings-card__body space-y-4">
+              <div className="space-y-4">
                 {/* Language */}
-                <div className="settings-field">
-                  <div className="settings-field__info">
-                    <label className="settings-field__label">{t('settings.language') || 'Interface Language'}</label>
-                    <span className="settings-field__desc">{t('settings.languageHelp') || 'Choose between English and Arabic.'}</span>
+                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <label className="text-xs font-bold text-white">{t('settings.language') || 'Interface Language'}</label>
+                    <span className="text-[11px] text-text-dim">{t('settings.languageHelp') || 'Choose between English and Arabic.'}</span>
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -398,17 +412,17 @@ export default function SettingsPage({
                 </div>
 
                 {/* Performance Mode */}
-                <div className="settings-field">
-                  <div className="settings-field__info">
-                    <label className="settings-field__label">Client Polling Profile</label>
-                    <span className="settings-field__desc">Adjust background LCU refresh intervals to save CPU/battery.</span>
+                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <label className="text-xs font-bold text-white">Client Polling Profile</label>
+                    <span className="text-[11px] text-text-dim">Adjust background LCU refresh intervals to save CPU/battery.</span>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
                     {Object.entries(PERFORMANCE_MODES).map(([key, mode]) => (
                       <button
                         key={key}
                         type="button"
-                        className={`settings-perf-btn ${performanceMode === key ? 'is-selected' : ''}`}
+                        className={`flex flex-col items-center justify-center p-2.5 rounded-xl bg-dark-bg/60 border text-xs text-center transition ${performanceMode === key ? 'border-primary/40 text-white bg-primary/10 font-bold' : 'border-white/5 text-text-muted hover:text-white hover:border-white/15'}`}
                         onClick={() => {
                           setPerformanceMode(key as keyof typeof PERFORMANCE_MODES);
                           setSettingsFeedback({ tone: 'success', message: `${mode.label} profile activated.` });
@@ -422,10 +436,10 @@ export default function SettingsPage({
                 </div>
 
                 {/* Compact Mode */}
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-row__copy">
-                    <span className="settings-toggle-row__title">Compact Workspace Density</span>
-                    <span className="settings-toggle-row__desc">Reduces padding and card heights for smaller screens or windowed mode.</span>
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-bold text-white">Compact Workspace Density</span>
+                    <span className="text-[11px] text-text-dim">Reduces padding and card heights for smaller screens or windowed mode.</span>
                   </div>
                   <label className="toggle">
                     <input
@@ -442,10 +456,10 @@ export default function SettingsPage({
                 </div>
 
                 {/* Reduced Motion */}
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-row__copy">
-                    <span className="settings-toggle-row__title">Reduce Interface Motion</span>
-                    <span className="settings-toggle-row__desc">Disables intense glowing pulses, radar sweeps, and transition animations.</span>
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-bold text-white">Reduce Interface Motion</span>
+                    <span className="text-[11px] text-text-dim">Disables intense glowing pulses, radar sweeps, and transition animations.</span>
                   </div>
                   <label className="toggle">
                     <input
@@ -462,10 +476,10 @@ export default function SettingsPage({
                 </div>
 
                 {/* Streamer & Privacy Mode */}
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-row__copy">
-                    <span className="settings-toggle-row__title">Streamer & Privacy Mode</span>
-                    <span className="settings-toggle-row__desc">Masks summoner names, Riot IDs, and friend identities across the entire interface for streaming and screenshots.</span>
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-bold text-white">Streamer & Privacy Mode</span>
+                    <span className="text-[11px] text-text-dim">Masks summoner names, Riot IDs, and friend identities across the entire interface for streaming and screenshots.</span>
                   </div>
                   <label className="toggle">
                     <input
@@ -482,10 +496,10 @@ export default function SettingsPage({
                 </div>
 
                 {/* Automatic Updates */}
-                <div className="settings-toggle-row">
-                  <div className="settings-toggle-row__copy">
-                    <span className="settings-toggle-row__title">Automatic Update Checks</span>
-                    <span className="settings-toggle-row__desc">Notifies you silently when a newer verified release of RiftOps is published.</span>
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-bold text-white">Automatic Update Checks</span>
+                    <span className="text-[11px] text-text-dim">Notifies you silently when a newer verified release of RiftOps is published.</span>
                   </div>
                   <label className="toggle">
                     <input
@@ -508,22 +522,22 @@ export default function SettingsPage({
         </div>
 
         {/* RIGHT COLUMN: League Installation, Specs & Maintenance */}
-        <div className="settings-cockpit-grid__col space-y-4">
+        <div className="space-y-5">
           {/* Card 3: League Installation */}
           {(activeTab === 'all' || activeTab === 'league') && (
-            <section className="settings-card glass-card" id="settings-league">
-              <div className="settings-card__heading">
-                <span className="settings-card__icon settings-card__icon--emerald">
+            <section className="glass-card p-5 rounded-2xl space-y-4" id="settings-league">
+              <div className="flex items-center gap-3 pb-3 border-b border-white/5">
+                <span className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400">
                   <FolderOpen className="w-4 h-4" />
                 </span>
-                <div className="settings-card__copy">
+                <div>
                   <small>LEAGUE INSTALLATION</small>
                   <h3>Client Location & Desktop</h3>
                   <p>Configure the Riot Client executable RiftOps binds to.</p>
                 </div>
               </div>
 
-              <div className="settings-card__body space-y-3">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-text-muted">Installation Engine Status</span>
                   <StatusBadge tone={pathStatus.tone}>{pathStatus.label}</StatusBadge>
@@ -594,10 +608,10 @@ export default function SettingsPage({
 
                 {/* Windows Autostart */}
                 {snapshot.Platform === 'windows' && (
-                  <div className="settings-toggle-row mt-3 pt-3 border-t border-white/[0.06]">
-                    <div className="settings-toggle-row__copy">
-                      <span className="settings-toggle-row__title">Start RiftOps with Windows</span>
-                      <span className="settings-toggle-row__desc">Automatically launch RiftOps in the system tray when you sign in to this PC.</span>
+                  <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition mt-3">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-bold text-white">Start RiftOps with Windows</span>
+                      <span className="text-[11px] text-text-dim">Automatically launch RiftOps in the system tray when you sign in to this PC.</span>
                     </div>
                     <label className="toggle">
                       <input
@@ -616,25 +630,25 @@ export default function SettingsPage({
 
           {/* Card 4: System & Storage Maintenance */}
           {(activeTab === 'all' || activeTab === 'system') && (
-            <section className="settings-card glass-card" id="settings-system">
-              <div className="settings-card__heading">
-                <span className="settings-card__icon settings-card__icon--gold">
+            <section className="glass-card p-5 rounded-2xl space-y-4" id="settings-system">
+              <div className="flex items-center gap-3 pb-3 border-b border-white/5">
+                <span className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400">
                   <HardDrive className="w-4 h-4" />
                 </span>
-                <div className="settings-card__copy">
+                <div>
                   <small>SYSTEM & MAINTENANCE</small>
                   <h3>App Storage & Runtime</h3>
                   <p>Inspect active runtime specs and perform local maintenance.</p>
                 </div>
               </div>
 
-              <div className="settings-card__body space-y-3">
+              <div className="space-y-3">
                 {/* Runtime Specs */}
-                <div className="settings-specs-box">
-                  <div className="settings-specs-item">
-                    <span className="settings-specs-item__label">VERSION</span>
+                <div className="grid grid-cols-2 gap-2 p-3 rounded-xl bg-dark-bg/50 border border-white/5">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-bold tracking-wider text-text-dim uppercase">VERSION</span>
                     <div className="flex items-center gap-2">
-                      <strong className="settings-specs-item__val">{snapshot.Version ? `v${snapshot.Version}` : '2.9.0'}</strong>
+                      <strong className="text-xs font-mono font-medium text-white">{snapshot.Version ? `v${snapshot.Version}` : '2.9.1'}</strong>
                       <button
                         type="button"
                         disabled={checkingUpdates}
@@ -647,17 +661,17 @@ export default function SettingsPage({
                       </button>
                     </div>
                   </div>
-                  <div className="settings-specs-item">
-                    <span className="settings-specs-item__label">ARCHITECTURE</span>
-                    <strong className="settings-specs-item__val">{platformLabel}</strong>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-bold tracking-wider text-text-dim uppercase">ARCHITECTURE</span>
+                    <strong className="text-xs font-mono font-medium text-white">{platformLabel}</strong>
                   </div>
-                  <div className="settings-specs-item">
-                    <span className="settings-specs-item__label">CHAT PORT</span>
-                    <strong className="settings-specs-item__val">{snapshot.ChatPort > 0 ? snapshot.ChatPort : 'Standby'}</strong>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-bold tracking-wider text-text-dim uppercase">CHAT PORT</span>
+                    <strong className="text-xs font-mono font-medium text-white">{snapshot.ChatPort > 0 ? snapshot.ChatPort : 'Standby'}</strong>
                   </div>
-                  <div className="settings-specs-item">
-                    <span className="settings-specs-item__label">LCU STATUS</span>
-                    <strong className="settings-specs-item__val">{lcuConnected ? 'Connected' : 'Offline'}</strong>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-bold tracking-wider text-text-dim uppercase">LCU STATUS</span>
+                    <strong className="text-xs font-mono font-medium text-white">{lcuConnected ? 'Connected' : 'Offline'}</strong>
                   </div>
                 </div>
 
@@ -703,6 +717,26 @@ export default function SettingsPage({
             </section>
           )}
         </div>
+
+        {/* FULL WIDTH SECTION: Developer Tools & Diagnostics */}
+        {(activeTab === 'diagnostics' || activeTab === 'all') && (
+          <div className="col-span-full space-y-4">
+            <section className="glass-card p-5 rounded-2xl space-y-4" aria-labelledby="settings-diagnostics-title">
+              <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+                    <Terminal className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 id="settings-diagnostics-title" className="font-bold text-sm text-white">Developer Diagnostics & Logs</h3>
+                    <p className="text-xs text-text-muted">Live console logs and internal client event stream for troubleshooting</p>
+                  </div>
+                </div>
+              </div>
+              <LogViewer logs={logs} onClear={onClearLogs || (() => {})} />
+            </section>
+          </div>
+        )}
       </div>
     </div>
   );

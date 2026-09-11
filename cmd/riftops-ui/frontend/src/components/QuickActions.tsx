@@ -12,8 +12,16 @@ import { useLCUConnection } from './lcuConnectionContext';
 type Toast = (message: string, type?: 'info' | 'success' | 'error') => void;
 
 function phaseLabel(phase: string): string {
-  if (!phase) return 'Unavailable';
-  return phase.replace(/([a-z])([A-Z])/g, '$1 $2');
+  if (!phase || phase === 'None' || phase === 'Disconnected') return 'Client Menu';
+  switch (phase) {
+    case 'Lobby': return 'Party Lobby';
+    case 'Matchmaking': return 'In Queue';
+    case 'ReadyCheck': return 'Ready Check';
+    case 'ChampSelect': return 'Champion Select';
+    case 'InProgress': return 'In Game';
+    case 'EndOfGame': return 'Post Game';
+    default: return phase.replace(/([a-z])([A-Z])/g, '$1 $2');
+  }
 }
 
 export default function QuickActions({ onOpenQoL, showToast }: { onOpenQoL: () => void; showToast: Toast }) {
@@ -63,7 +71,7 @@ export default function QuickActions({ onOpenQoL, showToast }: { onOpenQoL: () =
       <div className="quick-actions__body">
         <div className="quick-actions__summary">
           <strong>{connected ? phaseLabel(phase) : 'Launch League to unlock controls'}</strong>
-          <span>{state?.queueState || (lastUpdated ? `Last checked ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'RiftOps reconnects automatically when the client is ready.')}</span>
+          <span>{(state?.queueState && !['invalid', 'none'].includes(state.queueState.toLowerCase())) ? state.queueState : (lastUpdated ? `Last checked ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'RiftOps reconnects automatically when the client is ready.')}</span>
         </div>
         <div className="quick-actions__buttons">
           <button type="button" className="quick-action quick-action--primary" onClick={() => void run('launch', 'League launch requested.', launchLCULeague)} disabled={action !== ''}>

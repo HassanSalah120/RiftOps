@@ -36,6 +36,8 @@ type Friend = {
   region?: string;
   mode?: string;
   activityStartedAt?: number;
+  partySize?: number;
+  isPremade?: boolean;
 };
 
 type FriendRequest = { pid?: string; id?: string; gameName?: string; tagLine?: string; name?: string; direction?: string; state?: string };
@@ -53,6 +55,9 @@ function normalizeFriend(value: Record<string, unknown>): Friend {
   else if (typeof value.lol === 'string') { try { lol = JSON.parse(value.lol) as Record<string, unknown>; } catch { /* League may send an empty presence string. */ } }
   const get = (...keys: string[]) => keys.map((key) => value[key] ?? nested[key]).find((entry) => typeof entry === 'string' && entry.trim()) as string | undefined;
   const started = Number(lol.gameStartTime || lol.timeStamp || value.lastSeenOnlineTimestamp || 0);
+  const party = [value.party, value.premadeParty, lol.party, lol.premadeParty].find((entry) => entry && typeof entry === 'object') as Record<string, unknown> | undefined;
+  const partySize = Number(value.partySize ?? value.premadeSize ?? lol.partySize ?? lol.premadeSize ?? party?.size ?? party?.memberCount ?? 0) || undefined;
+  const explicitPremade = value.isPremade ?? value.premade ?? lol.isPremade ?? lol.premade;
   return {
     id: get('id', 'jid'), summonerId: get('summonerId'), puuid: get('puuid', 'playerUuid'), gameName: get('gameName'), tagLine: get('tagLine', 'tagline'),
     name: get('name'), summonerName: get('summonerName'), displayName: get('displayName'), availability: get('availability', 'status', 'presence'), productName: get('productName', 'product'),
@@ -60,6 +65,8 @@ function normalizeFriend(value: Record<string, unknown>): Friend {
     region: get('region', 'platformId'),
     mode: String(lol.gameStatus || lol.gameMode || lol.queueId || lol.gameQueueType || '').trim() || undefined,
     activityStartedAt: started > 0 ? (started < 10_000_000_000 ? started * 1000 : started) : undefined,
+    partySize,
+    isPremade: typeof explicitPremade === 'boolean' ? explicitPremade : Boolean(partySize && partySize > 1),
   };
 }
 
@@ -138,6 +145,7 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
   const [favorites, setFavorites] = useState<Set<string>>(() => { try { return new Set(JSON.parse(localStorage.getItem('riftops.social.favorites') || '[]')); } catch { return new Set(); } });
   const [friendLimit, setFriendLimit] = useState(100);
   const [now, setNow] = useState(Date.now());
+  const [lastRefreshAt, setLastRefreshAt] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [selectedRequests, setSelectedRequests] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(false);
@@ -152,6 +160,7 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
     setLoading(true);
     try {
       setSnapshot(await fetchLCUSocial());
+      setLastRefreshAt(Date.now());
       setFeedback(null);
     } catch (reason: any) {
       setFeedback({ tone: 'error', message: reason?.message || 'Social data is unavailable.' });
@@ -427,7 +436,8 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
                     <option value="aramgg">ARAM.GG</option>
                   </select>
                 </label>
-                <button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={loading}>
+              <span className="text-[11px] text-text-dim whitespace-nowrap">{lastRefreshAt ? `Updated ${Math.max(0, Math.floor((now - lastRefreshAt) / 60_000))}m ago` : 'Waiting for live update'}</span>
+              <button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={loading}>
                   <RefreshCw className={loading ? 'animate-spin' : ''} /> Refresh
                 </button>
               </div>
@@ -515,6 +525,7 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
                               <strong>
                                 {name}
                                 {inLobby && <em>IN LOBBY</em>}
+                                {friend.isPremade && <em className="is-premade">PARTY{friend.partySize && friend.partySize > 1 ? ` · ${friend.partySize}` : ''}</em>}
                               </strong>
                               <small>
                                 {friend.mode || friend.productName || 'League of Legends'} · {(friend.availability || 'offline').toLowerCase()}

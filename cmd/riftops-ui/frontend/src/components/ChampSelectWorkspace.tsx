@@ -66,6 +66,7 @@ type Skin = {
 
 type Spell = { id: number; name: string; image?: string };
 type ToastType = 'info' | 'success' | 'error';
+type ActionFailure = { id: number; action: string; message: string; at: number };
 
 const FALLBACK_SPELLS: Spell[] = [
   { id: 1, name: 'Cleanse' }, { id: 3, name: 'Exhaust' }, { id: 4, name: 'Flash' },
@@ -167,6 +168,7 @@ export default function ChampSelectWorkspace({
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [actionFailures, setActionFailures] = useState<ActionFailure[]>([]);
   const [query, setQuery] = useState('');
   const [selectedChampion, setSelectedChampion] = useState(0);
   const [timerDeadline, setTimerDeadline] = useState(0);
@@ -320,7 +322,9 @@ export default function ChampSelectWorkspace({
       notify(success, 'success');
       await refresh();
     } catch (reason: any) {
-      notify(reason?.message || 'League rejected the request.', 'error');
+      const message = reason?.message || 'League rejected the request.';
+      setActionFailures((current) => [{ id: Date.now(), action: key.replace(/[-_]/g, ' '), message, at: Date.now() }, ...current].slice(0, 6));
+      notify(message, 'error');
     } finally {
       setBusy('');
     }
@@ -473,6 +477,7 @@ export default function ChampSelectWorkspace({
 
               {(session.benchEnabled || (session.benchChampionIds || []).length > 0) && <div className="champ-select-workspace__aram"><div><small>ARAM BENCH</small><strong>Swap or reroll your champion</strong></div><div className="champ-select-workspace__aram-actions">{(session.benchChampionIds || []).slice(0, 5).map((id) => <button type="button" key={id} onClick={() => void runAction(`bench-${id}`, () => swapLCUChampSelectBench(id), 'Champion swapped from the bench.')} disabled={busy !== ''}><ChampionIcon id={id} champions={champions} version={version} /></button>)}<button type="button" className="is-reroll" onClick={() => void runAction('reroll', rerollLCUChampSelect, 'Champion rerolled.')} disabled={busy !== ''}><RotateCcw /> Reroll</button></div></div>}
               {feedback && <div className="champ-select-workspace__feedback"><CheckCircle2 />{feedback}</div>}
+              {actionFailures.length > 0 && <div className="mt-3 p-3 rounded-xl bg-rose-500/[0.05] border border-rose-500/20" aria-label="Champion Select action retry history"><div className="flex items-center justify-between gap-2 mb-2"><strong className="text-[10px] uppercase tracking-wider text-rose-300">Recent action failures</strong><button type="button" className="text-[10px] text-text-dim hover:text-white" onClick={() => setActionFailures([])}>Clear</button></div><div className="space-y-1.5">{actionFailures.map((entry) => <div key={entry.id} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-rose-200">{entry.action}: {entry.message}</span><time className="text-text-dim shrink-0">{new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>)}</div></div>}
             </aside>
           </div>
         </>

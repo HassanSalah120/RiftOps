@@ -283,6 +283,27 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
     }
   };
 
+  const requestApplyRegalia = () => {
+    if (!regalia) return;
+    const title = regalia.titles.find((entry) => Number(entry.id) === selectedTitleId)?.name || 'No change';
+    const tokens = selectedTokenIds.length
+      ? selectedTokenIds.map((id) => regalia.tokens.find((entry) => Number(entry.id) === id)?.name || `Token #${id}`).join(', ')
+      : 'No change';
+    const banner = regalia.banners.find((entry) => entry.id === selectedBannerAccent)?.name || 'No change';
+    const crest = regalia.crests.find((entry) => Number(entry.id) === selectedCrestId)?.name || 'No change';
+    setConfirmModal({
+      open: true,
+      title: 'Preview profile identity changes',
+      message: [`Title: ${title}`, `Challenge tokens: ${tokens}`, `Banner: ${banner}`, `Crest: ${crest}`, '', 'League ownership is revalidated immediately before each field is applied.'].join('\n'),
+      actionLabel: 'Apply owned regalia',
+      danger: false,
+      onConfirm: () => {
+        setConfirmModal(null);
+        void applyRegalia();
+      },
+    });
+  };
+
   const requestApplyPreset = async (preset: ProfilePreset) => {
     setPresetBusy(`apply:${preset.id}`);
     try {
@@ -615,7 +636,7 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
                       type="button"
                       className="btn-secondary"
                       disabled={regaliaBusy || (!selectedTitleId && !selectedTokenIds.length && !selectedBannerAccent && !selectedCrestId)}
-                      onClick={() => void applyRegalia()}
+                      onClick={requestApplyRegalia}
                     >
                       {regaliaBusy ? <Loader2 className="animate-spin" /> : <Check />}
                       {regaliaBusy ? 'Applying…' : 'Apply owned regalia'}
@@ -623,7 +644,7 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
                   </div>
                 </div>
               ) : (
-                <p className="profile-studio-page__ownership-note">Unavailable for this League patch.</p>
+                <p className="profile-studio-page__ownership-note">Unavailable for this League patch. Keep League open and signed in, then refresh to load owned titles, tokens, banners, and crests.</p>
               )}
             </WorkspaceSection>
           )}

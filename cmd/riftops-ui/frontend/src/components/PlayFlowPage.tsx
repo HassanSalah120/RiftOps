@@ -51,6 +51,7 @@ type DraftAttempt = {
   confirmedAt: number;
   runePageId: number;
 };
+type DraftRetryRecord = { id: number; action: string; message: string; at: number };
 type DraftTone = 'idle' | 'working' | 'confirmed' | 'blocked';
 type TimingMode = DraftTimingMode;
 
@@ -86,6 +87,7 @@ type FlowPrefs = {
   autoQueue: boolean;
   autoAccept: boolean;
   autoAcceptDelaySeconds: number;
+  autoAcceptRandomDelay: boolean;
   autoBan: boolean;
   autoPick: boolean;
   instantLock: boolean;
@@ -100,7 +102,7 @@ function loadPrefs(): FlowPrefs {
     pickTimingMode: 'immediate', pickTimingSeconds: 2,
     banTimingMode: 'immediate', banTimingSeconds: 2,
     selectedQueue: 0,
-    autoRoles: true, autoQueue: true, autoAccept: true, autoAcceptDelaySeconds: 0, autoBan: true, autoPick: true, instantLock: false,
+    autoRoles: true, autoQueue: true, autoAccept: true, autoAcceptDelaySeconds: 0, autoAcceptRandomDelay: false, autoBan: true, autoPick: true, instantLock: false,
     autoRoleQuestLoadout: false, arenaBraveryPick: false,
   };
   try {
@@ -186,32 +188,34 @@ function ChampionPicker({ value, query, onQuery, onSelect, label, version, champ
     .slice(0, 8);
 
   return (
-    <div className="play-flow__picker">
-      <div className="play-flow__picker-head">
-        <span><Ban className="h-3 w-3 opacity-60" /> {label}</span>
+    <div className="flex flex-col gap-2 p-3 rounded-xl bg-dark-bg/60 border border-white/5">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="flex items-center gap-1.5 text-text-dim font-bold uppercase tracking-wider text-[10px]">
+          <Ban className="h-3 w-3 opacity-60" /> {label}
+        </span>
         {value ? (
-          <span className="play-flow__picker-chosen">
-            <img src={ddChampionIcon(version, champions[value]?.id || String(value))} alt="" width="32" height="32" />
-            <span className="play-flow__picker-chosen-name">{champions[value]?.name || `Champion ${value}`}</span>
-            <button type="button" onClick={() => onSelect(0)} aria-label={`Clear ${label}`}><X className="h-3 w-3" /></button>
+          <span className="flex items-center gap-2 px-2 py-0.5 rounded-lg bg-dark-card border border-white/10 text-xs">
+            <img src={ddChampionIcon(version, champions[value]?.id || String(value))} alt="" className="w-4 h-4 rounded-full object-cover" />
+            <span className="text-white font-semibold text-xs truncate max-w-[90px]">{champions[value]?.name || `Champion ${value}`}</span>
+            <button type="button" onClick={() => onSelect(0)} aria-label={`Clear ${label}`} className="text-text-dim hover:text-white p-0.5"><X className="h-3 w-3" /></button>
           </span>
         ) : (
-          <span className="text-text-dim">Not set</span>
+          <span className="text-text-dim text-xs">Not set</span>
         )}
       </div>
-      <div className="play-flow__picker-search">
-        <Search />
-        <input value={query} onChange={(event) => onQuery(event.target.value)} placeholder={`Search ${label.toLowerCase()}…`} aria-label={label} />
+      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-dark-card border border-white/10 text-xs">
+        <Search className="w-3.5 h-3.5 text-text-dim shrink-0" />
+        <input className="w-full bg-transparent text-white text-xs placeholder:text-text-dim focus:outline-none" value={query} onChange={(event) => onQuery(event.target.value)} placeholder={`Search ${label.toLowerCase()}…`} aria-label={label} />
       </div>
       {term ? (
-        <div className="play-flow__picker-list">
+        <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto p-1 rounded-lg bg-black/40 border border-white/10">
           {matches.map((champ) => (
-            <button type="button" key={champ.key} onClick={() => { onSelect(Number(champ.key)); onQuery(''); }}>
-              <img src={ddChampionIcon(version, champ.id)} alt="" width="32" height="32" loading="lazy" />
-              <span>{champ.name}</span>
+            <button type="button" key={champ.key} onClick={() => { onSelect(Number(champ.key)); onQuery(''); }} className="flex items-center gap-2 p-1.5 rounded hover:bg-white/10 transition text-left">
+              <img src={ddChampionIcon(version, champ.id)} alt="" className="w-5 h-5 rounded-full object-cover" loading="lazy" />
+              <span className="text-xs text-white truncate">{champ.name}</span>
             </button>
           ))}
-          {!matches.length && <span className="play-flow__picker-empty">No champions match.</span>}
+          {!matches.length && <span className="text-xs text-text-dim italic col-span-2 text-center py-2">No matches</span>}
         </div>
       ) : null}
     </div>
@@ -226,14 +230,24 @@ function TimingControl({ label, mode, seconds, onMode, onSeconds }: {
   onSeconds: (value: number) => void;
 }) {
   return (
-    <div className="play-flow__timing">
-      <div className="play-flow__timing-label"><Clock3 /><span>{label}</span></div>
-      <select value={mode} onChange={(event) => onMode(event.target.value as TimingMode)} aria-label={`${label} timing`}>
-        <option value="immediate">As soon as turn opens</option>
-        <option value="last-second">In the last…</option>
-        <option value="after">After a delay…</option>
-      </select>
-      {mode !== 'immediate' && <label className="play-flow__timing-number"><input type="number" min="0" max="60" value={seconds} onChange={(event) => onSeconds(Math.max(0, Math.min(60, Number(event.target.value) || 0)))} aria-label={`${label} seconds`} /><span>s</span></label>}
+    <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-dark-bg/40 border border-white/5 text-xs">
+      <div className="flex items-center gap-1.5 text-text-muted">
+        <Clock3 className="w-3.5 h-3.5 text-text-dim" />
+        <span>{label}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <select value={mode} onChange={(event) => onMode(event.target.value as TimingMode)} aria-label={`${label} timing`} className="px-2 py-1 rounded-lg bg-dark-card border border-white/10 text-white text-xs focus:border-primary/50 focus:outline-none">
+          <option value="immediate">Immediately</option>
+          <option value="last-second">Last second</option>
+          <option value="after">After delay</option>
+        </select>
+        {mode !== 'immediate' && (
+          <label className="flex items-center gap-1 text-xs text-text-dim">
+            <input type="number" min="0" max="60" value={seconds} onChange={(event) => onSeconds(Math.max(0, Math.min(60, Number(event.target.value) || 0)))} aria-label={`${label} seconds`} className="w-12 px-2 py-1 rounded-lg bg-dark-card border border-white/10 text-white text-xs text-center focus:border-primary/50 focus:outline-none" />
+            <span>s</span>
+          </label>
+        )}
+      </div>
     </div>
   );
 }
@@ -260,6 +274,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [detectedRole, setDetectedRole] = useState<string | null>(null);
   const [readyAcceptRemaining, setReadyAcceptRemaining] = useState<number | null>(null);
+  const [retryHistory, setRetryHistory] = useState<DraftRetryRecord[]>([]);
   const [savedBuildPlan, setSavedBuildPlan] = useState<BuildPlan | null>(null);
 
   const showToast = useCallback<ToastFn>((message, type = 'info') => {
@@ -275,6 +290,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const cycleRef = useRef('');
   const lastPhaseRef = useRef('');
   const readyCheckStartedAtRef = useRef(0);
+  const readyAcceptDelayRef = useRef<number | null>(null);
   const doneRef = useRef<Record<string, boolean>>({});
   const actionSeenRef = useRef<Record<string, number>>({});
   const draftRef = useRef<DraftAttempt | null>(null);
@@ -365,6 +381,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     doneRef.current = {};
     actionSeenRef.current = {};
     draftRef.current = null;
+    if (key === 'autoAcceptDelaySeconds' || key === 'autoAcceptRandomDelay') readyAcceptDelayRef.current = null;
   };
 
   const resetCycle = useCallback((key: string) => {
@@ -373,6 +390,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
       doneRef.current = {};
       actionSeenRef.current = {};
       draftRef.current = null;
+      setRetryHistory([]);
       availabilityRef.current = { pick: undefined, ban: undefined };
       roleLoadoutRef.current = '';
     }
@@ -415,6 +433,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
       const message = reason?.message || 'League rejected the champion-select action.';
       setDraftTone('blocked');
       setDraftStatus(message);
+      setRetryHistory((current) => [{ id: Date.now(), action: draftActionLabel(key), message, at: Date.now() }, ...current].slice(0, 6));
       const now = Date.now();
       if (draftNoticeRef.current.key !== key || now - draftNoticeRef.current.at > 10000) {
         draftNoticeRef.current = { key, at: now };
@@ -684,9 +703,11 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
 		lastPhaseRef.current = current;
 		if (current === 'ReadyCheck') {
 			readyCheckStartedAtRef.current = Date.now();
+			readyAcceptDelayRef.current = null;
 			doneRef.current.accepted = false;
 		} else {
 			readyCheckStartedAtRef.current = 0;
+			readyAcceptDelayRef.current = null;
 			setReadyAcceptRemaining(null);
 		}
 	  }
@@ -747,7 +768,11 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
           }
         } else if (current === 'ReadyCheck') {
           if (config.autoAccept && !doneRef.current.accepted) {
-			const delay = Math.max(0, Math.min(8, Number(config.autoAcceptDelaySeconds) || 0));
+			const maxDelay = Math.max(0, Math.min(8, Number(config.autoAcceptDelaySeconds) || 0));
+			if (readyAcceptDelayRef.current === null) {
+				readyAcceptDelayRef.current = config.autoAcceptRandomDelay ? Math.floor(Math.random() * (maxDelay + 1)) : maxDelay;
+			}
+			const delay = readyAcceptDelayRef.current;
 			const startedAt = readyCheckStartedAtRef.current || Date.now();
 			readyCheckStartedAtRef.current = startedAt;
 			const remaining = Math.max(0, delay * 1000 - (Date.now() - startedAt));
@@ -820,13 +845,13 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     || null;
 
   return (
-    <div className="workspace-stage workspace-stage--play play-flow-page flex-1 min-h-0 min-w-0 animate-fadeIn" role="region" aria-label="Play Flow workspace" tabIndex={0}>
+    <div className="flex-1 min-h-0 min-w-0 animate-fadeIn space-y-6" role="region" aria-label="Play Flow workspace" tabIndex={0}>
       <PageHeader
         variant="status"
         icon={Swords}
         eyebrow="ONE-CLICK PLAY"
-        title="Play flow"
-        description="Launch League, claim your roles, queue up, auto-accept, and let RiftOps handle your pick and ban."
+        title="Play & Queue"
+        description="Launch League, claim your roles, queue up, auto-accept, and automate your draft picks & bans."
         meta={<span className={`page-header__badge ${connected ? 'page-header__badge--success' : ''}`}>{connected ? `Client live · ${phase.replaceAll('_', ' ')}` : 'Waiting for League client'}</span>}
         actions={!remoteClient ? (
           <button type="button" onClick={() => setAutoMode((value) => !value)} className={`${autoMode ? 'btn-primary' : 'btn-secondary'} flex items-center gap-2 px-4 py-2 text-xs`} aria-pressed={autoMode}>
@@ -836,17 +861,17 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         ) : <span className="page-header__badge">Phone live controls</span>}
       />
 
-      <ActionFeedback state={feedback} className="play-flow__local-feedback" />
+      <ActionFeedback state={feedback} />
 
       {!connected && (
-        <div className="play-flow__connection-alert">
-          <WifiOff className="h-4 w-4 text-danger" />
-          <span>RiftOps cannot see the League client yet. Launch it below, sign in, and this flow comes alive automatically.</span>
+        <div className="flex items-center gap-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+          <WifiOff className="h-4 w-4 shrink-0 text-amber-400" />
+          <span>League client is not detected yet. Launch it below or open Riot Client to start.</span>
         </div>
       )}
 
-      <div className="live-pipeline-bar" role="navigation" aria-label="Current play progress">
-        <div className="live-pipeline-bar__steps">
+      <div className="flex items-center gap-2 p-2 rounded-2xl bg-dark-card/60 backdrop-blur-md border border-white/5 overflow-x-auto" role="navigation" aria-label="Current play progress">
+        <div className="flex items-center gap-2 w-full justify-between px-2">
           {STEPS.map((step, index) => {
             const stepIndex = STEPS.findIndex((item) => item.key === activeStep);
             const isDone = index < stepIndex;
@@ -854,17 +879,25 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
             return (
               <div
                 key={step.key}
-                className={`live-pipeline-step ${isDone ? 'is-complete' : ''} ${isActive ? 'is-active' : ''}`}
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs transition min-w-0 ${
+                  isActive
+                    ? 'bg-primary/15 text-primary border border-primary/30 font-bold'
+                    : isDone
+                    ? 'text-emerald-400 font-semibold'
+                    : 'text-text-dim'
+                }`}
               >
-                <span className="live-pipeline-step__num">
-                  {isDone ? <Check className="w-3 h-3 text-emerald-400 stroke-[3]" /> : index + 1}
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono shrink-0 ${
+                  isActive ? 'bg-primary text-black font-bold' : isDone ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-text-dim'
+                }`}>
+                  {isDone ? <Check className="w-3 h-3 stroke-[3]" /> : index + 1}
                 </span>
                 <div className="flex flex-col min-w-0">
-                  <span className="live-pipeline-step__title">{step.label}</span>
-                  <span className="text-[9.5px] text-text-dim truncate">{step.hint}</span>
+                  <span className="truncate">{step.label}</span>
+                  <span className="text-[10px] text-text-dim hidden sm:inline truncate">{step.hint}</span>
                 </div>
                 {index < STEPS.length - 1 && (
-                  <ChevronRight className={`live-pipeline-step__arrow ${isActive ? 'text-primary' : 'text-white/20'}`} />
+                  <ChevronRight className={`w-3.5 h-3.5 shrink-0 ml-1 ${isActive ? 'text-primary' : 'text-white/15'}`} />
                 )}
               </div>
             );
@@ -872,18 +905,28 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         </div>
       </div>
 
-      <section className="glass-card play-flow__runbook">
-        <div className="play-flow__section-heading">
-          <span className="play-flow__section-icon"><Rocket /></span>
-          <div><small>MANUAL RUNBOOK</small><h3>Launch and queue</h3><p>Move through the same sequence as League, with the next useful control always in reach.</p></div>
-          <span className={`play-flow__section-badge ${connected ? 'is-live' : ''}`}>{connected ? 'Client ready' : 'Client offline'}</span>
+      <section className="glass-card p-5 rounded-2xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+              <Rocket className="w-4 h-4" />
+            </div>
+            <div>
+              <small className="text-[10px] font-bold uppercase tracking-wider text-text-dim block">QUICK MATCH SETUP</small>
+              <h3 className="text-base font-bold text-white">Lobby & Matchmaking</h3>
+            </div>
+          </div>
+          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${connected ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-500/10 text-text-dim border border-white/5'}`}>
+            {connected ? 'Client ready' : 'Client offline'}
+          </span>
         </div>
 
-        <div className="play-flow__runbook-grid">
-          <div className="play-flow__row">
+        <div className="space-y-3">
+          {/* Step 1: Launch League */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-dark-bg/50 border border-white/5">
             <div>
-              <strong>1 · League client launchpad</strong>
-              <small>Start League of Legends through the official Riot Client.</small>
+              <strong className="text-xs font-bold text-white block">1 · League of Legends Client</strong>
+              <small className="text-xs text-text-muted">Start the game through the official Riot Client.</small>
             </div>
             <button type="button" disabled={launching || connected} onClick={() => void launchLeague()} className="btn-primary flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-40">
               {launching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />}
@@ -891,22 +934,23 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
             </button>
           </div>
 
-          <div className="play-flow__row">
+          {/* Step 2: Roles */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-dark-bg/50 border border-white/5">
             <div>
-              <strong>2 · Roles & lane preferences</strong>
-              <small>{isCustomSelection ? 'Custom games do not use lane preferences.' : 'Set primary and secondary lane preferences.'}</small>
+              <strong className="text-xs font-bold text-white block">2 · Roles & Preferred Lanes</strong>
+              <small className="text-xs text-text-muted">{isCustomSelection ? 'Custom games do not use lane preferences.' : 'Set primary and secondary lane preferences.'}</small>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
-                <span className="text-[11px] font-bold text-text-dim px-1.5">Primary</span>
-                <select value={prefs.primaryRole} onChange={(event) => update('primaryRole', event.target.value)} className="play-flow__select" aria-label="Primary role" disabled={isCustomSelection}>
-                  {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              <div className="flex items-center gap-1.5 bg-dark-card px-2.5 py-1.5 rounded-xl border border-white/10">
+                <span className="text-[11px] font-bold text-text-dim">Primary:</span>
+                <select value={prefs.primaryRole} onChange={(event) => update('primaryRole', event.target.value)} className="bg-transparent text-xs text-white focus:outline-none" aria-label="Primary role" disabled={isCustomSelection}>
+                  {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value} className="bg-dark-card">{label}</option>)}
                 </select>
               </div>
-              <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
-                <span className="text-[11px] font-bold text-text-dim px-1.5">Secondary</span>
-                <select value={prefs.secondaryRole} onChange={(event) => update('secondaryRole', event.target.value)} className="play-flow__select" aria-label="Secondary role" disabled={isCustomSelection}>
-                  {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              <div className="flex items-center gap-1.5 bg-dark-card px-2.5 py-1.5 rounded-xl border border-white/10">
+                <span className="text-[11px] font-bold text-text-dim">Secondary:</span>
+                <select value={prefs.secondaryRole} onChange={(event) => update('secondaryRole', event.target.value)} className="bg-transparent text-xs text-white focus:outline-none" aria-label="Secondary role" disabled={isCustomSelection}>
+                  {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value} className="bg-dark-card">{label}</option>)}
                 </select>
               </div>
               <button type="button" disabled={!connected || isCustomSelection || acting === 'roles'} onClick={() => void runStep('roles', () => lcuAutoRoles(prefs.primaryRole, prefs.secondaryRole), 'Position preferences saved.')} className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40">
@@ -915,16 +959,13 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
             </div>
           </div>
 
-          <div className="play-flow__row play-flow__row--queue">
+          {/* Step 3: Game mode & queue */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-dark-bg/50 border border-white/5">
             <div>
-              <strong>3 · Game mode & queue</strong>
-              <small>Pick any mode the client offers, or Practice Tool for safe testing.</small>
+              <strong className="text-xs font-bold text-white block">3 · Game Mode & Queue</strong>
+              <small className="text-xs text-text-muted">Choose any mode (Ranked, Normal, ARAM, Arena, Practice Tool).</small>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <span className={`play-flow__queue-kind ${isCustomSelection ? 'is-custom' : ''}`}>
-                {isCustomSelection ? <Swords /> : <Users />}
-                {isCustomSelection ? 'Custom lobby' : 'Matchmade queue'}
-              </span>
+            <div className="flex flex-wrap items-center gap-2">
               <select
                 value={String(prefs.selectedQueue)}
                 onChange={(event) => {
@@ -933,12 +974,12 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                   actionSeenRef.current = {};
                   draftRef.current = null;
                 }}
-                className="play-flow__select"
+                className="px-3 py-1.5 rounded-xl bg-dark-card border border-white/10 text-white text-xs focus:border-primary/50 focus:outline-none"
                 aria-label="Game mode"
               >
                 <option value="0">Current lobby</option>
                 {sortQueues(queues).map((queue) => (
-                  <option key={queue.id} value={String(queue.id)}>{queueLabel(queue)}</option>
+                  <option key={queue.id} value={String(queue.id)} className="bg-dark-card">{queueLabel(queue)}</option>
                 ))}
               </select>
               <button type="button" disabled={!connected || acting === 'lobby' || prefs.selectedQueue === 0} onClick={() => {
@@ -951,7 +992,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                 <Rocket className={`h-3.5 w-3.5 ${acting === 'lobby' ? 'animate-spin' : ''}`} /> Create lobby
               </button>
               {isCustomSelection ? (
-                <button type="button" disabled={!connected || !mayStartCustom || acting === 'custom-start'} onClick={() => void (async () => { if (await runStep('custom-start', lcuCustomStart, `${selectedQueue?.name || 'Custom game'} is starting. Opening Live Session…`)) onOpenLive?.(); })()} className="btn-primary play-flow__custom-start flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40" title={customStartHint} aria-describedby="custom-start-status">
+                <button type="button" disabled={!connected || !mayStartCustom || acting === 'custom-start'} onClick={() => void (async () => { if (await runStep('custom-start', lcuCustomStart, `${selectedQueue?.name || 'Custom game'} is starting. Opening Live Session…`)) onOpenLive?.(); })()} className="btn-primary flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40" title={customStartHint}>
                   {acting === 'custom-start' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />} Start game
                 </button>
               ) : (
@@ -959,28 +1000,28 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                   <button type="button" disabled={!connected || acting === 'queue'} onClick={() => void (async () => { if (await runStep('queue', () => lcuAutoRequeue(), 'Matchmaking started. Opening Live Session…')) onOpenLive?.(); })()} className="btn-primary flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40">
                     <Users className="h-3.5 w-3.5" /> Start queue
                   </button>
-                  <button type="button" disabled={!connected || acting === 'stop'} onClick={() => void runStep('stop', () => lcuStopQueue(), 'Queue stopped.')} className="play-flow__queue-stop flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40" aria-label="Stop matchmaking queue">
+                  <button type="button" disabled={!connected || acting === 'stop'} onClick={() => void runStep('stop', () => lcuStopQueue(), 'Queue stopped.')} className="btn-danger flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40" aria-label="Stop matchmaking queue">
                     <CircleStop className={`h-3.5 w-3.5 ${acting === 'stop' ? 'animate-pulse' : ''}`} /> Stop queue
                   </button>
                 </>
               )}
-              {isCustomSelection && <span id="custom-start-status" className={`play-flow__custom-status ${mayStartCustom ? 'is-ready' : ''}`}>{customStartHint}</span>}
             </div>
           </div>
 
-          <div className="play-flow__row">
+          {/* Step 4: Ready check */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-dark-bg/50 border border-white/5">
             <div>
-              <strong>4 · Ready check</strong>
-              <small>Confirm the match found pop-up.</small>
+              <strong className="text-xs font-bold text-white block">4 · Ready Check</strong>
+              <small className="text-xs text-text-muted">Confirm the match found pop-up.</small>
             </div>
             <button type="button" disabled={!connected || acting === 'accept'} onClick={() => void runStep('accept', () => lcuAutoAccept(), 'Ready check accepted.')} className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Accept
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Accept now
             </button>
           </div>
 
-          <aside className="play-flow__runbook-tip">
-            <ShieldCheck />
-            <span><strong>Safe rehearsal</strong><small>Practice Tool runs the draft workflow without lane preferences. Use it before enabling full auto in a live queue.</small></span>
+          <aside className="flex items-center gap-3 p-3 rounded-xl bg-primary/5 border border-primary/20 text-xs text-text-muted">
+            <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
+            <span><strong>Pro Tip:</strong> Practice Tool runs without lane preferences. Use it before enabling full auto in a live queue.</span>
           </aside>
         </div>
       </section>
@@ -1009,25 +1050,32 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         onToast={showToast}
       />
 
-      <section className="glass-card play-flow__role-quest" aria-labelledby="role-quest-title">
-        <div className="play-flow__role-quest-header">
-          <div className="play-flow__role-quest-mark"><ShieldCheck /></div>
-          <div>
-            <small>SEASON SYSTEM</small>
-            <h3 id="role-quest-title">Role Quest assistant</h3>
-            <p>{selectedRoleQuest ? `${selectedRoleQuest.label} lane · ${selectedRoleQuest.progress} to unlock the reward.${detectedRole ? ' Live assignment confirmed.' : ' Waiting for live lane assignment.'}` : 'Choose a queued role to preview its League Role Quest.'}</p>
-          </div>
-          <span className="play-flow__section-badge">League-owned progress</span>
-        </div>
-        {selectedRoleQuest ? (
-          <div className="play-flow__role-quest-body">
-            <div className="play-flow__role-quest-reward">
-              <span>Reward</span>
-              <strong>{selectedRoleQuest.reward}</strong>
-              <small>{selectedRoleQuest.details}</small>
+      <section className="glass-card p-5 rounded-2xl space-y-4" aria-labelledby="role-quest-title">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+              <ShieldCheck className="w-4 h-4" />
             </div>
-            <div className="play-flow__role-quest-action">
-              <p>{selectedRoleQuest.assistant}</p>
+            <div>
+              <small className="text-[10px] font-bold uppercase tracking-wider text-text-dim block">SEASON SYSTEM</small>
+              <h3 id="role-quest-title" className="text-base font-bold text-white">Role Quest Assistant</h3>
+              <p className="text-xs text-text-muted">{selectedRoleQuest ? `${selectedRoleQuest.label} lane · ${selectedRoleQuest.progress} to unlock reward.` : 'Choose a role to preview its League Role Quest.'}</p>
+            </div>
+          </div>
+          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            League-owned
+          </span>
+        </div>
+
+        {selectedRoleQuest ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 rounded-xl bg-dark-bg/50 border border-white/5">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase text-text-dim tracking-wider">Reward</span>
+              <strong className="text-xs font-bold text-white">{selectedRoleQuest.reward}</strong>
+              <small className="text-[11px] text-text-muted">{selectedRoleQuest.details}</small>
+            </div>
+            <div className="flex flex-col justify-between gap-2">
+              <p className="text-xs text-text-muted">{selectedRoleQuest.assistant}</p>
               {selectedRoleQuestSpells ? (
                 <button
                   type="button"
@@ -1036,136 +1084,270 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                     const applied = await applyRoleQuestLoadout(true);
                     if (applied) roleLoadoutRef.current = 'manual';
                   })()}
-                  className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40"
-                  title={champSelectLive ? (detectedRole === 'TOP' ? 'Set Flash + Teleport in the live Champion Select session' : 'RiftOps will only apply this when League confirms Top') : 'Open Champion Select to change summoner spells'}
+                  className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs w-fit disabled:opacity-40"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${acting === 'role-quest' ? 'animate-spin' : ''}`} />
                   {champSelectLive && detectedRole === 'TOP' ? 'Apply Flash + Teleport' : champSelectLive ? 'Waiting for Top assignment' : 'Available in Champ Select'}
                 </button>
               ) : (
-                <span className="play-flow__role-quest-note">No RiftOps loadout change is needed for this role.</span>
+                <span className="text-xs text-text-dim italic">No RiftOps loadout change is needed for this role.</span>
               )}
             </div>
           </div>
         ) : (
-          <div className="play-flow__role-quest-empty">Role quests are assigned by League from your queued position. Fill and custom modes may not receive the lane quest.</div>
+          <p className="text-xs text-text-dim italic p-3 rounded-xl bg-dark-bg/40 border border-white/5">
+            Role quests are assigned by League from your queued position. Fill and custom modes may not receive the lane quest.
+          </p>
         )}
       </section>
 
-      {!remoteClient && <section className="glass-card play-flow__automation">
-        <div className="play-flow__section-heading">
-          <span className="play-flow__section-icon is-automation"><Zap /></span>
-          <div><small>AUTOMATION DECK</small><h3>Queue-to-draft rules</h3><p>Choose what RiftOps may do, then define a safe pick and ban route.</p></div>
-          <span className="play-flow__section-badge">{enabledRuleCount} of 8 on</span>
-        </div>
-
-        <div className="play-flow__toggle-grid">
-          <label className="play-flow__toggle">
-            <input type="checkbox" checked={prefs.autoRoles} onChange={(event) => update('autoRoles', event.target.checked)} />
-            <span><strong>Lobby roles</strong><small>Apply saved lane preferences</small></span>
-          </label>
-          <label className="play-flow__toggle">
-            <input type="checkbox" checked={prefs.autoQueue} onChange={(event) => update('autoQueue', event.target.checked)} />
-            <span><strong>{isCustomSelection ? 'Start game' : 'Start queue'}</strong><small>{isCustomSelection ? 'Launch the custom lobby automatically' : 'Begin matchmaking automatically'}</small></span>
-          </label>
-          <label className="play-flow__toggle">
-            <input type="checkbox" checked={prefs.autoAccept} onChange={(event) => update('autoAccept', event.target.checked)} />
-			<span><strong>Ready check</strong><small>{phase === 'ReadyCheck' && readyAcceptRemaining !== null && readyAcceptRemaining > 0 ? `Accepting in ${readyAcceptRemaining}s` : `Accept after ${prefs.autoAcceptDelaySeconds}s`}</small></span>
-			<input className="play-flow__delay-input" type="number" min="0" max="8" value={prefs.autoAcceptDelaySeconds} onChange={(event) => update('autoAcceptDelaySeconds', Math.max(0, Math.min(8, Number(event.target.value) || 0)))} aria-label="Auto-accept delay in seconds" disabled={!prefs.autoAccept} />
-          </label>
-          <label className="play-flow__toggle">
-            <input type="checkbox" checked={prefs.autoPick} onChange={(event) => update('autoPick', event.target.checked)} />
-            <span><strong>Champion pick</strong><small>Hover and lock the selected pick</small></span>
-          </label>
-          <label className="play-flow__toggle">
-            <input type="checkbox" checked={prefs.autoBan} onChange={(event) => update('autoBan', event.target.checked)} />
-            <span><strong>Champion ban</strong><small>Ban the first available target</small></span>
-          </label>
-          <label className="play-flow__toggle">
-            <input type="checkbox" checked={prefs.instantLock} onChange={(event) => update('instantLock', event.target.checked)} />
-            <span><strong>Instant lock</strong><small>Skip the 2.5 second hover delay</small></span>
-          </label>
-          <label className="play-flow__toggle">
-            <input type="checkbox" checked={prefs.autoRoleQuestLoadout} onChange={(event) => update('autoRoleQuestLoadout', event.target.checked)} disabled={!selectedRoleQuestSpells || (champSelectLive && detectedRole !== 'TOP')} />
-            <span><strong>Top quest loadout</strong><small>{detectedRole === 'TOP' ? 'League confirmed Top · apply Flash + Teleport' : selectedRoleQuestSpells ? 'Waiting for League to confirm Top before applying' : 'Select Top to enable this helper'}</small></span>
-          </label>
-          <label className="play-flow__toggle">
-            <input type="checkbox" checked={prefs.arenaBraveryPick} onChange={(event) => update('arenaBraveryPick', event.target.checked)} disabled={!isArenaSelection} />
-            <span><strong>Arena Bravery pick</strong><small>{isArenaSelection ? 'Choose League’s random Bravery pick instead of a champion' : 'Select the Arena queue to enable this helper'}</small></span>
-          </label>
-        </div>
-
-        <div className="play-flow__policy">
-          <div className="play-flow__policy-heading"><span><GitBranch /> Draft policy</span><small>RiftOps checks live bans, picks, and teammate hovers before it sends an action.</small></div>
-          <div className="play-flow__policy-columns">
-            <section className="play-flow__policy-lane">
-              <div className="play-flow__policy-lane-heading"><span>Pick path</span><small>Choose the first available champion, then the fallback.</small></div>
-              {isArenaSelection && prefs.arenaBraveryPick && <div className="play-flow__policy-note"><Zap /> Arena Bravery is armed. RiftOps will send League’s special Bravery pick (-3) and will not invent a champion or ban it.</div>}
-              {isArenaSelection && <div className="play-flow__policy-note"><Sparkles /> {selectedArenaEvent}. The champion grid will use League’s live Arena choice pool; RiftOps never invents Crowd Favorites or sends a normal champion outside that pool.</div>}
-              <div className="play-flow__policy-pair">
-                <ChampionPicker value={prefs.pickChampionId} query={pickQuery} onQuery={setPickQuery} onSelect={(id) => update('pickChampionId', id)} label="Primary pick" version={version} champions={champions} />
-                <ChampionPicker value={prefs.fallbackPickChampionId} query={fallbackPickQuery} onQuery={setFallbackPickQuery} onSelect={(id) => update('fallbackPickChampionId', id)} label="Fallback pick" version={version} champions={champions} />
+      {!remoteClient && (
+        <section className="glass-card p-5 rounded-2xl space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400">
+                <Zap className="w-4 h-4" />
               </div>
-              <TimingControl label="Pick timing" mode={prefs.pickTimingMode} seconds={prefs.pickTimingSeconds} onMode={(value) => update('pickTimingMode', value)} onSeconds={(value) => update('pickTimingSeconds', value)} />
-              <div className="play-flow__rune-plan">
-                <label className="play-flow__rune-select">
-                  <span><BookOpen /> Primary pick runes</span>
-                  <select value={prefs.pickRunePageId} onChange={(event) => update('pickRunePageId', Number(event.target.value))} disabled={!editableRunePages.length} aria-label="Rune page for the primary pick">
-                    <option value="0">Keep the current page</option>
-                    {editableRunePages.map((page) => <option key={page.id} value={page.id}>{page.name || `Rune page ${page.id}`}</option>)}
-                  </select>
-                </label>
-                <label className="play-flow__rune-select is-fallback">
-                  <span><GitBranch /> Fallback pick runes</span>
-                  <select value={prefs.fallbackPickRunePageId} onChange={(event) => update('fallbackPickRunePageId', Number(event.target.value))} disabled={!editableRunePages.length} aria-label="Rune page for the fallback pick">
-                    <option value="0">Use primary pick runes</option>
-                    {editableRunePages.map((page) => <option key={page.id} value={page.id}>{page.name || `Rune page ${page.id}`}</option>)}
-                  </select>
-                </label>
-                <div className="play-flow__rune-editor-link">
-                  <span><strong>{currentRunePage?.name || 'No rune page loaded'}</strong><small>{currentRunePage?.isEditable === false ? 'This League page is read-only; select a custom page first.' : 'Edit League’s currently active custom rune page.'}</small></span>
-                  <button type="button" onClick={() => setRuneEditorOpen(true)} disabled={!currentRunePage || currentRunePage.isEditable === false}><Pencil /> Edit current</button>
-                </div>
+              <div>
+                <small className="text-[10px] font-bold uppercase tracking-wider text-text-dim block">AUTOMATION SETTINGS</small>
+                <h3 className="text-base font-bold text-white">Queue & Draft Rules</h3>
+                <p className="text-xs text-text-muted">Turn on auto-accept, automatic picks, and bans.</p>
               </div>
-              {!editableRunePages.length && <small className="play-flow__policy-note">Connect to League Client and create a custom rune page to enable this loadout.</small>}
-              <BuildPlanner
-                championId={prefs.pickChampionId}
-                championName={champions[prefs.pickChampionId]?.name || ''}
-                fallbackChampionId={prefs.fallbackPickChampionId}
-                fallbackChampionName={champions[prefs.fallbackPickChampionId]?.name || ''}
-                role={detectedRole || prefs.primaryRole}
-                onNotice={showToast}
-                onPlanSaved={setSavedBuildPlan}
+            </div>
+            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+              {enabledRuleCount} of 8 active
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-dark-bg/50 border border-white/5 hover:border-white/10 transition cursor-pointer">
+              <input type="checkbox" checked={prefs.autoRoles} onChange={(event) => update('autoRoles', event.target.checked)} className="rounded border-white/20 text-primary focus:ring-0" />
+              <span className="flex flex-col min-w-0">
+                <strong className="text-xs text-white">Lobby roles</strong>
+                <small className="text-[11px] text-text-dim truncate">Apply saved lanes</small>
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-dark-bg/50 border border-white/5 hover:border-white/10 transition cursor-pointer">
+              <input type="checkbox" checked={prefs.autoQueue} onChange={(event) => update('autoQueue', event.target.checked)} className="rounded border-white/20 text-primary focus:ring-0" />
+              <span className="flex flex-col min-w-0">
+                <strong className="text-xs text-white">{isCustomSelection ? 'Start game' : 'Start queue'}</strong>
+                <small className="text-[11px] text-text-dim truncate">{isCustomSelection ? 'Auto-launch custom' : 'Auto matchmaking'}</small>
+              </span>
+            </label>
+
+            <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-dark-bg/50 border border-white/5 hover:border-white/10 transition cursor-pointer">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <input type="checkbox" checked={prefs.autoAccept} onChange={(event) => update('autoAccept', event.target.checked)} className="rounded border-white/20 text-primary focus:ring-0" />
+                <span className="flex flex-col min-w-0">
+                  <strong className="text-xs text-white">Ready check</strong>
+                  <small className="text-[10px] text-text-dim truncate">
+                    {phase === 'ReadyCheck' && readyAcceptRemaining !== null && readyAcceptRemaining > 0 ? `Accept in ${readyAcceptRemaining}s` : prefs.autoAcceptRandomDelay ? `Random wait 0–${prefs.autoAcceptDelaySeconds}s` : `Wait ${prefs.autoAcceptDelaySeconds}s`}
+                  </small>
+                </span>
+              </div>
+              <input
+                type="number"
+                min="0"
+                max="8"
+                value={prefs.autoAcceptDelaySeconds}
+                onChange={(event) => update('autoAcceptDelaySeconds', Math.max(0, Math.min(8, Number(event.target.value) || 0)))}
+                aria-label="Auto-accept delay in seconds"
+                disabled={!prefs.autoAccept}
+                className="w-10 px-1.5 py-0.5 rounded bg-dark-card border border-white/10 text-white text-xs text-center focus:outline-none"
               />
-            </section>
-            <section className="play-flow__policy-lane">
-              <div className="play-flow__policy-lane-heading"><span>Ban path</span><small>Keep a backup ban ready if the first target is unavailable.</small></div>
-              <div className="play-flow__policy-pair">
-                <ChampionPicker value={prefs.banChampionId} query={banQuery} onQuery={setBanQuery} onSelect={(id) => update('banChampionId', id)} label="Primary ban" version={version} champions={champions} />
-                <ChampionPicker value={prefs.fallbackBanChampionId} query={fallbackBanQuery} onQuery={setFallbackBanQuery} onSelect={(id) => update('fallbackBanChampionId', id)} label="Fallback ban" version={version} champions={champions} />
-              </div>
-              <TimingControl label="Ban timing" mode={prefs.banTimingMode} seconds={prefs.banTimingSeconds} onMode={(value) => update('banTimingMode', value)} onSeconds={(value) => update('banTimingSeconds', value)} />
-            </section>
-          </div>
-        </div>
+              <span className="flex items-center gap-1 text-[10px] text-text-dim whitespace-nowrap" title="Choose a different delay between 0 and the configured maximum for each ready check">
+                <input type="checkbox" checked={prefs.autoAcceptRandomDelay} onChange={(event) => update('autoAcceptRandomDelay', event.target.checked)} disabled={!prefs.autoAccept} className="rounded border-white/20 text-primary focus:ring-0" />
+                Random 0–max
+              </span>
+            </label>
 
-        <div className="play-flow__automation-footer">
-          <div className="play-flow__policy-note"><ShieldCheck /> Unavailable primary choices are skipped automatically and the fallback is tried next. Auto mode runs only while this page is open.</div>
-          <div className={`play-flow__draft-status is-${draftTone}`} role="status" aria-live="polite">
-            <span className="play-flow__draft-status-dot" />
-            <span><strong>Draft automation</strong><small>{draftStatus}</small></span>
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-dark-bg/50 border border-white/5 hover:border-white/10 transition cursor-pointer">
+              <input type="checkbox" checked={prefs.autoPick} onChange={(event) => update('autoPick', event.target.checked)} className="rounded border-white/20 text-primary focus:ring-0" />
+              <span className="flex flex-col min-w-0">
+                <strong className="text-xs text-white">Champion pick</strong>
+                <small className="text-[11px] text-text-dim truncate">Auto-lock chosen pick</small>
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-dark-bg/50 border border-white/5 hover:border-white/10 transition cursor-pointer">
+              <input type="checkbox" checked={prefs.autoBan} onChange={(event) => update('autoBan', event.target.checked)} className="rounded border-white/20 text-primary focus:ring-0" />
+              <span className="flex flex-col min-w-0">
+                <strong className="text-xs text-white">Champion ban</strong>
+                <small className="text-[11px] text-text-dim truncate">Auto-ban target</small>
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-dark-bg/50 border border-white/5 hover:border-white/10 transition cursor-pointer">
+              <input type="checkbox" checked={prefs.instantLock} onChange={(event) => update('instantLock', event.target.checked)} className="rounded border-white/20 text-primary focus:ring-0" />
+              <span className="flex flex-col min-w-0">
+                <strong className="text-xs text-white">Instant lock</strong>
+                <small className="text-[11px] text-text-dim truncate">Skip hover delay</small>
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-dark-bg/50 border border-white/5 hover:border-white/10 transition cursor-pointer">
+              <input type="checkbox" checked={prefs.autoRoleQuestLoadout} onChange={(event) => update('autoRoleQuestLoadout', event.target.checked)} disabled={!selectedRoleQuestSpells || (champSelectLive && detectedRole !== 'TOP')} className="rounded border-white/20 text-primary focus:ring-0" />
+              <span className="flex flex-col min-w-0">
+                <strong className="text-xs text-white">Top quest loadout</strong>
+                <small className="text-[11px] text-text-dim truncate">Auto Flash + TP</small>
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-dark-bg/50 border border-white/5 hover:border-white/10 transition cursor-pointer">
+              <input type="checkbox" checked={prefs.arenaBraveryPick} onChange={(event) => update('arenaBraveryPick', event.target.checked)} disabled={!isArenaSelection} className="rounded border-white/20 text-primary focus:ring-0" />
+              <span className="flex flex-col min-w-0">
+                <strong className="text-xs text-white">Arena Bravery</strong>
+                <small className="text-[11px] text-text-dim truncate">Random Arena pick</small>
+              </span>
+            </label>
           </div>
-        </div>
-      </section>}
-      {!remoteClient && <RunePageEditor
-        open={runeEditorOpen}
-        page={currentRunePage}
-        onClose={() => setRuneEditorOpen(false)}
-        onSaved={async (updated) => {
-          setRunePages((pages) => pages.map((page) => page.id === updated.id ? updated : page));
-          showToast(`${updated.name} saved to League.`, 'success');
-        }}
-      />}
+
+          {/* Pick & Ban Preferences */}
+          <div className="space-y-4 pt-3 border-t border-white/5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-white">
+                <GitBranch className="w-3.5 h-3.5 text-primary" />
+                <span>Pick & Ban Preferences</span>
+              </div>
+              <small className="text-[11px] text-text-dim">RiftOps checks live bans and teammate hovers before acting.</small>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* Left: Pick path */}
+              <section className="space-y-3 p-4 rounded-xl bg-dark-bg/40 border border-white/5">
+                <div className="flex items-center justify-between">
+                  <strong className="text-xs font-bold text-white">Pick Path</strong>
+                  <small className="text-[10px] text-text-dim">Primary champion + fallback</small>
+                </div>
+
+                {isArenaSelection && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-primary/10 border border-primary/20 text-xs text-primary">
+                    <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                    <span>{selectedArenaEvent}. Champion grid uses League’s live Arena choice pool.</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <ChampionPicker value={prefs.pickChampionId} query={pickQuery} onQuery={setPickQuery} onSelect={(id) => update('pickChampionId', id)} label="Primary pick" version={version} champions={champions} />
+                  <ChampionPicker value={prefs.fallbackPickChampionId} query={fallbackPickQuery} onQuery={setFallbackPickQuery} onSelect={(id) => update('fallbackPickChampionId', id)} label="Fallback pick" version={version} champions={champions} />
+                </div>
+
+                <TimingControl label="Pick timing" mode={prefs.pickTimingMode} seconds={prefs.pickTimingSeconds} onMode={(value) => update('pickTimingMode', value)} onSeconds={(value) => update('pickTimingSeconds', value)} />
+
+                <div className="space-y-2 p-3 rounded-xl bg-dark-bg/50 border border-white/5">
+                  <label className="flex items-center justify-between gap-2 text-xs">
+                    <span className="flex items-center gap-1.5 text-text-muted">
+                      <BookOpen className="w-3.5 h-3.5 text-primary" /> Primary runes
+                    </span>
+                    <select value={prefs.pickRunePageId} onChange={(event) => update('pickRunePageId', Number(event.target.value))} disabled={!editableRunePages.length} aria-label="Rune page for the primary pick" className="px-2 py-1 rounded-lg bg-dark-card border border-white/10 text-white text-xs focus:outline-none">
+                      <option value="0">Keep current page</option>
+                      {editableRunePages.map((page) => <option key={page.id} value={page.id}>{page.name || `Rune page ${page.id}`}</option>)}
+                    </select>
+                  </label>
+
+                  <label className="flex items-center justify-between gap-2 text-xs">
+                    <span className="flex items-center gap-1.5 text-text-muted">
+                      <GitBranch className="w-3.5 h-3.5 text-text-dim" /> Fallback runes
+                    </span>
+                    <select value={prefs.fallbackPickRunePageId} onChange={(event) => update('fallbackPickRunePageId', Number(event.target.value))} disabled={!editableRunePages.length} aria-label="Rune page for the fallback pick" className="px-2 py-1 rounded-lg bg-dark-card border border-white/10 text-white text-xs focus:outline-none">
+                      <option value="0">Use primary runes</option>
+                      {editableRunePages.map((page) => <option key={page.id} value={page.id}>{page.name || `Rune page ${page.id}`}</option>)}
+                    </select>
+                  </label>
+
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5 text-xs">
+                    <span className="text-text-muted truncate">
+                      Active: <strong className="text-white">{currentRunePage?.name || 'None'}</strong>
+                    </span>
+                    <button type="button" onClick={() => setRuneEditorOpen(true)} disabled={!currentRunePage || currentRunePage.isEditable === false} className="btn-secondary px-2.5 py-1 text-xs flex items-center gap-1">
+                      <Pencil className="w-3 h-3" /> Edit runes
+                    </button>
+                  </div>
+                </div>
+
+                <BuildPlanner
+                  championId={prefs.pickChampionId}
+                  championName={champions[prefs.pickChampionId]?.name || ''}
+                  fallbackChampionId={prefs.fallbackPickChampionId}
+                  fallbackChampionName={champions[prefs.fallbackPickChampionId]?.name || ''}
+                  role={detectedRole || prefs.primaryRole}
+                  onNotice={showToast}
+                  onPlanSaved={setSavedBuildPlan}
+                />
+              </section>
+
+              {/* Right: Ban path */}
+              <section className="space-y-3 p-4 rounded-xl bg-dark-bg/40 border border-white/5 flex flex-col">
+                <div className="flex items-center justify-between">
+                  <strong className="text-xs font-bold text-white">Ban Path</strong>
+                  <small className="text-[10px] text-text-dim">Primary ban + fallback</small>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <ChampionPicker value={prefs.banChampionId} query={banQuery} onQuery={setBanQuery} onSelect={(id) => update('banChampionId', id)} label="Primary ban" version={version} champions={champions} />
+                  <ChampionPicker value={prefs.fallbackBanChampionId} query={fallbackBanQuery} onQuery={setFallbackBanQuery} onSelect={(id) => update('fallbackBanChampionId', id)} label="Fallback ban" version={version} champions={champions} />
+                </div>
+
+                <TimingControl label="Ban timing" mode={prefs.banTimingMode} seconds={prefs.banTimingSeconds} onMode={(value) => update('banTimingMode', value)} onSeconds={(value) => update('banTimingSeconds', value)} />
+              </section>
+            </div>
+          </div>
+
+          {/* Footer status */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-white/5 text-xs">
+            <div className="flex items-center gap-2 text-text-muted">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Unavailable champions are automatically skipped to your fallback choice.</span>
+            </div>
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs ${
+              draftTone === 'confirmed' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' :
+              draftTone === 'working' ? 'bg-primary/10 text-primary border-primary/30' :
+              draftTone === 'blocked' ? 'bg-rose-500/10 text-rose-300 border-rose-500/30' :
+              'bg-slate-500/10 text-text-muted border-white/10'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                draftTone === 'confirmed' ? 'bg-emerald-400 animate-ping' :
+                draftTone === 'working' ? 'bg-primary animate-pulse' :
+                draftTone === 'blocked' ? 'bg-rose-400' :
+                'bg-slate-500'
+              }`} />
+              <span>{draftStatus}</span>
+            </div>
+          </div>
+          {retryHistory.length > 0 && (
+            <section className="mt-3 p-3 rounded-xl bg-rose-500/[0.05] border border-rose-500/20" aria-label="Champion Select retry history">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <strong className="text-[10px] uppercase tracking-wider text-rose-300">Recent LCU retries</strong>
+                <button type="button" className="text-[10px] text-text-dim hover:text-white" onClick={() => setRetryHistory([])}>Clear</button>
+              </div>
+              <div className="space-y-1.5">
+                {retryHistory.map((entry) => <div key={entry.id} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-rose-200">{entry.action}: {entry.message}</span><time className="text-text-dim shrink-0">{new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>)}
+              </div>
+            </section>
+          )}
+        </section>
+      )}
+
+      {!remoteClient && (
+        <RunePageEditor
+          open={runeEditorOpen}
+          page={currentRunePage}
+          onClose={() => setRuneEditorOpen(false)}
+          onSaved={async (updated) => {
+            setRunePages((pages) => pages.map((page) => page.id === updated.id ? updated : page));
+            showToast(`${updated.name} saved to League.`, 'success');
+          }}
+        />
+      )}
     </div>
   );
+}
+
+function draftActionLabel(key: string): string {
+  if (key.includes('draft-hover')) return 'Champion hover';
+  if (key.includes('draft-lock')) return 'Champion lock';
+  if (key.includes('draft-ban')) return 'Champion ban';
+  if (key.includes('draft-rune')) return 'Rune page';
+  return 'Champion Select action';
 }

@@ -119,6 +119,18 @@ func TestLaunchProfileCRUD(t *testing.T) {
 	if got := value.ActiveProfile(); got.Region != "EUW1" || got.RiotID != profile.RiotID {
 		t.Fatalf("active profile = %+v", got)
 	}
+	profile.Name = "Ranked account renamed"
+	profile.AccountLabel = "Secondary"
+	profile.RiotID = "Updated#EUW"
+	profile.Region = "eun1"
+	profile.LeagueLocale = "en_GB"
+	if err := value.UpsertProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+	updated := value.ActiveProfile()
+	if updated.ID != profile.ID || updated.Name != profile.Name || updated.AccountLabel != profile.AccountLabel || updated.RiotID != profile.RiotID || updated.Region != "EUN1" || updated.LeagueLocale != profile.LeagueLocale {
+		t.Fatalf("updated profile = %+v", updated)
+	}
 	if err := value.DeleteProfile(profile.ID); err != nil {
 		t.Fatal(err)
 	}

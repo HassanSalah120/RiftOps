@@ -132,11 +132,11 @@ export async function deleteLaunchProfile(id: string): Promise<void> {
   if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to delete launch profile');
 }
 
-export async function switchLaunchProfile(id: string): Promise<{ profile: LaunchProfile; targetSessionAvailable: boolean; targetSessionExpired: boolean }> {
+export async function switchLaunchProfile(id: string, forceLogin = false): Promise<{ profile: LaunchProfile; targetSessionAvailable: boolean; targetSessionExpired: boolean }> {
   const res = await fetch('/api/switch-profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ id, forceLogin }),
   });
   if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to switch launch profile');
   return res.json();
@@ -901,7 +901,7 @@ export function fetchQoLPreferences(): Promise<QoLPreferences> {
   });
 }
 
-export function saveQoLPreferences(preferences: QoLPreferences): Promise<QoLPreferences> {
+export function saveQoLPreferences(preferences: Partial<QoLPreferences>): Promise<QoLPreferences> {
   return fetch('/api/qol/preferences', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

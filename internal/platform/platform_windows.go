@@ -61,8 +61,15 @@ func (windowsAdapter) KnownProcesses(ctx context.Context) ([]ProcessInfo, error)
 		return nil, err
 	}
 	known := map[string]bool{
-		"riotclientservices.exe": true, "leagueclient.exe": true, "lor.exe": true,
-		"valorant-win64-shipping.exe": true, "lion.exe": true,
+		"riotclientservices.exe":      true,
+		"riotclientux.exe":            true,
+		"riotclientuxrender.exe":      true,
+		"leagueclient.exe":            true,
+		"leagueclientux.exe":          true,
+		"leagueclientuxrender.exe":    true,
+		"lor.exe":                     true,
+		"valorant-win64-shipping.exe": true,
+		"lion.exe":                    true,
 	}
 	var result []ProcessInfo
 	for _, row := range rows {

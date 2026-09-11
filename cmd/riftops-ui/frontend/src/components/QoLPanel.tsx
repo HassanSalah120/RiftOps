@@ -59,13 +59,50 @@ const AVAILABILITY_OPTIONS = [
 ] as const;
 
 const PHASES = [
+  { key: 'None', label: 'MENU' },
   { key: 'Lobby', label: 'LOBBY' },
   { key: 'Matchmaking', label: 'QUEUE' },
-  { key: 'ReadyCheck', label: 'READY CHECK' },
-  { key: 'ChampSelect', label: 'CHAMP SELECT' },
+  { key: 'ReadyCheck', label: 'READY' },
+  { key: 'ChampSelect', label: 'DRAFT' },
   { key: 'InProgress', label: 'IN GAME' },
   { key: 'EndOfGame', label: 'POST GAME' },
 ] as const;
+
+function formatPhaseLabel(rawPhase?: string): string {
+  if (!rawPhase || rawPhase === 'None' || rawPhase === 'Disconnected') return 'Client Menu';
+  switch (rawPhase) {
+    case 'Lobby': return 'Party Lobby';
+    case 'Matchmaking': return 'In Queue';
+    case 'ReadyCheck': return 'Ready Check';
+    case 'ChampSelect': return 'Champion Select';
+    case 'InProgress': return 'In Game';
+    case 'EndOfGame':
+    case 'PreEndOfGame':
+    case 'WaitingForStats': return 'Post Game';
+    default: return rawPhase.replace(/([a-z])([A-Z])/g, '$1 $2');
+  }
+}
+
+function formatDisplayStatus(rawPhase?: string, rawQueueState?: string, isConnected = false): string {
+  if (!isConnected) return 'League client offline';
+  const q = (rawQueueState || '').trim();
+  if (q && !['invalid', 'none', 'default'].includes(q.toLowerCase())) {
+    return q;
+  }
+  const p = (rawPhase || '').trim();
+  switch (p) {
+    case 'Lobby': return 'In Party Lobby';
+    case 'Matchmaking': return 'Searching for match...';
+    case 'ReadyCheck': return 'Match ready!';
+    case 'ChampSelect': return 'In Champion Select';
+    case 'InProgress': return 'Match in progress';
+    case 'EndOfGame':
+    case 'PreEndOfGame':
+    case 'WaitingForStats': return 'Post-game results';
+    case 'None':
+    default: return 'Standing by in Menu';
+  }
+}
 
 type QoLCategory = 'all' | 'automations' | 'queue' | 'social' | 'safety';
 
@@ -299,7 +336,7 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
     : inQueue
     ? {
         label: 'Cancel Queue',
-        detail: state?.queueState || 'Searching for match...',
+        detail: (state?.queueState && !['invalid', 'none'].includes(state.queueState.toLowerCase())) ? state.queueState : 'Searching for match...',
         tone: 'danger' as const,
         action: () => void runAction('queue-stop', 'Matchmaking stopped.', lcuStopQueue),
       }
@@ -319,12 +356,14 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
       }
     : {
         label: 'Standing By',
-        detail: 'LCU connected & idle',
+        detail: 'League connected & idle',
         tone: 'neutral' as const,
         action: () => void refreshState(true),
       };
 
   const isCurrentPhase = (key: string) => {
+    if (!connected) return false;
+    if (key === 'None') return !phase || phase === 'None';
     if (key === 'EndOfGame') return postGame;
     return phase === key;
   };
@@ -368,11 +407,19 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
   ];
 
   return (
-    <div className="qol-page">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col gap-4 min-h-full">
       {/* Toast Feedback */}
       {toast && (
-        <div className={`qol-toast ${toast.ok ? 'is-success' : 'is-error'}`} role="status" aria-live="polite">
-          {toast.ok ? <CheckCircle2 /> : <XCircle />}
+        <div
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl border shadow-2xl backdrop-blur-md text-xs font-bold transition-all animate-fadeIn ${
+            toast.ok
+              ? 'bg-emerald-950/90 border-emerald-500/30 text-emerald-200'
+              : 'bg-rose-950/90 border-rose-500/30 text-rose-200'
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          {toast.ok ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <XCircle className="w-4 h-4 text-rose-400" />}
           <span>{toast.message}</span>
         </div>
       )}
@@ -383,17 +430,21 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
       {/* Top Header */}
       <PageHeader
         icon={Sparkles}
-        eyebrow="CLIENT AUTOMATION & UTILITIES"
+        eyebrow="AUTOMATIONS & UTILITIES"
         title="Quality of Life"
         description="Automate repetitive League client tasks, save queue position presets, manage chat presence, and create safe settings snapshots."
         meta={
           <StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>
-            {connected ? `Phase: ${phase}` : 'League offline'}
+            {connected
+              ? (phase && phase !== 'None' && phase !== 'Disconnected'
+                  ? `Phase: ${formatPhaseLabel(phase)}`
+                  : 'League Ready')
+              : 'League offline'}
           </StatusBadge>
         }
         actions={
           <div className="flex items-center gap-2">
-            <span className="qol-rules-pill">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-extrabold text-amber-200 bg-primary/10 border border-primary/30">
               <Zap className="w-3.5 h-3.5 text-amber-300" />
               <span>{automationCount}/6 Automations Active</span>
             </span>
@@ -411,86 +462,107 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
       />
 
       {/* Interactive Phase Cockpit Bar */}
-      <section className="qol-cockpit-bar" aria-label="League Client live pipeline">
-        <div className="qol-cockpit-bar__pipeline">
-          <span className="qol-cockpit-bar__label">PHASE</span>
-          <div className="qol-cockpit-bar__steps">
+      <section className="flex items-center justify-between gap-4 px-3.5 py-2.5 rounded-xl border border-white/[0.08] bg-gradient-to-r from-[#081626]/90 to-[#050e19]/95 shadow-lg flex-wrap sm:flex-nowrap" aria-label="League Client live pipeline">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <span className="text-[9px] font-black tracking-widest text-primary pr-2 border-r border-white/[0.08] shrink-0">PHASE</span>
+          <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-none">
             {PHASES.map(({ key, label }) => {
               const active = isCurrentPhase(key);
               return (
-                <div key={key} className={`qol-cockpit-step ${active ? 'is-active' : ''}`}>
-                  <span className="qol-cockpit-step__dot" />
-                  <span className="qol-cockpit-step__name">{label}</span>
+                <div key={key} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[9px] font-extrabold tracking-wider transition shrink-0 ${active ? 'text-amber-200 bg-primary/15 border border-primary/35 shadow-sm' : 'text-slate-400 bg-white/[0.03] border border-transparent'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-amber-300 shadow-[0_0_8px_currentColor]' : 'bg-current opacity-40'}`} />
+                  <span>{label}</span>
                 </div>
               );
             })}
           </div>
         </div>
 
-        <div className="qol-cockpit-bar__action">
-          <div className="qol-cockpit-bar__state-info">
-            <span className={`qol-connection-dot ${connected ? 'is-online' : ''}`} />
-            <span className="truncate max-w-[220px]">
-              {state?.queueState || (connected ? 'Standing by' : 'League client offline')}
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 text-xs text-slate-300">
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-slate-500'}`} />
+            <span className="truncate max-w-[200px] text-xs font-semibold">
+              {formatDisplayStatus(state?.phase, state?.queueState, connected)}
             </span>
           </div>
           <button
             type="button"
             onClick={primaryAction.action}
             disabled={activeAction !== ''}
-            className={`qol-primary-action-btn qol-primary-action-btn--${primaryAction.tone}`}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+              primaryAction.tone === 'success'
+                ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 hover:bg-emerald-400'
+                : primaryAction.tone === 'danger'
+                ? 'bg-rose-600 text-white hover:bg-rose-500'
+                : primaryAction.tone === 'gold'
+                ? 'btn-primary'
+                : primaryAction.tone === 'rose'
+                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30'
+                : 'bg-white/[0.08] text-slate-200 hover:bg-white/[0.12] border border-white/10'
+            }`}
           >
-            {activeAction ? <Loader2 className="animate-spin" /> : <ChevronRight />}
+            {activeAction ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
             <span>{primaryAction.label}</span>
           </button>
         </div>
       </section>
 
-      {/* Section Filter Pills */}
-      <nav className="qol-filter-tabs" aria-label="QoL section filters">
-        {CATEGORIES.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            className={`qol-filter-tab ${activeCategory === id ? 'is-active' : ''}`}
-            onClick={() => setActiveCategory(id)}
-          >
-            <Icon className="w-3.5 h-3.5" />
-            <span>{label}</span>
-          </button>
-        ))}
+      {/* Section Filter Tabs */}
+      <nav className="flex items-center gap-1.5 overflow-x-auto p-1.5 rounded-xl bg-[#040c16]/60 border border-white/[0.06]" aria-label="QoL section filters">
+        {CATEGORIES.map(({ id, label, icon: Icon }) => {
+          const active = activeCategory === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                active
+                  ? 'text-white bg-primary/20 border border-primary/35 shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+              }`}
+              onClick={() => setActiveCategory(id)}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span>{label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       {/* Main 2-Column Cockpit Grid */}
-      <div className="qol-cockpit-grid">
+      <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-4 items-start">
         {/* ══════════════════════════════════════════════════════
             COLUMN 1: AUTOMATIONS & MATCHMAKING
             ══════════════════════════════════════════════════════ */}
         {(activeCategory === 'all' || activeCategory === 'automations' || activeCategory === 'queue') && (
-          <div className="qol-column">
+          <div className="flex flex-col gap-4 min-w-0">
             {/* CARD: AUTOMATIONS ENGINE */}
             {(activeCategory === 'all' || activeCategory === 'automations') && (
-              <section className="qol-card">
-                <div className="qol-card__head">
-                  <div className="qol-card__icon qol-card__icon--gold">
-                    <BellRing />
+              <section className="glass-card flex flex-col gap-3.5 p-4 md:p-5 rounded-2xl">
+                <div className="flex items-center gap-3 border-b border-white/[0.06] pb-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-primary/10 border border-primary/25 text-primary">
+                    <BellRing className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="qol-card__eyebrow">CONTINUOUS LOOP</span>
-                    <h3>Automations Engine</h3>
-                    <p>Opt-in automation rules that run smoothly in the background.</p>
+                    <span className="text-[9px] font-black tracking-widest text-text-muted uppercase block">CONTINUOUS LOOP</span>
+                    <h3 className="text-base font-bold text-white leading-tight">Automations Engine</h3>
+                    <p className="text-[11px] text-text-muted mt-0.5">Opt-in automation rules that run smoothly in the background.</p>
                   </div>
                 </div>
 
                 {/* Master Grind Mode Banner */}
-                <div className={`qol-grind-banner ${preferences.grindMode ? 'is-active' : ''}`}>
-                  <div className="qol-grind-banner__info">
-                    <div className="qol-grind-banner__badge">
-                      <Flame className="w-3.5 h-3.5 text-amber-300" />
+                <div className={`p-4 rounded-xl border flex items-center justify-between gap-4 transition ${
+                  preferences.grindMode
+                    ? 'bg-amber-500/10 border-amber-500/30 shadow-[0_0_20px_rgba(200,170,110,0.1)]'
+                    : 'bg-white/[0.02] border-white/[0.06]'
+                }`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30 mb-1">
+                      <Flame className="w-3 h-3 text-amber-300" />
                       <span>MASTER LOOP</span>
                     </div>
-                    <h4>Grind Mode</h4>
-                    <p>
+                    <h4 className="text-sm font-bold text-white">Grind Mode</h4>
+                    <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
                       Full automated loop: auto-accept queue pops, return to lobby, honor teammates, auto-requeue, and claim rewards.
                     </p>
                   </div>
@@ -500,27 +572,37 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                     aria-checked={preferences.grindMode}
                     disabled={preferencesLoading}
                     onClick={() => void updatePreferences({ ...preferences, grindMode: !preferences.grindMode })}
-                    className={`qol-switch-btn ${preferences.grindMode ? 'is-active' : ''}`}
+                    className="flex items-center gap-2 cursor-pointer shrink-0 disabled:opacity-50"
                   >
-                    <span className="qol-switch-btn__track">
-                      <span className="qol-switch-btn__thumb" />
+                    <span className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${preferences.grindMode ? 'bg-primary' : 'bg-white/20'}`}>
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${preferences.grindMode ? 'translate-x-4' : 'translate-x-1'}`} />
                     </span>
-                    <span className="qol-switch-btn__label">{preferences.grindMode ? 'ACTIVE' : 'OFF'}</span>
+                    <span className="text-[11px] font-black text-slate-300 w-12">{preferences.grindMode ? 'ACTIVE' : 'OFF'}</span>
                   </button>
                 </div>
 
                 {/* Granular Rules Stack */}
-                <div className="qol-rules-stack">
+                <div className="flex flex-col gap-2">
                   {AUTOMATION_RULES.map(({ key, title, description, icon: Icon, accent }) => {
                     const isChecked = Boolean(preferences[key]);
                     return (
-                      <div key={key} className={`qol-rule-row ${isChecked ? 'is-active' : ''}`}>
-                        <div className="qol-rule-row__media" style={{ color: accent, borderColor: `${accent}40`, backgroundColor: `${accent}14` }}>
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <div className="qol-rule-row__copy">
-                          <strong>{title}</strong>
-                          <small>{description}</small>
+                      <div
+                        key={key}
+                        className={`flex items-center justify-between gap-3 p-3 rounded-xl border transition ${
+                          isChecked ? 'bg-white/[0.04] border-primary/25' : 'bg-white/[0.015] border-white/[0.05] opacity-75 hover:opacity-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div
+                            className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center border"
+                            style={{ color: accent, borderColor: `${accent}40`, backgroundColor: `${accent}14` }}
+                          >
+                            <Icon className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <strong className="block text-xs font-bold text-white">{title}</strong>
+                            <small className="block text-[11px] text-text-muted truncate">{description}</small>
+                          </div>
                         </div>
                         <button
                           type="button"
@@ -528,12 +610,12 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                           aria-checked={isChecked}
                           disabled={preferencesLoading}
                           onClick={() => void updatePreferences({ ...preferences, [key]: !isChecked })}
-                          className={`qol-switch-btn ${isChecked ? 'is-active' : ''}`}
+                          className="flex items-center gap-2 cursor-pointer shrink-0 disabled:opacity-50"
                         >
-                          <span className="qol-switch-btn__track">
-                            <span className="qol-switch-btn__thumb" />
+                          <span className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${isChecked ? 'bg-primary' : 'bg-white/20'}`}>
+                            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${isChecked ? 'translate-x-4' : 'translate-x-1'}`} />
                           </span>
-                          <span className="qol-switch-btn__label">{isChecked ? 'ON' : 'OFF'}</span>
+                          <span className="text-[10px] font-extrabold text-slate-400 w-6">{isChecked ? 'ON' : 'OFF'}</span>
                         </button>
                       </div>
                     );
@@ -544,56 +626,56 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
 
             {/* CARD: QUEUE & POSITIONS */}
             {(activeCategory === 'all' || activeCategory === 'queue') && (
-              <section className="qol-card">
-                <div className="qol-card__head">
-                  <div className="qol-card__icon qol-card__icon--cyan">
-                    <Activity />
+              <section className="glass-card flex flex-col gap-3.5 p-4 md:p-5 rounded-2xl">
+                <div className="flex items-center gap-3 border-b border-white/[0.06] pb-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-cyan-500/10 border border-cyan-500/25 text-cyan-400">
+                    <Activity className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="qol-card__eyebrow">MATCHMAKING</span>
-                    <h3>Queue Command & Roles</h3>
-                    <p>Live matchmaking controls, position assignment, and saved role presets.</p>
+                    <span className="text-[9px] font-black tracking-widest text-text-muted uppercase block">MATCHMAKING</span>
+                    <h3 className="text-base font-bold text-white leading-tight">Queue Command & Roles</h3>
+                    <p className="text-[11px] text-text-muted mt-0.5">Live matchmaking controls, position assignment, and saved role presets.</p>
                   </div>
                 </div>
 
                 {/* Quick Matchmaking Actions */}
-                <div className="qol-action-button-grid">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <button
                     type="button"
                     disabled={!readyCheck}
                     onClick={() => void runAction('accept', 'Ready check accepted.', lcuAutoAccept)}
-                    className="btn-primary qol-action-btn qol-action-btn--success"
+                    className="btn-primary flex items-center justify-center gap-2 text-xs py-2"
                   >
-                    {activeAction === 'accept' ? <Loader2 className="animate-spin" /> : <Check />}
+                    {activeAction === 'accept' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                     <span>Accept Ready Check</span>
                   </button>
                   <button
                     type="button"
                     disabled={!inLobby}
                     onClick={() => void runAction('queue-start', 'Matchmaking started.', lcuAutoRequeue)}
-                    className="btn-primary qol-action-btn"
+                    className="btn-primary flex items-center justify-center gap-2 text-xs py-2"
                   >
-                    {activeAction === 'queue-start' ? <Loader2 className="animate-spin" /> : <Play />}
+                    {activeAction === 'queue-start' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                     <span>Start Queue</span>
                   </button>
                   <button
                     type="button"
                     disabled={!inQueue}
                     onClick={() => void runAction('queue-stop', 'Matchmaking stopped.', lcuStopQueue)}
-                    className="btn-secondary qol-action-btn"
+                    className="btn-secondary flex items-center justify-center gap-2 text-xs py-2"
                   >
-                    {activeAction === 'queue-stop' ? <Loader2 className="animate-spin" /> : <CircleStop />}
+                    {activeAction === 'queue-stop' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CircleStop className="w-3.5 h-3.5" />}
                     <span>Cancel Queue</span>
                   </button>
                 </div>
 
                 {/* Live Lobby Position Selector */}
-                <div className="qol-sub-box">
-                  <div className="qol-sub-box__header">
-                    <span>
+                <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between text-xs font-bold text-white">
+                    <span className="flex items-center gap-1.5">
                       <Users className="w-3.5 h-3.5 text-primary" /> Active Lobby Positions
                     </span>
-                    <small>Syncs directly to your current League party</small>
+                    <small className="text-[10px] text-text-dim font-normal">Syncs directly to your current League party</small>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
@@ -603,7 +685,7 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                         value={firstRole}
                         disabled={!inLobby}
                         onChange={(e) => setFirstRole(e.target.value)}
-                        className="qol-select"
+                        className="w-full text-xs"
                       >
                         {ROLE_OPTIONS.map(([val, label, icon]) => (
                           <option key={val} value={val}>
@@ -618,7 +700,7 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                         value={secondRole}
                         disabled={!inLobby}
                         onChange={(e) => setSecondRole(e.target.value)}
-                        className="qol-select"
+                        className="w-full text-xs"
                       >
                         {ROLE_OPTIONS.map(([val, label, icon]) => (
                           <option key={val} value={val}>
@@ -647,12 +729,12 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                 </div>
 
                 {/* Queue Role Presets */}
-                <div className="qol-sub-box mt-3">
-                  <div className="qol-sub-box__header">
-                    <span>
+                <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex flex-col gap-2.5 mt-3">
+                  <div className="flex items-center justify-between text-xs font-bold text-white">
+                    <span className="flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-amber-300" /> Queue Role Presets
                     </span>
-                    <small>Auto-applies when you enter a matching queue</small>
+                    <small className="text-[10px] text-text-dim font-normal">Auto-applies when you enter a matching queue</small>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
@@ -669,7 +751,7 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                             setPresetSecond(p.second);
                           }
                         }}
-                        className="qol-select"
+                        className="w-full text-xs"
                       >
                         {Object.entries(queueLabels).map(([k, label]) => (
                           <option key={k} value={k}>
@@ -683,7 +765,7 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                       <select
                         value={presetFirst}
                         onChange={(e) => setPresetFirst(e.target.value)}
-                        className="qol-select"
+                        className="w-full text-xs"
                       >
                         {ROLE_OPTIONS.map(([val, label, icon]) => (
                           <option key={val} value={val}>
@@ -697,7 +779,7 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                       <select
                         value={presetSecond}
                         onChange={(e) => setPresetSecond(e.target.value)}
-                        className="qol-select"
+                        className="w-full text-xs"
                       >
                         {ROLE_OPTIONS.map(([val, label, icon]) => (
                           <option key={val} value={val}>
@@ -728,7 +810,7 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                       }
                       className="btn-secondary text-xs"
                     >
-                      {activeAction === `preset-${presetQueue}` ? <Loader2 className="animate-spin" /> : <Check />}
+                      {activeAction === `preset-${presetQueue}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                       <span>Save Queue Preset</span>
                     </button>
                   </div>
@@ -742,25 +824,25 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
             COLUMN 2: PRESENCE, SESSION CONTROLS & SAFETY
             ══════════════════════════════════════════════════════ */}
         {(activeCategory === 'all' || activeCategory === 'social' || activeCategory === 'safety') && (
-          <div className="qol-column">
+          <div className="flex flex-col gap-4 min-w-0">
             {/* CARD: SOCIAL PRESENCE */}
             {(activeCategory === 'all' || activeCategory === 'social') && (
-              <section className="qol-card">
-                <div className="qol-card__head">
-                  <div className="qol-card__icon qol-card__icon--emerald">
-                    <MessageSquareText />
+              <section className="glass-card flex flex-col gap-3.5 p-4 md:p-5 rounded-2xl">
+                <div className="flex items-center gap-3 border-b border-white/[0.06] pb-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-emerald-500/10 border border-emerald-500/25 text-emerald-400">
+                    <MessageSquareText className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="qol-card__eyebrow">SOCIAL PRESENCE</span>
-                    <h3>Chat Availability & Status</h3>
-                    <p>Live visibility controls synchronized directly with the League chat service.</p>
+                    <span className="text-[9px] font-black tracking-widest text-text-muted uppercase block">SOCIAL PRESENCE</span>
+                    <h3 className="text-base font-bold text-white leading-tight">Chat Availability & Status</h3>
+                    <p className="text-[11px] text-text-muted mt-0.5">Live visibility controls synchronized directly with the League chat service.</p>
                   </div>
                 </div>
 
                 {/* Availability Segmented Buttons */}
                 <div className="space-y-1.5">
                   <label className="text-[10px] uppercase font-bold text-text-muted block">Availability</label>
-                  <div className="qol-segmented-presence">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {AVAILABILITY_OPTIONS.map(({ value, label, color }) => {
                       const isSelected = state?.availability === value;
                       return (
@@ -768,7 +850,11 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                           key={value}
                           type="button"
                           disabled={!connected || activeAction === 'presence'}
-                          className={`qol-presence-btn ${isSelected ? 'is-selected' : ''}`}
+                          className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                            isSelected
+                              ? 'bg-white/[0.08] border-primary/50 text-white shadow-sm'
+                              : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.04]'
+                          }`}
                           onClick={() =>
                             void runAction('presence', `Availability set to ${label}.`, () =>
                               post('/api/lcu/availability', { availability: value }),
@@ -776,8 +862,8 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                           }
                         >
                           <span
-                            className="qol-presence-indicator-dot"
-                            style={{ backgroundColor: color, boxShadow: isSelected ? `0 0 10px ${color}` : 'none' }}
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: color, boxShadow: isSelected ? `0 0 8px ${color}` : 'none' }}
                           />
                           <span>{label}</span>
                         </button>
@@ -809,7 +895,7 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                           );
                         }
                       }}
-                      className="qol-input flex-1"
+                      className="flex-1 text-xs"
                     />
                     <button
                       type="button"
@@ -819,9 +905,9 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
                           post('/api/lcu/status-message', { message: statusMessage.trim() }),
                         )
                       }
-                      className="btn-primary text-xs"
+                      className="btn-primary text-xs flex items-center gap-1.5"
                     >
-                      {activeAction === 'status' ? <Loader2 className="animate-spin" /> : <Check />}
+                      {activeAction === 'status' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                       <span>Update</span>
                     </button>
                   </div>
@@ -831,15 +917,15 @@ export default function QoLPanel({ onOpenLive }: { onOpenLive?: () => void }) {
 
             {/* CARD: SESSION MATCH CONTROLS */}
             {(activeCategory === 'all' || activeCategory === 'safety') && (
-              <section className="qol-card">
-                <div className="qol-card__head">
-                  <div className="qol-card__icon qol-card__icon--rose">
-                    <Swords />
+              <section className="glass-card flex flex-col gap-3.5 p-4 md:p-5 rounded-2xl">
+                <div className="flex items-center gap-3 border-b border-white/[0.06] pb-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-rose-500/10 border border-rose-500/25 text-rose-400">
+                    <Swords className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="qol-card__eyebrow">ACTIVE SESSION</span>
-                    <h3>Game Phase & Match Controls</h3>
-                    <p>Actions context-aware of the current gameflow phase.</p>
+                    <span className="text-[9px] font-black tracking-widest text-text-muted uppercase block">ACTIVE SESSION</span>
+                    <h3 className="text-base font-bold text-white leading-tight">Game Phase & Match Controls</h3>
+                    <p className="text-[11px] text-text-muted mt-0.5">Actions context-aware of the current gameflow phase.</p>
                   </div>
                 </div>
 

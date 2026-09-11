@@ -2,15 +2,15 @@ import { Bell, Command, Search, ShieldCheck } from 'lucide-react';
 import type { Tab } from '../types';
 
 const TAB_LABELS: Record<Tab, string> = {
-  dashboard: 'Command Center',
-  play: 'Play Flow',
-  live: 'Live Session',
-  social: 'Social Center',
-  qol: 'League QoL',
+  dashboard: 'Home',
+  play: 'Play & Draft',
+  live: 'Live Game',
+  social: 'Friends',
+  qol: 'Automations',
   history: 'Match History',
-  skins: 'Skin Collection',
-  loot: 'Loot Workshop',
-  remote: 'Remote Access',
+  skins: 'Skins & Splash',
+  loot: 'Hextech Loot',
+  remote: 'Phone Companion',
   settings: 'Settings',
 };
 
@@ -48,7 +48,7 @@ export default function WorkspaceHeader({
           <Bell />
           {unreadNotifications > 0 && <span>{unreadNotifications > 9 ? '9+' : unreadNotifications}</span>}
         </button>
-        <span className="workspace-header__system"><i />SYSTEM READY</span>
+        <span className="workspace-header__system"><i />{live ? 'IN MATCH' : 'LEAGUE READY'}</span>
       </div>
     </header>
   );

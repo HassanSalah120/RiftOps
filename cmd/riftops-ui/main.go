@@ -640,7 +640,10 @@ func selectProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func switchProfile(w http.ResponseWriter, r *http.Request) {
-	var body struct{ ID string }
+	var body struct {
+		ID         string `json:"id"`
+		ForceLogin bool   `json:"forceLogin"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
 		slog.Debug("switchProfile decode", "error", err)
@@ -662,13 +665,14 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 			status = override
 		}
 	}
+	freshLogin := !result.TargetSessionAvailable || body.ForceLogin
 	go func() {
 		_ = backendEngine.Run(context.Background(), engine.RunOptions{
 			Game:           game,
 			Status:         status,
 			Patchline:      profile.Patchline,
 			StopExisting:   false,
-			FreshLogin:     !result.TargetSessionAvailable,
+			FreshLogin:     freshLogin,
 			RiotClientArgs: append([]string(nil), profile.RiotClientArgs...),
 			GameArgs:       launchGameArgs(profile),
 		})
@@ -677,7 +681,7 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"profile":                profile,
 		"refreshedCurrent":       result.RefreshedCurrent,
-		"targetSessionAvailable": result.TargetSessionAvailable,
+		"targetSessionAvailable": result.TargetSessionAvailable && !body.ForceLogin,
 		"targetSessionExpired":   result.TargetSessionExpired,
 	})
 }

@@ -65,8 +65,16 @@ const QUEUE_FALLBACKS: Record<string, string> = {
 };
 
 function phaseLabel(phase: string): string {
-  if (!phase) return 'Waiting for League';
-  return phase.replace(/([a-z])([A-Z])/g, '$1 $2');
+  if (!phase || phase === 'None' || phase === 'Disconnected') return 'Client Menu';
+  switch (phase) {
+    case 'Lobby': return 'Party Lobby';
+    case 'Matchmaking': return 'In Queue';
+    case 'ReadyCheck': return 'Ready Check';
+    case 'ChampSelect': return 'Champion Select';
+    case 'InProgress': return 'In Game';
+    case 'EndOfGame': return 'Post-Game';
+    default: return phase.replace(/([a-z])([A-Z])/g, '$1 $2');
+  }
 }
 
 function phaseTone(phase: string): EventTone {
@@ -89,7 +97,7 @@ function storeEvents(events: ControlEvent[]) {
 }
 
 export default function ClientControlRoom({ onOpenQoL, onOpenLive, onOpenHistory, showToast, remoteClient = false }: { onOpenQoL: () => void; onOpenLive?: () => void; onOpenHistory: () => void; showToast: Toast; remoteClient?: boolean }) {
-  const { qol: state, health, connected, stale, lastUpdated, performanceMode, refresh } = useLCUConnection();
+  const { qol: state, health, connected, stale, lastUpdated, refresh } = useLCUConnection();
   const [busy, setBusy] = useState('');
   const [events, setEvents] = useState<ControlEvent[]>(loadEvents);
   const [presets, setPresets] = useState<QueuePresetsResponse | null>(null);
@@ -152,7 +160,7 @@ export default function ClientControlRoom({ onOpenQoL, onOpenLive, onOpenHistory
         id: Date.now(),
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         title: phaseLabel(phase),
-        detail: state?.queueState || 'League client phase changed',
+        detail: (state?.queueState && !['invalid', 'none'].includes(state.queueState.toLowerCase())) ? state.queueState : 'League client phase changed',
         tone: phaseTone(phase),
       }, ...current].slice(0, 10);
       storeEvents(next);
@@ -203,7 +211,7 @@ export default function ClientControlRoom({ onOpenQoL, onOpenLive, onOpenHistory
     if (!connected) return { key: 'refresh', label: 'Reconnect to League', detail: 'RiftOps will retry automatically. Refresh when the client is open.', icon: RefreshCw };
     switch (phase) {
       case 'Lobby': return { key: 'start', label: 'Start matchmaking', detail: `${queueLabel} · ${firstRole} / ${secondRole}`, icon: Play };
-      case 'Matchmaking': return { key: 'stop', label: 'Stop matchmaking', detail: state?.queueState || 'Searching for an opponent', icon: CircleStop };
+      case 'Matchmaking': return { key: 'stop', label: 'Stop matchmaking', detail: (state?.queueState && !['invalid', 'none'].includes(state.queueState.toLowerCase())) ? state.queueState : 'Searching for an opponent', icon: CircleStop };
       case 'ReadyCheck': return { key: 'accept', label: 'Accept ready check', detail: 'The match is waiting for your confirmation.', icon: Check };
       case 'ChampSelect': return { key: 'champ-select', label: 'Open live session', detail: 'Review timers, picks, bans, and loadout controls.', icon: Swords };
       case 'EndOfGame': return { key: 'again', label: 'Play again', detail: 'Return to the lobby and keep the session moving.', icon: RotateCcw };
@@ -245,18 +253,18 @@ export default function ClientControlRoom({ onOpenQoL, onOpenLive, onOpenHistory
       <header className="control-room__header">
         <div className="control-room__title">
           <span className="control-room__mark"><Compass /></span>
-          <span><small>CURRENT CLIENT STATE</small><strong>{connected ? phaseLabel(phase) : 'Waiting for League'}</strong></span>
+          <span><small>GAME STATUS</small><strong>{connected ? phaseLabel(phase) : 'Waiting for League'}</strong></span>
         </div>
         <div className="control-room__connection">
           {connected ? <Wifi /> : <WifiOff />}
-          <span>{connected ? (stale ? 'Connection needs refresh' : 'Ready and connected') : 'League is offline'} · {performanceMode}</span>
+          <span>{connected ? (stale ? 'Connection needs refresh' : 'Connected to League') : 'League is offline'}</span>
           <button type="button" onClick={() => void refresh()} disabled={busy !== ''} aria-label="Refresh League client state"><RefreshCw className={busy === 'refresh' ? 'animate-spin' : ''} /></button>
         </div>
       </header>
 
       <div className="control-room__focus">
         <div className="control-room__next-copy">
-          <div className="control-room__eyebrow"><TimerReset /> NEXT ACTION</div>
+          <div className="control-room__eyebrow"><TimerReset /> ACTION READY</div>
           <h3>{primaryAction.label}</h3>
           <p>{primaryAction.detail}</p>
         </div>
@@ -275,7 +283,7 @@ export default function ClientControlRoom({ onOpenQoL, onOpenLive, onOpenHistory
 
       <div className="control-room__support">
         <div className="control-room__profile">
-          <div className="control-room__eyebrow"><Swords /> QUEUE PROFILE</div>
+          <div className="control-room__eyebrow"><Swords /> QUICK QUEUE SETUP</div>
           <div className="control-room__profile-row">
             <select value={queue} onChange={(event) => { setQueue(event.target.value); setRolesDirty(false); const next = presets?.presets?.[event.target.value]; if (next) { setFirstRole(next.first); setSecondRole(next.second); } }} aria-label="Queue profile">
               {availableQueues.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
@@ -292,18 +300,18 @@ export default function ClientControlRoom({ onOpenQoL, onOpenLive, onOpenHistory
         </div>
 
         <div className="control-room__metrics" aria-label="League client performance">
-          <div><span>LCU latency</span><strong className={(health?.latencyMs ?? 0) > 150 ? 'is-bad' : (health?.latencyMs ?? 0) > 50 ? 'is-warn' : 'is-good'}>{health?.connected && (health.latencyMs ?? 0) > 0 ? `${health.latencyMs}ms` : '—'}</strong></div>
-          <div><span>League CPU</span><strong>{health?.connected && health.cpuPercent > 0 ? `${health.cpuPercent.toFixed(1)}%` : '—'}</strong></div>
-          <div><span>League RAM</span><strong>{health?.connected && health.memoryMB > 0 ? `${health.memoryMB}MB` : '—'}</strong></div>
+          <div><span>Client Ping</span><strong className={(health?.latencyMs ?? 0) > 150 ? 'is-bad' : (health?.latencyMs ?? 0) > 50 ? 'is-warn' : 'is-good'}>{health?.connected && (health.latencyMs ?? 0) > 0 ? `${health.latencyMs}ms` : '—'}</strong></div>
+          <div><span>Client CPU</span><strong>{health?.connected && health.cpuPercent > 0 ? `${health.cpuPercent.toFixed(1)}%` : '—'}</strong></div>
+          <div><span>Client RAM</span><strong>{health?.connected && health.memoryMB > 0 ? `${health.memoryMB}MB` : '—'}</strong></div>
           <div><span>Uptime</span><strong>{health?.connected && health.uptime > 0 ? `${Math.floor(health.uptime / 3600)}h ${Math.floor((health.uptime % 3600) / 60)}m` : '—'}</strong></div>
         </div>
       </div>
 
       {phase === 'EndOfGame' && <div className="control-room__postgame">
-        <div><span className="control-room__eyebrow"><Gift /> POST-GAME WRAP-UP</span><strong>Close the loop before the next queue.</strong><small>Claim rewards and open the honor workspace while the result is still available.</small></div>
+        <div><span className="control-room__eyebrow"><Gift /> POST-GAME REWARDS</span><strong>Claim rewards before the next queue.</strong><small>Claim rewards and open honor while the match result is available.</small></div>
         <div className="control-room__postgame-actions">
           <button type="button" onClick={() => void run('rewards', 'Event rewards checked.', lcuClaimEventRewards)} disabled={busy !== ''}><Gift />{busy === 'rewards' ? 'Checking' : 'Claim rewards'}</button>
-          <button type="button" onClick={onOpenQoL}><Swords /> {remoteClient ? 'Live session' : 'Honor & details'} <ArrowRight /></button>
+          <button type="button" onClick={onOpenQoL}><Swords /> {remoteClient ? 'Live session' : 'Honor teammates'} <ArrowRight /></button>
         </div>
       </div>}
 
@@ -311,13 +319,13 @@ export default function ClientControlRoom({ onOpenQoL, onOpenLive, onOpenHistory
         <summary><span><Activity /> Session details</span><small>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Waiting for client state'}</small><ArrowRight /></summary>
         <div className="control-room__footer">
           <div className="control-room__events">
-            <div className="control-room__eyebrow"><Clock3 /> SESSION TIMELINE</div>
-            {events.length === 0 ? <p className="control-room__empty">League activity will appear here as the client moves through the play loop.</p> : <div className="control-room__event-list">{events.slice(0, 4).map((event) => <div className="control-room__event" key={event.id}><span className={`control-room__event-dot is-${event.tone}`} /><span><strong>{event.title}</strong><small>{event.detail}</small></span><time>{event.time}</time></div>)}</div>}
+            <div className="control-room__eyebrow"><Clock3 /> MATCH ACTIVITY</div>
+            {events.length === 0 ? <p className="control-room__empty">League activity will appear here as you play matches.</p> : <div className="control-room__event-list">{events.slice(0, 4).map((event) => <div className="control-room__event" key={event.id}><span className={`control-room__event-dot is-${event.tone}`} /><span><strong>{event.title}</strong><small>{event.detail}</small></span><time>{event.time}</time></div>)}</div>}
           </div>
           <div className="control-room__shortcuts">
-            <div className="control-room__eyebrow"><Activity /> RELATED WORKSPACES</div>
-            <button type="button" onClick={onOpenQoL}><Swords /> {remoteClient ? 'Champion select' : 'Champion select & QoL'} <ArrowRight /></button>
-            <button type="button" onClick={onOpenHistory}><Activity /> Match history & analysis <ArrowRight /></button>
+            <div className="control-room__eyebrow"><Activity /> QUICK SHORTCUTS</div>
+            <button type="button" onClick={onOpenQoL}><Swords /> {remoteClient ? 'Champion select' : 'Champion Select & Automations'} <ArrowRight /></button>
+            <button type="button" onClick={onOpenHistory}><Activity /> Match History & Stats <ArrowRight /></button>
           </div>
         </div>
       </details>

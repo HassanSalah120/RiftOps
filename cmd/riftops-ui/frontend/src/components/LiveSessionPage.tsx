@@ -565,7 +565,7 @@ export default function LiveSessionPage({
               {unavailable ? 'League offline' : stale ? 'Recovering...' : 'LCU Live'}
             </StatusBadge>
             {isActiveLivePhase(phase) && (
-              <span className="qol-rules-pill">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-extrabold text-amber-200 bg-primary/10 border border-primary/30">
                 <Clock3 className="w-3.5 h-3.5 text-amber-300" />
                 <span>{formatElapsed(elapsed)} in phase</span>
               </span>
@@ -678,15 +678,15 @@ export default function LiveSessionPage({
         {phase === 'IDLE' && (
           <section className="live-idle-cockpit grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Launchpad Card */}
-            <div className="qol-card glass-card">
-              <div className="qol-card__heading">
-                <div className="qol-card__icon qol-card__icon--gold">
+            <div className="glass-card flex flex-col gap-3 p-4 md:p-5 rounded-2xl">
+              <div className="flex items-start gap-3 border-b border-white/[0.06] pb-3">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-primary/10 border border-primary/25 text-primary">
                   <Gamepad2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <small>PRE-FLIGHT LAUNCHPAD</small>
-                  <h3>{unavailable ? 'Connect League to follow match' : 'Standby for Match'}</h3>
-                  <p>
+                  <small className="text-[9px] font-black tracking-widest text-text-muted uppercase block">PRE-FLIGHT LAUNCHPAD</small>
+                  <h3 className="text-base font-bold text-white leading-tight">{unavailable ? 'Connect League to follow match' : 'Standby for Match'}</h3>
+                  <p className="text-[11px] text-text-muted mt-0.5">
                     {unavailable
                       ? 'Launch the League Client and sign in. RiftOps will bind to the session automatically.'
                       : customSession
@@ -696,7 +696,7 @@ export default function LiveSessionPage({
                 </div>
               </div>
 
-              <div className="qol-card__body space-y-3 pt-2">
+              <div className="space-y-3 pt-1">
                 <div className="flex flex-wrap gap-2.5">
                   <ActionButton
                     busy={busy === 'launch'}
@@ -739,19 +739,19 @@ export default function LiveSessionPage({
             </div>
 
             {/* Connection Diagnostics Card */}
-            <div className="qol-card glass-card">
-              <div className="qol-card__heading">
-                <div className="qol-card__icon qol-card__icon--cyan">
+            <div className="glass-card flex flex-col gap-3 p-4 md:p-5 rounded-2xl">
+              <div className="flex items-start gap-3 border-b border-white/[0.06] pb-3">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-cyan-500/10 border border-cyan-500/25 text-cyan-400">
                   <ShieldCheck className="w-4 h-4" />
                 </div>
                 <div>
-                  <small>LCU TELEMETRY STATUS</small>
-                  <h3>Connection Health</h3>
-                  <p>Read-only listener status and response latency.</p>
+                  <small className="text-[9px] font-black tracking-widest text-text-muted uppercase block">LCU TELEMETRY STATUS</small>
+                  <h3 className="text-base font-bold text-white leading-tight">Connection Health</h3>
+                  <p className="text-[11px] text-text-muted mt-0.5">Read-only listener status and response latency.</p>
                 </div>
               </div>
 
-              <div className="qol-card__body pt-2">
+              <div className="pt-1">
                 <div className="settings-specs-box">
                   <div className="settings-specs-item">
                     <span className="settings-specs-item__label">SOCKET</span>

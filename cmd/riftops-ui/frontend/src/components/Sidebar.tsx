@@ -8,16 +8,16 @@ import { useLCUConnection } from './lcuConnectionContext';
 import { useLocale } from '../localeContext';
 
 const NAV = [
-  { key: 'dashboard' as Tab, icon: Radar, label: 'Command Center', mobileLabel: 'Home', hint: 'Readiness and launch', group: 'operate' },
-  { key: 'play' as Tab, icon: Swords, label: 'Play Flow', mobileLabel: 'Play', hint: 'Prepare matchmaking', group: 'operate' },
-  { key: 'live' as Tab, icon: Activity, label: 'Live Session', mobileLabel: 'Live', hint: 'Follow the current game', group: 'operate' },
-  { key: 'social' as Tab, icon: Users, label: 'Social Center', mobileLabel: 'Social', hint: 'Friends and invitations', group: 'operate' },
-  { key: 'history' as Tab, icon: History, label: 'Match History', mobileLabel: 'History', hint: 'Review performance', group: 'review' },
-  { key: 'skins' as Tab, icon: Sparkles, label: 'Collection', mobileLabel: 'Skins', hint: 'Skins and profile studio', group: 'review' },
-  { key: 'loot' as Tab, icon: Gem, label: 'Loot Workshop', mobileLabel: 'Loot', hint: 'Inventory and crafting', group: 'review' },
-  { key: 'qol' as Tab, icon: Wand2, label: 'Quality of Life', mobileLabel: 'Tools', hint: 'Client utilities', group: 'system' },
-  { key: 'remote' as Tab, icon: RadioTower, label: 'Remote Access', mobileLabel: 'Phone', hint: 'Pair and manage phones', group: 'system' },
-  { key: 'settings' as Tab, icon: Settings, label: 'Settings', mobileLabel: 'Settings', hint: 'Application preferences', group: 'system' },
+  { key: 'dashboard' as Tab, icon: Radar, label: 'Home', mobileLabel: 'Home', hint: 'Summoner & quick actions', group: 'game' },
+  { key: 'play' as Tab, icon: Swords, label: 'Play & Draft', mobileLabel: 'Play', hint: 'Queue & auto pick/ban', group: 'game' },
+  { key: 'live' as Tab, icon: Activity, label: 'Live Game', mobileLabel: 'Live', hint: 'Matchup & build helper', group: 'game' },
+  { key: 'social' as Tab, icon: Users, label: 'Friends', mobileLabel: 'Friends', hint: 'Friends & invites', group: 'game' },
+  { key: 'history' as Tab, icon: History, label: 'Match History', mobileLabel: 'History', hint: 'Recent games & stats', group: 'game' },
+  { key: 'skins' as Tab, icon: Sparkles, label: 'Skins & Splash', mobileLabel: 'Skins', hint: 'Catalog & profile studio', group: 'collection' },
+  { key: 'loot' as Tab, icon: Gem, label: 'Hextech Loot', mobileLabel: 'Loot', hint: 'Disenchant & craft', group: 'collection' },
+  { key: 'qol' as Tab, icon: Wand2, label: 'Automations', mobileLabel: 'Tools', hint: 'Client tools & helpers', group: 'tools' },
+  { key: 'remote' as Tab, icon: RadioTower, label: 'Phone Companion', mobileLabel: 'Phone', hint: 'Pair your smartphone', group: 'tools' },
+  { key: 'settings' as Tab, icon: Settings, label: 'Settings', mobileLabel: 'Settings', hint: 'Options & developer tools', group: 'tools' },
 ];
 
 export default function Sidebar({
@@ -89,22 +89,22 @@ export default function Sidebar({
         {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}<span>{collapsed ? 'Expand' : 'Collapse'}</span>
       </button>
 
-      <div className="app-sidebar__section-label">Operate</div>
+      <div className="app-sidebar__section-label">Game</div>
       <button type="button" className="app-sidebar__command" onClick={onOpenCommandPalette} aria-label="Search RiftOps commands">
         <span className="app-sidebar__command-icon"><Command /></span>
         <span>Search commands</span>
         <kbd>⌘K</kbd>
       </button>
       <div className="app-sidebar__nav">
-        {visibleNav.filter((item) => item.group === 'operate').map(renderNavItem)}
+        {visibleNav.filter((item) => item.group === 'game').map(renderNavItem)}
       </div>
-      <div className="app-sidebar__group-divider"><span>Review</span></div>
+      <div className="app-sidebar__group-divider"><span>Collection</span></div>
       <div className="app-sidebar__nav">
-        {visibleNav.filter((item) => item.group === 'review').map(renderNavItem)}
+        {visibleNav.filter((item) => item.group === 'collection').map(renderNavItem)}
       </div>
-      <div className="app-sidebar__group-divider"><span>System</span></div>
+      <div className="app-sidebar__group-divider"><span>Tools</span></div>
       <div className="app-sidebar__nav">
-        {visibleNav.filter((item) => item.group === 'system').map(renderNavItem)}
+        {visibleNav.filter((item) => item.group === 'tools').map(renderNavItem)}
       </div>
 
       <div className="app-sidebar__health-wrap">
@@ -114,8 +114,8 @@ export default function Sidebar({
       <div className="app-sidebar__status">
         <span className={`app-sidebar__status-dot ${isLive ? 'is-live' : ''}`} />
         <span>
-          <small>RiftOps engine</small>
-          <strong>{isLive ? 'Active' : 'Standing by'}</strong>
+          <small>League Client</small>
+          <strong>{isLive ? 'In Match' : (qol?.phase ? 'Connected' : 'Standing by')}</strong>
         </span>
       </div>
     </nav>

@@ -6,9 +6,9 @@ type Messages = Record<string, string>;
 
 const messages: Record<Locale, Messages> = {
   en: {
-    'nav.command': 'Command Center', 'nav.play': 'Play Flow', 'nav.live': 'Live Session', 'nav.social': 'Social Center',
-    'nav.history': 'Match History', 'nav.skins': 'Collection', 'nav.loot': 'Loot Workshop', 'nav.qol': 'Quality of Life',
-    'nav.remote': 'Remote Access', 'nav.settings': 'Settings', 'nav.socialHint': 'Friends and invitations',
+    'nav.command': 'Home', 'nav.play': 'Play & Draft', 'nav.live': 'Live Game', 'nav.social': 'Friends',
+    'nav.history': 'Match History', 'nav.skins': 'Skins & Splash', 'nav.loot': 'Hextech Loot', 'nav.qol': 'Automations',
+    'nav.remote': 'Phone Companion', 'nav.settings': 'Settings', 'nav.socialHint': 'Friends and invitations',
     'social.title': 'Social Center', 'social.description': 'Friends, requests, and lobby invitations from the local League Client.',
     'social.search': 'Search friends or Riot ID…', 'social.all': 'All', 'social.online': 'Online', 'social.favorites': 'Favorites',
     'social.invite': 'Invite selected', 'social.remove': 'Remove selected', 'social.requests': 'Friend requests',
@@ -16,9 +16,9 @@ const messages: Record<Locale, Messages> = {
     'settings.language': 'App language', 'settings.languageHelp': 'Choose English or Arabic. The layout mirrors automatically for Arabic.',
   },
   ar: {
-    'nav.command': 'مركز الأوامر', 'nav.play': 'تدفق اللعب', 'nav.live': 'الجلسة المباشرة', 'nav.social': 'مركز الأصدقاء',
-    'nav.history': 'سجل المباريات', 'nav.skins': 'المجموعة', 'nav.loot': 'ورشة الغنائم', 'nav.qol': 'أدوات العميل',
-    'nav.remote': 'الوصول عن بُعد', 'nav.settings': 'الإعدادات', 'nav.socialHint': 'الأصدقاء والدعوات',
+    'nav.command': 'الرئيسية', 'nav.play': 'الردهة والاختيار', 'nav.live': 'اللعبة المباشرة', 'nav.social': 'الأصدقاء',
+    'nav.history': 'سجل المباريات', 'nav.skins': 'المظاهر والملف', 'nav.loot': 'غنائم هيكستيك', 'nav.qol': 'الأتمتة والأدوات',
+    'nav.remote': 'مرافق الهاتف', 'nav.settings': 'الإعدادات', 'nav.socialHint': 'الأصدقاء والدعوات',
     'social.title': 'مركز الأصدقاء', 'social.description': 'الأصدقاء والطلبات ودعوات الردهة من عميل League المحلي.',
     'social.search': 'ابحث عن صديق أو Riot ID…', 'social.all': 'الكل', 'social.online': 'متصل', 'social.favorites': 'المفضلة',
     'social.invite': 'دعوة المحددين', 'social.remove': 'إزالة المحددين', 'social.requests': 'طلبات الصداقة',

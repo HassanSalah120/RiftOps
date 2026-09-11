@@ -448,15 +448,16 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 				if err := e.vault.ClearActiveSession(); err != nil {
 					return e.fail(game, status, fmt.Errorf("clear previous Riot login before fresh sign-in: %w", err))
 				}
-			}
-			if err := e.vault.Restore(profile.ID); err != nil {
-				switch {
-				case errors.Is(err, sessionvault.ErrNotFound):
-				case errors.Is(err, sessionvault.ErrExpired):
-					_ = e.vault.Delete(profile.ID)
-					slog.Info("saved Riot login expired; Riot Client will request sign-in", "profile", profile.Name)
-				default:
-					return e.fail(game, status, fmt.Errorf("restore saved Riot login: %w", err))
+			} else {
+				if err := e.vault.Restore(profile.ID); err != nil {
+					switch {
+					case errors.Is(err, sessionvault.ErrNotFound):
+					case errors.Is(err, sessionvault.ErrExpired):
+						_ = e.vault.Delete(profile.ID)
+						slog.Info("saved Riot login expired; Riot Client will request sign-in", "profile", profile.Name)
+					default:
+						return e.fail(game, status, fmt.Errorf("restore saved Riot login: %w", err))
+					}
 				}
 			}
 		}

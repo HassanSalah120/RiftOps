@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, CircleUserRound, Loader2, Plus, RefreshCw, ShieldCheck, Trash2, Upload, Zap } from 'lucide-react';
+import { Check, CircleUserRound, Loader2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Upload, X, Zap } from 'lucide-react';
 import {
   captureSavedLogin,
   deleteLaunchProfile,
@@ -56,7 +56,14 @@ export default function LaunchProfilesPanel({
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: '', accountLabel: '', riotId: '', region: 'EUW1', leagueLocale: 'auto' });
+
+  const resetDraft = () => {
+    setDraft({ name: '', accountLabel: '', riotId: '', region: 'EUW1', leagueLocale: 'auto' });
+    setEditingId(null);
+    setAdding(false);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,13 +89,15 @@ export default function LaunchProfilesPanel({
     [activeProfileId, profiles],
   );
 
-  const runSwitch = async (profile: LaunchProfile) => {
-    setBusy(`switch:${profile.id}`);
+  const runSwitch = async (profile: LaunchProfile, forceLogin = false) => {
+    setBusy(`switch:${profile.id}${forceLogin ? ':force' : ''}`);
     try {
-      const result = await switchLaunchProfile(profile.id);
+      const result = await switchLaunchProfile(profile.id, forceLogin);
       await onRefreshSnapshot().catch(() => undefined);
       await load();
-      if (result.targetSessionAvailable) {
+      if (forceLogin) {
+        showToast('Fresh sign-in ready', `${profile.name} is launching with a clean login screen. Sign in to your account.`, 'info');
+      } else if (result.targetSessionAvailable) {
         showToast('Account switch started', `${profile.name} is launching without a Riot password prompt.`, 'success');
       } else if (result.targetSessionExpired) {
         showToast('Session expired', `${profile.name} needs one fresh Riot sign-in. Capture it afterward to save it again.`, 'info');
@@ -116,12 +125,32 @@ export default function LaunchProfilesPanel({
     }
   };
 
-  const addProfile = async () => {
+  const openProfileEditor = (profile: LaunchProfile) => {
+    setDraft({
+      name: profile.name,
+      accountLabel: profile.accountLabel || '',
+      riotId: profile.riotId || '',
+      region: profile.region || 'EUW1',
+      leagueLocale: profile.leagueLocale || 'auto',
+    });
+    setEditingId(profile.id);
+    setAdding(true);
+  };
+
+  const saveProfile = async () => {
     const name = draft.name.trim();
     if (!name) return;
+    const editingProfile = editingId ? profiles.find((profile) => profile.id === editingId) : undefined;
     setBusy('add');
     try {
-      await saveLaunchProfile({
+      await saveLaunchProfile(editingProfile ? {
+        ...editingProfile,
+        name,
+        accountLabel: draft.accountLabel.trim(),
+        riotId: draft.riotId.trim(),
+        region: draft.region,
+        leagueLocale: draft.leagueLocale,
+      } : {
         id: '',
         name,
         accountLabel: draft.accountLabel.trim(),
@@ -135,13 +164,14 @@ export default function LaunchProfilesPanel({
         patchline: 'live',
         leagueLocale: draft.leagueLocale,
       });
-      setDraft({ name: '', accountLabel: '', riotId: '', region: 'EUW1', leagueLocale: 'auto' });
-      setAdding(false);
+      resetDraft();
       await load();
       await onRefreshSnapshot().catch(() => undefined);
-      showToast('Profile added', `${name} is now selected. Sign into that Riot account, then save the current session.`, 'success');
+      showToast(editingProfile ? 'Profile updated' : 'Profile added', editingProfile
+        ? `${name} was updated without changing its saved Riot session.`
+        : `${name} is now selected. Sign into that Riot account, then save the current session.`, 'success');
     } catch (cause: any) {
-      showToast('Profile could not be added', cause?.message || 'Check the profile details and try again.', 'error');
+      showToast(editingProfile ? 'Profile could not be updated' : 'Profile could not be added', cause?.message || 'Check the profile details and try again.', 'error');
     } finally {
       setBusy('');
     }
@@ -182,6 +212,7 @@ export default function LaunchProfilesPanel({
         {profiles.map((profile, index) => {
           const active = profile.id === activeProfileId;
           const switching = busy === `switch:${profile.id}`;
+          const forceSwitching = busy === `switch:${profile.id}:force`;
           const profileDisplayName = streamerMode
             ? (active ? 'Main Profile' : `Secondary Profile ${index}`)
             : profile.name;
@@ -200,14 +231,51 @@ export default function LaunchProfilesPanel({
                     {sessionLabel(statuses[profile.id])}
                   </p>
                 </div>
-                <button type="button" className="text-text-dim hover:text-danger transition disabled:opacity-40" onClick={() => void removeProfile(profile)} disabled={busy !== '' || profiles.length <= 1} aria-label={`Delete ${profile.name}`} title="Delete profile">
-                  <Trash2 className="h-3.5 w-3.5" />
+                <div className="flex items-center gap-1">
+                  <button type="button" className="text-text-dim hover:text-primary transition disabled:opacity-40" onClick={() => openProfileEditor(profile)} disabled={busy !== ''} aria-label={`Edit ${profile.name}`} title="Edit profile">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button type="button" className="text-text-dim hover:text-danger transition disabled:opacity-40" onClick={() => void removeProfile(profile)} disabled={busy !== '' || profiles.length <= 1} aria-label={`Delete ${profile.name}`} title="Delete profile">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[10px] font-bold transition ${
+                    active
+                      ? 'bg-primary text-black hover:bg-primary-hover'
+                      : 'border border-primary/25 bg-primary/10 text-primary hover:bg-primary/20'
+                  }`}
+                  onClick={() => void runSwitch(profile, false)}
+                  disabled={busy !== ''}
+                >
+                  {switching ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : active ? (
+                    <Zap className="h-3.5 w-3.5" />
+                  ) : (
+                    <Upload className="h-3.5 w-3.5 rotate-90" />
+                  )}
+                  {switching
+                    ? 'Switching…'
+                    : active
+                    ? 'Launch Account'
+                    : statuses[profile.id]?.saved
+                    ? 'Switch & Auto-Login'
+                    : 'Switch & Launch'}
+                </button>
+                <button
+                  type="button"
+                  className="px-2.5 py-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-[10px] font-semibold text-text-muted hover:text-white transition whitespace-nowrap"
+                  onClick={() => void runSwitch(profile, true)}
+                  disabled={busy !== ''}
+                  title="Clear active session tokens and launch Riot with a clean sign-in prompt for this account"
+                >
+                  {forceSwitching ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Re-login'}
                 </button>
               </div>
-              <button type="button" className={`mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[10px] font-bold transition ${active ? 'bg-primary text-base hover:bg-primary-hover' : 'border border-primary/25 bg-primary/10 text-primary hover:bg-primary/20'}`} onClick={() => void runSwitch(profile)} disabled={busy !== ''}>
-                {switching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : active ? <Zap className="h-3.5 w-3.5" /> : <Upload className="h-3.5 w-3.5 rotate-90" />}
-                {switching ? 'Switching…' : active ? 'Launch this account' : 'Switch & launch'}
-              </button>
             </article>
           );
         })}
@@ -225,6 +293,10 @@ export default function LaunchProfilesPanel({
 
       {adding ? (
         <div className="rounded-xl border border-primary/25 bg-primary/[0.05] p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <strong className="text-xs text-white">{editingId ? 'Edit profile details' : 'Add Riot account profile'}</strong>
+            <button type="button" className="text-text-dim transition hover:text-white disabled:opacity-50" onClick={resetDraft} disabled={busy !== ''} aria-label="Close profile editor" title="Close"><X className="h-4 w-4" /></button>
+          </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <input className="w-full text-xs" placeholder="Profile name (EUW, EUNE…)" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} autoFocus />
             <select className="w-full text-xs" value={draft.region} onChange={(event) => setDraft((current) => ({ ...current, region: event.target.value }))}>
@@ -235,8 +307,8 @@ export default function LaunchProfilesPanel({
             <select className="w-full text-xs" value={draft.leagueLocale} onChange={(event) => setDraft((current) => ({ ...current, leagueLocale: event.target.value }))} aria-label="League language"><option value="auto">League language · System</option>{LOCALES.filter((locale) => locale !== 'auto').map((locale) => <option key={locale} value={locale}>{locale}</option>)}</select>
           </div>
           <div className="flex gap-2">
-            <button type="button" className="btn-primary inline-flex items-center gap-1.5 px-3 py-2 text-[10px]" onClick={() => void addProfile()} disabled={busy !== '' || !draft.name.trim()}>{busy === 'add' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}Add profile</button>
-            <button type="button" className="btn-secondary px-3 py-2 text-[10px]" onClick={() => setAdding(false)} disabled={busy !== ''}>Cancel</button>
+            <button type="button" className="btn-primary inline-flex items-center gap-1.5 px-3 py-2 text-[10px]" onClick={() => void saveProfile()} disabled={busy !== '' || !draft.name.trim()}>{busy === 'add' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : editingId ? <Pencil className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}{editingId ? 'Save changes' : 'Add profile'}</button>
+            <button type="button" className="btn-secondary px-3 py-2 text-[10px]" onClick={resetDraft} disabled={busy !== ''}>Cancel</button>
           </div>
         </div>
       ) : (

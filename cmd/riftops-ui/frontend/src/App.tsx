@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChevronDown, Play, Square, Shield, Server, RotateCcw, Wrench } from 'lucide-react';
+import { Play, Square, Shield, Server, RotateCcw, Sparkles, Zap } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
 import GameSelector from './components/GameSelector';
 import StatusSelector from './components/StatusSelector';
-import LogViewer from './components/LogViewer';
 import Toast from './components/Toast';
 import Sidebar from './components/Sidebar';
 import MatchHistory from './components/MatchHistory';
@@ -114,6 +113,55 @@ export default function App() {
   const { connected: lcuConnected, performanceMode, setPerformanceMode, pageVisible } = useLCUConnection();
   const previousLcuConnection = useRef<boolean | null>(null);
   const toastTimer = useRef<number | null>(null);
+
+  const [autoAcceptActive, setAutoAcceptActive] = useState(() => {
+    try {
+      const stored = localStorage.getItem('riftops.playFlow');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (typeof parsed.autoAccept === 'boolean') return parsed.autoAccept;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  });
+
+  const [autoRunesActive, setAutoRunesActive] = useState(() => {
+    try {
+      const stored = localStorage.getItem('riftops.playFlow');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (typeof parsed.autoPick === 'boolean') return parsed.autoPick;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleAutoAccept = (enabled: boolean) => {
+    setAutoAcceptActive(enabled);
+    try {
+      const stored = localStorage.getItem('riftops.playFlow');
+      const parsed = stored ? JSON.parse(stored) : {};
+      parsed.autoAccept = enabled;
+      localStorage.setItem('riftops.playFlow', JSON.stringify(parsed));
+    } catch { /* optional */ }
+    api.saveQoLPreferences({ autoAccept: enabled }).catch(() => {});
+    showToast('Auto-Accept', enabled ? 'Auto-accept enabled for match ready checks.' : 'Auto-accept disabled.', 'info');
+  };
+
+  const toggleAutoRunes = (enabled: boolean) => {
+    setAutoRunesActive(enabled);
+    try {
+      const stored = localStorage.getItem('riftops.playFlow');
+      const parsed = stored ? JSON.parse(stored) : {};
+      parsed.autoPick = enabled;
+      localStorage.setItem('riftops.playFlow', JSON.stringify(parsed));
+    } catch { /* optional */ }
+    showToast('Auto-Runes', enabled ? 'Recommended runes will auto-equip upon champion lock.' : 'Auto-runes disabled.', 'info');
+  };
 
   useEffect(() => {
     try { localStorage.setItem('riftops.activeTab', activeTab); } catch { /* Preferences are optional. */ }
@@ -526,7 +574,12 @@ export default function App() {
     <div className={`riftops-window flex flex-col h-screen bg-base text-text overflow-hidden ${compactMode ? 'is-compact' : ''}`} data-live={isLive ? 'true' : 'false'} data-phase={snapshot.Phase || 'idle'} data-remote={remoteClient ? 'true' : 'false'}>
       <TitleBar remoteClient={remoteClient} phase={snapshot.Phase} isLive={isLive} />
       <div className="riftops-shell flex flex-1 min-h-0 overflow-hidden">
-        <a className="ro-skip-link" href="#riftops-main">Skip to workspace</a>
+        <a
+          className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[999] focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-xs focus:font-bold focus:text-black focus:shadow-2xl focus:outline-none"
+          href="#riftops-main"
+        >
+          Skip to workspace
+        </a>
       {/* Toast Notification */}
       <Toast notification={notification} onClose={() => setNotification(null)} />
       <NotificationCenter
@@ -659,6 +712,84 @@ export default function App() {
               <div className="dashboard-page__body flex-1 overflow-y-auto px-4 py-3 space-y-4">
                 {remoteClient && <div className="phone-session-banner"><Shield /><span><strong>Phone session connected</strong><small>Live League controls are routed through your paired RiftOps desktop.</small></span></div>}
 
+                {/* 3 Prominent Gamer Automation Cards */}
+                {!remoteClient && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Card 1: Auto Accept */}
+                    <div className="glass-card p-4 rounded-xl flex items-center justify-between border border-white/[0.08] hover:border-[#c8aa6e]/30 transition">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${autoAcceptActive ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-white/[0.04] text-text-dim'}`}>
+                          <Zap className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                            Auto-Accept Match
+                            {autoAcceptActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                          </div>
+                          <div className="text-[11px] text-text-muted">Accept queues automatically</div>
+                        </div>
+                      </div>
+                      <label className="toggle">
+                        <input type="checkbox" checked={autoAcceptActive} onChange={(e) => toggleAutoAccept(e.target.checked)} />
+                        <span className="slider" />
+                      </label>
+                    </div>
+
+                    {/* Card 2: Stealth Mode */}
+                    <div className="glass-card p-4 rounded-xl flex items-center justify-between border border-white/[0.08] hover:border-[#c8aa6e]/30 transition">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${snapshot.Enabled && snapshot.Status === 'offline' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40' : 'bg-white/[0.04] text-text-dim'}`}>
+                          <Shield className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                            Stealth Mode
+                            {snapshot.Enabled && snapshot.Status === 'offline' && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+                          </div>
+                          <div className="text-[11px] text-text-muted">Appear 100% offline to friends</div>
+                        </div>
+                      </div>
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={snapshot.Enabled && snapshot.Status === 'offline'}
+                          disabled={!presenceControlsAvailable}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              handleSetStatus('offline');
+                              if (!snapshot.Enabled) handleToggleMasking(true);
+                            } else {
+                              handleSetStatus('online');
+                              if (snapshot.Enabled) handleToggleMasking(false);
+                            }
+                          }}
+                        />
+                        <span className="slider" />
+                      </label>
+                    </div>
+
+                    {/* Card 3: Auto-Equip Runes */}
+                    <div className="glass-card p-4 rounded-xl flex items-center justify-between border border-white/[0.08] hover:border-[#c8aa6e]/30 transition">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${autoRunesActive ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-white/[0.04] text-text-dim'}`}>
+                          <Sparkles className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                            Auto-Equip Runes
+                            {autoRunesActive && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                          </div>
+                          <div className="text-[11px] text-text-muted">Import recommended rune pages</div>
+                        </div>
+                      </div>
+                      <label className="toggle">
+                        <input type="checkbox" checked={autoRunesActive} onChange={(e) => toggleAutoRunes(e.target.checked)} />
+                        <span className="slider" />
+                      </label>
+                    </div>
+                  </div>
+                )}
+
                 {/* Balanced Cockpit Grid */}
                 <div className="dashboard-page__grid">
                   {/* Primary Operations Column */}
@@ -666,7 +797,7 @@ export default function App() {
                     {/* When Live: Client Control Room is elevated to #1 */}
                     {isLive && (
                       <section className="dashboard-section dashboard-section--control">
-                        <div className="dashboard-section__kicker">LEAGUE NOW</div>
+                        <div className="dashboard-section__kicker">LEAGUE MATCH IN PROGRESS</div>
                         <ClientControlRoom remoteClient={remoteClient} onOpenQoL={() => setActiveTab(remoteClient ? 'live' : 'qol')} onOpenLive={() => setActiveTab('live')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
                       </section>
                     )}
@@ -674,7 +805,7 @@ export default function App() {
                     {/* Preflight Target Game & Profiles */}
                     {!remoteClient && (
                       <section className={`dashboard-section dashboard-section--preflight ${isLive ? 'is-running-secondary' : ''}`} aria-labelledby="dashboard-preflight-title">
-                        <div id="dashboard-preflight-title" className="dashboard-section__kicker">{isLive ? 'ACTIVE TARGET & PROFILES' : 'BEFORE YOU LAUNCH'}</div>
+                        <div id="dashboard-preflight-title" className="dashboard-section__kicker">{isLive ? 'ACTIVE TARGET & PROFILES' : 'LAUNCH PROFILES & ADVANCED'}</div>
                         <div className="dashboard-page__context-grid">
                           <section className="dashboard-section dashboard-section--target">
                             <div className="dashboard-section__heading">
@@ -695,7 +826,7 @@ export default function App() {
                     {/* When Idle: Show Control Room below preflight */}
                     {!isLive && (
                       <section className="dashboard-section dashboard-section--control">
-                        <div className="dashboard-section__kicker">LEAGUE STATUS</div>
+                        <div className="dashboard-section__kicker">LEAGUE CLIENT & QUEUE</div>
                         <ClientControlRoom remoteClient={remoteClient} onOpenQoL={() => setActiveTab(remoteClient ? 'live' : 'qol')} onOpenLive={() => setActiveTab('live')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
                       </section>
                     )}
@@ -703,7 +834,7 @@ export default function App() {
                     {/* Quick Shortcuts */}
                     {!remoteClient && (
                       <section className="dashboard-section dashboard-section--quick">
-                        <div className="dashboard-section__kicker">SHORTCUTS & AUTOMATIONS</div>
+                        <div className="dashboard-section__kicker">QUICK AUTOMATIONS & SHORTCUTS</div>
                         <QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} />
                       </section>
                     )}
@@ -716,7 +847,7 @@ export default function App() {
                       <section className="dashboard-section dashboard-section--presence glass-card p-3.5 space-y-3">
                         <div className="dashboard-section__heading">
                           <span className="dashboard-section__icon"><Shield /></span>
-                          <span><small>PRESENCE SHIELD</small><strong>Control what friends see</strong></span>
+                          <span><small>STEALTH MODE</small><strong>Appear offline to friends</strong></span>
                           <label className="toggle">
                             <input type="checkbox" checked={snapshot.Enabled} disabled={!presenceControlsAvailable} onChange={(e) => handleToggleMasking(e.target.checked)} />
                             <span className="slider" />
@@ -730,7 +861,7 @@ export default function App() {
                     {/* Friends Panel in Companion Column */}
                     {!remoteClient && (
                       <section className="dashboard-section dashboard-section--friends" aria-label="League friends">
-                        <div className="dashboard-section__kicker">SOCIAL</div>
+                        <div className="dashboard-section__kicker">FRIENDS & SOCIAL</div>
                         <FriendsPanel id="dashboard-friends" connected={lcuConnected} />
                       </section>
                     )}
@@ -746,18 +877,6 @@ export default function App() {
                     )}
                   </div>
                 </div>
-
-                {!remoteClient && (
-                  <details className="dashboard-tools">
-                    <summary><span><Wrench /><span><strong>System diagnostics</strong><small>Runtime logs and debug console</small></span></span><ChevronDown /></summary>
-                    <div className="dashboard-tools__content">
-                      <section className="dashboard-section dashboard-section--logs">
-                        <div className="dashboard-section__kicker">DIAGNOSTICS</div>
-                        <LogViewer logs={logs} onClear={() => setLogs([])} />
-                      </section>
-                    </div>
-                  </details>
-                )}
               </div>
             </div>
           )}
@@ -862,6 +981,8 @@ export default function App() {
                 showToast={showToast}
                 lcuConnected={lcuConnected}
                 onUpdateDetected={setUpdateAvailable}
+                logs={logs}
+                onClearLogs={() => setLogs([])}
               />
             </div>
           )}
