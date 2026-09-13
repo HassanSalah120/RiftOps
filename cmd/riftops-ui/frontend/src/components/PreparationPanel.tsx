@@ -111,11 +111,12 @@ export default function PreparationPanel({
     ])
       .then(([rawSpells, nextSnapshots, nextBalance]) => {
         const values = Array.isArray(rawSpells) ? rawSpells : Object.values(rawSpells || {});
-        setSpells(
+        setSpells(Array.from(new Map(
           values
             .map((spell: any) => ({ id: Number(spell.id), name: String(spell.name || `Spell ${spell.id}`) }))
-            .filter((spell: Spell) => spell.id > 0),
-        );
+            .filter((spell: Spell) => Number.isSafeInteger(spell.id) && spell.id > 0 && spell.id !== 0xffffffff)
+            .map((spell) => [spell.id, spell]),
+        ).values()));
         setSnapshots(nextSnapshots as ItemSetSnapshot[]);
         setBalance(nextBalance as BalanceCatalog | null);
       })

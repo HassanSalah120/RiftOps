@@ -1126,11 +1126,20 @@ export interface LCURuneCatalog {
   styles: { styles: LCURuneStyle[] };
 }
 
+function normalizeRunePages(value: unknown): LCURunePage[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Map(
+    (value as LCURunePage[])
+      .filter((page) => Number.isSafeInteger(page.id) && page.id > 0 && page.id !== 0xffffffff)
+      .map((page) => [page.id, page]),
+  ).values());
+}
+
 export function fetchLCURunePages(): Promise<LCURunePage[]> {
   return fetch('/api/lcu/champ-select/runes').then(async (r) => {
     if (!r.ok) throw new Error((await r.text()) || 'Rune pages are unavailable');
     const value = await r.json();
-    return Array.isArray(value) ? value as LCURunePage[] : [];
+    return normalizeRunePages(value);
   });
 }
 

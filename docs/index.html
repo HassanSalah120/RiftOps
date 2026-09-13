@@ -38,7 +38,7 @@
       <a href="#" class="brand">
         <img src="assets/branding/riftops-logo.png" alt="RiftOps Logo" class="brand-crest" width="36" height="36" />
         <span class="brand-title">RiftOps</span>
-        <span class="brand-version">v2.9.1</span>
+        <span class="brand-version">v2.9.2</span>
       </a>
 
       <nav class="nav-links">
@@ -56,7 +56,7 @@
           </svg>
           <span>Star on GitHub</span>
         </a>
-        <a href="#download" class="btn-gold" id="header-download-btn">Download v2.9.1</a>
+        <a href="#download" class="btn-gold" id="header-download-btn">Download v2.9.2</a>
       </div>
     </div>
   </header>
@@ -675,7 +675,7 @@
             <div class="step-index">2</div>
             <div>
               <strong>Start Local Listener</strong>
-              <p>Click Turn On to start the secure local network port (24080).</p>
+              <p>Click Turn On to start the secure local network phone port (24081–24090).</p>
             </div>
           </div>
           <div class="step-box">
@@ -714,7 +714,7 @@
             <div class="d-icon">💻</div>
             <div class="d-copy">
               <strong>RiftOps Desktop Hub</strong>
-              <span>Port 24080 • Single-Use Token</span>
+              <span>HTTPS • Ports 24081–24090 • Single-Use Token</span>
             </div>
           </div>
 
@@ -741,7 +741,7 @@
       <div class="section-header text-center">
         <span class="kicker">INSTALL NOW</span>
         <h2 class="section-title">Download RiftOps for Windows & macOS</h2>
-        <p class="section-desc">100% Free, open source, and ban-safe. Clean user-mode setup installer or standalone portable binary.</p>
+        <p class="section-desc">100% Free, open source, and ban-safe. Clean user-mode setup installer for Windows and universal app archive for macOS.</p>
       </div>
 
       <div class="download-grid">
@@ -752,15 +752,11 @@
           <h3>Windows Desktop</h3>
           <p class="dl-os-desc">For Windows 10 and Windows 11 (64-bit)</p>
           <div class="dl-tags">
-            <span class="dl-version-tag">v2.9.1</span>
+            <span class="dl-version-tag">v2.9.2</span>
             <span>Setup Installer</span>
-            <span>Portable .exe</span>
           </div>
           <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn-gold btn-block" id="dl-btn-win-setup">
             Download Setup Installer (.exe)
-          </a>
-          <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn-outline-gold btn-block" id="dl-btn-win-portable" style="margin-top: 10px; font-size: 0.85rem; padding: 10px 16px;">
-            Download Standalone Portable (.exe)
           </a>
           <p class="dl-note">Setup installer configures Start Menu and Desktop shortcuts with a one-click uninstaller.</p>
         </div>
@@ -771,7 +767,7 @@
           <h3>macOS Desktop</h3>
           <p class="dl-os-desc">For macOS 12 Monterey and newer</p>
           <div class="dl-tags">
-            <span class="dl-version-tag">v2.9.1</span>
+            <span class="dl-version-tag">v2.9.2</span>
             <span>WebKit Native</span>
             <span>Universal (.zip)</span>
           </div>
@@ -817,7 +813,7 @@
         <details class="faq-item">
           <summary>How does the Phone Companion connect to my PC?</summary>
           <div class="faq-body">
-            <p>The companion communicates directly over your local home Wi-Fi network (P2P LAN). No traffic ever goes to the cloud or an external server. The QR code contains a cryptographically random single-use token that expires in 5 minutes for airtight local security.</p>
+            <p>The companion communicates directly over your local home Wi-Fi network (P2P LAN) using HTTPS. No traffic ever goes to the cloud or an external server. The QR code contains a cryptographically random single-use token that expires in 5 minutes; your phone may show a first-visit warning for RiftOps's local certificate.</p>
           </div>
         </details>
       </div>
@@ -888,8 +884,7 @@
         }
 
         const assets = release.assets || [];
-        const winSetup = assets.find(function (a) { return a.name.endsWith('-setup.exe') || a.name.includes('setup'); });
-        const winPortable = assets.find(function (a) { return a.name.endsWith('.exe') && !a.name.endsWith('-setup.exe') && !a.name.includes('setup'); });
+        const winSetup = assets.find(function (a) { const name = a.name.toLowerCase(); return name.endsWith('-setup.exe') || name.includes('setup'); });
         const macUniversal = assets.find(function (a) { return a.name.endsWith('.zip') || a.name.includes('darwin') || a.name.includes('mac'); });
 
         function formatSize(bytes) {
@@ -901,12 +896,6 @@
         if (winSetupBtn && winSetup) {
           winSetupBtn.href = winSetup.browser_download_url;
           winSetupBtn.textContent = 'Download Setup Installer (.exe)' + formatSize(winSetup.size);
-        }
-
-        const winPortableBtn = document.getElementById('dl-btn-win-portable');
-        if (winPortableBtn && winPortable) {
-          winPortableBtn.href = winPortable.browser_download_url;
-          winPortableBtn.textContent = 'Download Standalone Portable (.exe)' + formatSize(winPortable.size);
         }
 
         const macBtn = document.getElementById('dl-btn-macos');

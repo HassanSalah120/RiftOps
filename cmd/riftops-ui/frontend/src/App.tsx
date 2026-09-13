@@ -620,7 +620,7 @@ export default function App() {
         <main id="riftops-main" className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col relative z-10" tabIndex={-1}>
           {/* QoL Panel */}
           {activeTab === 'qol' && (
-            <div className="workspace-stage workspace-stage--qol flex-1 min-h-0 overflow-hidden animate-fadeIn">
+            <div className="workspace-stage workspace-stage--qol flex flex-1 min-h-0 flex-col overflow-hidden animate-fadeIn">
               <QoLPanel onOpenLive={() => setActiveTab('live')} />
             </div>
           )}

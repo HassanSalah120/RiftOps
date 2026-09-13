@@ -14,7 +14,7 @@ export default function RemoteAccessPage({ showToast }: { showToast: (message: s
             <li><span>02</span><Smartphone /><div><strong>Scan once</strong><small>The QR expires and becomes invalid after one successful pairing.</small></div></li>
             <li><span>03</span><ShieldCheck /><div><strong>Manage the session here</strong><small>Connected devices and revoke controls remain together.</small></div></li>
           </ol>
-          <div className="remote-page__boundary"><ShieldCheck /><span><strong>Private network only</strong><small>LAN traffic uses HTTP. Never expose the RiftOps phone port to the internet or a public Wi-Fi network.</small></span></div>
+          <div className="remote-page__boundary"><ShieldCheck /><span><strong>Private network only</strong><small>LAN traffic uses HTTPS with a local certificate. Accept a first-visit warning only on your trusted network; never expose the phone port to the internet or public Wi-Fi.</small></span></div>
         </WorkspaceSection>
         <RemoteAccessCard showToast={showToast} />
       </div>

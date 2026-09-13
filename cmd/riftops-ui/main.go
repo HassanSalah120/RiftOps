@@ -177,12 +177,11 @@ func originCheck(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// isSameOrigin reports whether an Origin header matches the host that served
-// the request. The LAN listener is intentionally HTTP-only until RiftOps can
-// provision a certificate trusted by the phone.
+// isSameOrigin reports whether an Origin header matches the HTTPS LAN host that
+// served the request. Remote mutations must never fall back to plaintext HTTP.
 func isSameOrigin(origin, host string) bool {
 	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
 		return false
 	}
 	return strings.EqualFold(parsed.Host, host)
@@ -190,7 +189,7 @@ func isSameOrigin(origin, host string) bool {
 
 func isLocalOrigin(origin string) bool {
 	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" {
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
 		return false
 	}
 	switch strings.ToLower(parsed.Hostname()) {

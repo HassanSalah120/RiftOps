@@ -838,14 +838,19 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const selectedRoleQuest = roleQuestPlan(detectedRole || prefs.primaryRole);
   const selectedRoleQuestSpells = recommendedRoleQuestSpells(detectedRole || prefs.primaryRole);
   const champSelectLive = connected && phase === 'ChampSelect';
-  const editableRunePages = runePages.filter((page) => page.isEditable !== false);
-  const currentRunePage = runePages.find((page) => page.current || page.isActive)
-    || runePages.find((page) => page.id === prefs.pickRunePageId)
+  const availableRunePages = Array.from(new Map(
+    runePages
+      .filter((page) => Number.isSafeInteger(page.id) && page.id > 0 && page.id !== 0xffffffff)
+      .map((page) => [page.id, page]),
+  ).values());
+  const editableRunePages = availableRunePages.filter((page) => page.isEditable !== false);
+  const currentRunePage = availableRunePages.find((page) => page.current || page.isActive)
+    || availableRunePages.find((page) => page.id === prefs.pickRunePageId)
     || editableRunePages[0]
     || null;
 
   return (
-    <div className="flex-1 min-h-0 min-w-0 animate-fadeIn space-y-6" role="region" aria-label="Play Flow workspace" tabIndex={0}>
+    <div className="play-flow-page flex-1 min-h-0 min-w-0 overflow-y-auto animate-fadeIn space-y-6" role="region" aria-label="Play Flow workspace" tabIndex={0}>
       <PageHeader
         variant="status"
         icon={Swords}
@@ -1036,7 +1041,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         championId={prefs.pickChampionId}
         runePageId={prefs.pickRunePageId}
         fallbackRunePageId={prefs.fallbackPickRunePageId}
-        runePages={runePages}
+        runePages={availableRunePages}
         itemIds={savedBuildPlan?.championId === prefs.pickChampionId ? savedBuildPlan.itemIds : []}
         onPreparationApplied={(preset) => {
           setPrefs((current) => ({

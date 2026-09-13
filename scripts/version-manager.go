@@ -193,6 +193,8 @@ func getTargetFiles(root string) []FileSync {
 				content = re2.ReplaceAllString(content, fmt.Sprintf(`${1}%s`, version))
 				re3 := regexp.MustCompile(`(<span>v)[0-9]+\.[0-9]+\.[0-9]+(</span>)`)
 				content = re3.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}`, version))
+				re4 := regexp.MustCompile(`(<span class="dl-version-tag">v)[0-9]+\.[0-9]+\.[0-9]+(</span>)`)
+				content = re4.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}`, version))
 				return content
 			},
 		},

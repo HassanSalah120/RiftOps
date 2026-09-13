@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -13,12 +14,14 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/HassanSalah120/RiftOps/internal/certificate"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
@@ -107,9 +110,24 @@ func (m *remoteAccessManager) start(handler http.Handler) error {
 	if err != nil {
 		return err
 	}
-	displayURL := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
+	cachePath, err := remoteCertificateCachePath()
+	if err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("locate remote access certificate cache: %w", err)
+	}
+	serverCertificate, err := (certificate.Provider{
+		CachePath:   cachePath,
+		Hostname:    host,
+		MinValidFor: 30 * 24 * time.Hour,
+	}).Load(context.Background())
+	if err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("generate remote access certificate: %w", err)
+	}
+	displayURL := "https://" + net.JoinHostPort(host, strconv.Itoa(port))
 	server := &http.Server{
 		Handler:           remoteSecurityHeaders(m.guard(remoteRouteScope(recoveryMiddleware(handler)))),
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{serverCertificate}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       20 * time.Second,
 		IdleTimeout:       90 * time.Second,
@@ -135,7 +153,7 @@ func (m *remoteAccessManager) start(handler http.Handler) error {
 	m.mu.Unlock()
 
 	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		if serveErr := server.ServeTLS(listener, "", ""); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			slog.Warn("RiftOps mobile listener stopped", "error", serveErr)
 		}
 		m.mu.Lock()
@@ -146,6 +164,14 @@ func (m *remoteAccessManager) start(handler http.Handler) error {
 		m.mu.Unlock()
 	}()
 	return nil
+}
+
+func remoteCertificateCachePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "RiftOps", "remoteAccessCert.pfx"), nil
 }
 
 func (m *remoteAccessManager) issuePairLocked() error {

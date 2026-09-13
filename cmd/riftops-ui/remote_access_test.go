@@ -13,7 +13,7 @@ import (
 
 func pairedTestManager(t *testing.T) *remoteAccessManager {
 	t.Helper()
-	m := &remoteAccessManager{displayURL: "http://192.168.1.10:24081", port: 24081, server: &http.Server{}, sessions: make(map[[32]byte]*remoteSession)}
+	m := &remoteAccessManager{displayURL: "https://192.168.1.10:24081", port: 24081, server: &http.Server{}, sessions: make(map[[32]byte]*remoteSession)}
 	m.mu.Lock()
 	if err := m.issuePairLocked(); err != nil {
 		t.Fatal(err)
@@ -214,12 +214,12 @@ func TestRemoteQRHandlerReturnsPNG(t *testing.T) {
 	}
 }
 
-func TestOriginValidationRequiresExactHTTPHost(t *testing.T) {
+func TestOriginValidationRequiresExactHTTPSHost(t *testing.T) {
 	for _, test := range []struct {
 		origin string
 		valid  bool
 	}{
-		{"http://192.168.1.10:24081", true}, {"https://192.168.1.10:24081", false}, {"http://192.168.1.10.evil:24081", false}, {"not a URL", false},
+		{"https://192.168.1.10:24081", true}, {"http://192.168.1.10:24081", false}, {"https://192.168.1.10.evil:24081", false}, {"not a URL", false},
 	} {
 		if got := isSameOrigin(test.origin, "192.168.1.10:24081"); got != test.valid {
 			t.Errorf("isSameOrigin(%q)=%v, want %v", test.origin, got, test.valid)
@@ -230,16 +230,16 @@ func TestOriginValidationRequiresExactHTTPHost(t *testing.T) {
 func TestRemoteMutationRequiresSameOrigin(t *testing.T) {
 	called := false
 	handler := originCheck(func(w http.ResponseWriter, _ *http.Request) { called = true; w.WriteHeader(http.StatusNoContent) })
-	request := httptest.NewRequest(http.MethodPost, "http://192.168.1.10:24081/api/lcu/dodge", nil)
+	request := httptest.NewRequest(http.MethodPost, "https://192.168.1.10:24081/api/lcu/dodge", nil)
 	request = request.WithContext(context.WithValue(request.Context(), remoteRequestKey{}, true))
 	missing := httptest.NewRecorder()
 	handler(missing, request)
 	if missing.Code != http.StatusForbidden || called {
 		t.Fatalf("origin-less mutation escaped: code=%d called=%v", missing.Code, called)
 	}
-	request = httptest.NewRequest(http.MethodPost, "http://192.168.1.10:24081/api/lcu/dodge", nil)
+	request = httptest.NewRequest(http.MethodPost, "https://192.168.1.10:24081/api/lcu/dodge", nil)
 	request = request.WithContext(context.WithValue(request.Context(), remoteRequestKey{}, true))
-	request.Header.Set("Origin", "http://192.168.1.10:24081")
+	request.Header.Set("Origin", "https://192.168.1.10:24081")
 	allowed := httptest.NewRecorder()
 	handler(allowed, request)
 	if allowed.Code != http.StatusNoContent || !called {
@@ -333,4 +333,3 @@ func TestRemoteGuardAllowsPublicPWAAssets(t *testing.T) {
 		t.Errorf("expected protected path to return 401 Unauthorized, got %d", protectedRec.Code)
 	}
 }
-

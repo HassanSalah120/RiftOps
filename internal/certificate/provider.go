@@ -8,14 +8,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	_ "embed"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/big"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,20 +21,21 @@ import (
 	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
 
-//go:embed localhostCert.pfx
-var embeddedPFX []byte
-
-const MaxPFXBytes = 2 << 20
-
 type Provider struct {
 	CachePath   string
-	URL         string
 	Hostname    string
 	MinValidFor time.Duration
-	Client      *http.Client
 }
 
 func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return tls.Certificate{}, ctx.Err()
+	default:
+	}
 	if p.MinValidFor == 0 {
 		p.MinValidFor = 14 * 24 * time.Hour
 	}
@@ -45,38 +43,14 @@ func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
 	if p.CachePath != "" {
 		if cached, err := os.ReadFile(p.CachePath); err == nil {
 			if certificate, err := p.decodeAndValidate(cached); err == nil {
-				if p.URL != "" && time.Until(certificate.Leaf.NotAfter) < 20*24*time.Hour {
-					p.triggerBackgroundRefresh()
-				}
 				return certificate, nil
 			}
 			_ = os.Remove(p.CachePath) // stale cache, discard
 		}
 	}
 
-	// 2. Try embedded bundle if valid for target hostname
-	if len(embeddedPFX) > 0 {
-		if certificate, err := p.decodeAndValidate(embeddedPFX); err == nil {
-			if p.CachePath != "" {
-				_ = writePrivateFile(p.CachePath, embeddedPFX)
-			}
-			if p.URL != "" && time.Until(certificate.Leaf.NotAfter) < 20*24*time.Hour {
-				p.triggerBackgroundRefresh()
-			}
-			return certificate, nil
-		}
-	}
-
-	// 3. Try download if URL provided and network is available
-	if p.URL != "" {
-		dlCtx, dlCancel := context.WithTimeout(ctx, 3*time.Second)
-		defer dlCancel()
-		if cert, err := p.download(dlCtx); err == nil {
-			return cert, nil
-		}
-	}
-
-	// 4. Always produce a local certificate immediately as reliable fallback.
+	// Generate a local certificate when no valid cache exists. It never depends
+	// on an external certificate URL or a machine-wide trust-store mutation.
 	cert, err := p.generateSelfSigned()
 	if err != nil {
 		return tls.Certificate{}, err
@@ -84,53 +58,7 @@ func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
 	return cert, nil
 }
 
-func (p Provider) triggerBackgroundRefresh() {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if _, err := p.download(ctx); err != nil {
-			slog.Debug("background cert refresh skipped", "error", err)
-			return
-		}
-		slog.Info("downloaded and refreshed proxy certificate cache")
-	}()
-}
-
-func (p Provider) download(ctx context.Context) (tls.Certificate, error) {
-	client := p.Client
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("create cert request: %w", err)
-	}
-	request.Header.Set("User-Agent", "RiftOps")
-	response, err := client.Do(request)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("download proxy certificate: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return tls.Certificate{}, fmt.Errorf("certificate server returned %s", response.Status)
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, MaxPFXBytes+1))
-	if err != nil || len(data) > MaxPFXBytes {
-		return tls.Certificate{}, errors.New("certificate response was invalid or too large")
-	}
-	certificate, err := p.decodeAndValidate(data)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	if p.CachePath != "" {
-		if err := writePrivateFile(p.CachePath, data); err != nil {
-			slog.Warn("could not cache downloaded certificate", "error", err)
-		}
-	}
-	return certificate, nil
-}
-
-// generateSelfSigned creates a short-lived local CA and an ECDSA leaf
+// generateSelfSigned creates a local CA and an ECDSA leaf
 // certificate signed by that CA. Riot's current chat stack requires a valid
 // CA chain and does not accept a self-signed server leaf, even when the
 // compatibility flag is present.
@@ -141,18 +69,18 @@ func (p Provider) generateSelfSigned() (tls.Certificate, error) {
 	}
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate local chat CA key: %w", err)
+		return tls.Certificate{}, fmt.Errorf("generate local certificate CA key: %w", err)
 	}
 	caSerial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate local chat CA serial: %w", err)
+		return tls.Certificate{}, fmt.Errorf("generate local certificate CA serial: %w", err)
 	}
 	now := time.Now()
 	caTemplate := &x509.Certificate{
 		SerialNumber: caSerial,
 		Subject: pkix.Name{
 			Organization: []string{"RiftOps"},
-			CommonName:   "RiftOps Local Chat CA",
+			CommonName:   "RiftOps Local Certificate CA",
 		},
 		NotBefore:             now.Add(-24 * time.Hour),
 		NotAfter:              now.Add(5 * 365 * 24 * time.Hour),
@@ -163,20 +91,20 @@ func (p Provider) generateSelfSigned() (tls.Certificate, error) {
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("create local chat CA: %w", err)
+		return tls.Certificate{}, fmt.Errorf("create local certificate CA: %w", err)
 	}
 	caCertificate, err := x509.ParseCertificate(caDER)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("parse local chat CA: %w", err)
+		return tls.Certificate{}, fmt.Errorf("parse local certificate CA: %w", err)
 	}
 
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate local chat leaf key: %w", err)
+		return tls.Certificate{}, fmt.Errorf("generate local certificate leaf key: %w", err)
 	}
 	leafSerial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate local chat leaf serial: %w", err)
+		return tls.Certificate{}, fmt.Errorf("generate local certificate leaf serial: %w", err)
 	}
 	leafTemplate := &x509.Certificate{
 		SerialNumber: leafSerial,
@@ -198,11 +126,11 @@ func (p Provider) generateSelfSigned() (tls.Certificate, error) {
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCertificate, &leafKey.PublicKey, caKey)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("create local chat leaf: %w", err)
+		return tls.Certificate{}, fmt.Errorf("create local certificate leaf: %w", err)
 	}
 	leaf, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("parse local chat leaf: %w", err)
+		return tls.Certificate{}, fmt.Errorf("parse local certificate leaf: %w", err)
 	}
 	certificate := tls.Certificate{
 		Certificate: [][]byte{certDER, caDER},
@@ -213,9 +141,11 @@ func (p Provider) generateSelfSigned() (tls.Certificate, error) {
 	// can reuse the same local identity without touching the machine trust store.
 	pfxData, err := pkcs12.Encode(rand.Reader, leafKey, leaf, []*x509.Certificate{caCertificate}, "")
 	if err != nil {
-		slog.Warn("could not cache self-signed cert as PKCS#12", "error", err)
-	} else if err := writePrivateFile(p.CachePath, pfxData); err != nil {
-		slog.Warn("could not write self-signed cert cache", "error", err)
+		slog.Warn("could not cache local certificate as PKCS#12", "error", err)
+	} else if p.CachePath != "" {
+		if err := writePrivateFile(p.CachePath, pfxData); err != nil {
+			slog.Warn("could not write local certificate cache", "error", err)
+		}
 	}
 	return certificate, nil
 }
@@ -280,7 +210,7 @@ func DefaultCachePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "RiftOps", "localhostCert.pfx"), nil
+	return filepath.Join(dir, "RiftOps", "chatCert.pfx"), nil
 }
 
 func VerifyLeaf(certificate tls.Certificate, roots *x509.CertPool, hostname string) error {

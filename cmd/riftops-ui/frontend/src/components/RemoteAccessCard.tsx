@@ -84,7 +84,7 @@ export default function RemoteAccessCard({ showToast }: { showToast: (message: s
           {sessions.map((session) => <article key={session.id}><span><Smartphone /></span><div><strong>{session.device}</strong><small>Last seen {new Date(session.lastSeen).toLocaleString()} · {relativeTime(session.expiresAt)}</small></div><button type="button" aria-label="Disconnect phone" title="Disconnect this phone" disabled={busy !== ''} onClick={() => void revoke(session.id)}>{busy === session.id ? <RefreshCw className="animate-spin" /> : <Unplug />}</button></article>)}
         </div>
 
-        <footer><span><ShieldCheck />Pairing and session tokens stay in memory and are revoked when RiftOps exits.</span><span className="is-warning">LAN traffic is HTTP, not end-to-end encrypted. Use only a trusted private Wi-Fi.</span><button type="button" disabled={busy !== ''} onClick={() => void toggle()}>Turn off phone control</button></footer>
+        <footer><span><ShieldCheck />Pairing and session tokens stay in memory and are revoked when RiftOps exits.</span><span className="is-warning">LAN traffic uses HTTPS with a local certificate. Your phone may show a first-visit certificate warning; use only your trusted private Wi-Fi.</span><button type="button" disabled={busy !== ''} onClick={() => void toggle()}>Turn off phone control</button></footer>
         </>}
       </div>}
     </section>

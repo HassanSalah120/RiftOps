@@ -172,9 +172,9 @@ RiftOps includes a local-first mobile companion inspired by Mimic. It communicat
 </div>
 
 ```
-┌─────────────────┐       Wi-Fi LAN (HTTP)       ┌────────────────────────┐
+┌─────────────────┐      Wi-Fi LAN (HTTPS)       ┌────────────────────────┐
 │  Mobile Device  │ ◄──────────────────────────► │  RiftOps Desktop Hub   │
-│  (Phone / Pad)  │  Single-use QR / Session     │  (Port 24080 / Local)  │
+│  (Phone / Pad)  │  Single-use QR / Session     │ (Ports 24081-24090)     │
 └─────────────────┘                              └───────────┬────────────┘
                                                              │ Loopback API
                                                  ┌───────────▼────────────┐
@@ -189,7 +189,7 @@ RiftOps includes a local-first mobile companion inspired by Mimic. It communicat
 4. Accept queue pops, lock in your hover pick, swap rune pages, and monitor live match status from anywhere in your house.
 
 > [!NOTE]
-> Pairing QR codes expire after 5 minutes and become invalid immediately upon first use. Mobile sessions are strictly bounded to safe gameflow actions; sensitive capabilities (account credentials, settings, loot crafting, and diagnostics) remain desktop-only.
+> Pairing QR codes expire after 5 minutes and become invalid immediately upon first use. Phone control uses HTTPS with a locally generated certificate; your phone may show a first-visit certificate warning. Continue only on your trusted private network. Mobile sessions are strictly bounded to safe gameflow actions; sensitive capabilities (account credentials, settings, loot crafting, and diagnostics) remain desktop-only.
 
 ---
 
@@ -211,9 +211,9 @@ RiftOps was engineered from the ground up to ensure complete compliance with Rio
 
 ### Windows (10 / 11)
 
-1. Download the latest `RiftOps-<version>-win-x64.exe` from the [Releases Page](https://github.com/HassanSalah120/RiftOps/releases).
-2. Place the executable in a preferred folder (e.g., `C:\RiftOps` or `D:\RiftOps`).
-3. Launch **RiftOps.exe**. It will automatically detect your Riot Client and League installations.
+1. Download the latest `RiftOps-Setup-<version>-x64.exe` from the [Releases Page](https://github.com/HassanSalah120/RiftOps/releases).
+2. Run the installer and choose whether to create Desktop and startup shortcuts.
+3. Launch **RiftOps** from the Start Menu or Desktop. It will automatically detect your Riot Client and League installations.
 4. Launch League of Legends, sign in, and enjoy your new operations deck!
 
 > [!TIP]
@@ -277,7 +277,7 @@ cd ../../..
 bash ./scripts/build-macos.sh
 ```
 
-The output binary will be generated under `dist/RiftOps-<version>-win-x64.exe` (or `dist/RiftOps-macOS.zip`).
+The Windows setup installer will be generated under `dist/RiftOps-Setup-<version>-x64.exe` (or `dist/RiftOps-macOS.zip` for macOS).
 
 ---
 

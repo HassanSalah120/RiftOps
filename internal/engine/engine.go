@@ -22,14 +22,10 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
-// Riot's client-config service is rewritten to a loopback endpoint.
-// Using deceive-localhost.molenzwiebel.xyz provides a publicly trusted
-// TLS certificate (Let's Encrypt) that maps to loopback 127.0.0.1, preventing
-// TLS handshake rejections by Riot Client without requiring Windows store mutations.
-var (
-	LocalhostDomain = "deceive-localhost.molenzwiebel.xyz"
-	CertificateURL  = "https://mln.cx/deceive/localhost.pfx"
-)
+// Riot's client-config service is rewritten to a loopback endpoint. The chat
+// proxy uses a locally generated certificate; no public domain or downloaded
+// private key is required.
+const LocalhostDomain = "127.0.0.1"
 
 type Phase string
 
@@ -487,7 +483,6 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	}
 	serverCertificate, err := (certificate.Provider{
 		CachePath: cachePath,
-		URL:       CertificateURL,
 		Hostname:  domain,
 	}).Load(ctx)
 	if err != nil {

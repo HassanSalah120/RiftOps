@@ -28,9 +28,9 @@ not provide a Riot password field.
 Depending on the features used, RiftOps connects to Riot's official client/API
 services, Riot's Data Dragon service, CommunityDragon for optional game assets,
 and the official GitHub Releases API for update checks. The desktop dashboard
-and Riot proxy bind to loopback. Optional phone control uses HTTP on the user's
-private local network and is not a cloud relay; it must not be exposed to the
-public internet.
+and Riot proxy bind to loopback. Optional phone control uses HTTPS with a
+locally generated certificate on the user's private local network; it is not a
+cloud relay and must not be exposed to the public internet.
 
 RiftOps does not send collected information to an unrelated analytics or
 advertising provider. Riot and GitHub process requests under their own privacy

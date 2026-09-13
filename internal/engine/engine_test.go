@@ -60,7 +60,7 @@ func TestEnsureLoopbackEndpointAcceptsLocalhostName(t *testing.T) {
 	}
 }
 
-func TestEnsureLoopbackEndpointAcceptsDeceiveDomain(t *testing.T) {
+func TestEnsureLoopbackEndpointAcceptsConfiguredDomain(t *testing.T) {
 	if err := ensureLoopbackEndpoint(context.Background(), LocalhostDomain); err != nil {
 		t.Fatalf("%s endpoint rejected: %v", LocalhostDomain, err)
 	}
