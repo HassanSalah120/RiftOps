@@ -429,6 +429,11 @@ var remoteCapabilities = []remoteCapability{
 	{ID: "collection_read", Routes: map[string][]string{
 		"/api/lcu/skins": {http.MethodGet}, "/api/lcu/background-champions": {http.MethodGet}, "/api/lcu/background-skins": {http.MethodGet},
 	}},
+	{ID: "progress_read", Routes: map[string][]string{
+		"/api/lcu/progress/missions": {http.MethodGet},
+		"/api/lcu/progress/rewards":  {http.MethodGet},
+		"/api/lcu/progress/mastery":  {http.MethodGet},
+	}},
 	{ID: "preset_apply", Routes: map[string][]string{
 		"/api/profile-presets": {http.MethodGet}, "/api/profile-presets/preview": {http.MethodPost}, "/api/profile-presets/apply": {http.MethodPost},
 		"/api/lcu/preparation-presets": {http.MethodGet}, "/api/lcu/preparation-presets/preview": {http.MethodPost}, "/api/lcu/preparation-presets/apply": {http.MethodPost},

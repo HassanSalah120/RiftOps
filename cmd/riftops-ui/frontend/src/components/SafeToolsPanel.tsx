@@ -216,7 +216,7 @@ export default function SafeToolsPanel() {
   };
 
   return (
-    <section className="safe-tools-panel glass-card" aria-label="Reviewed client utilities">
+    <section className="safe-tools-panel safe-tools-panel--compact glass-card" aria-label="Reviewed client utilities">
       {confirmAction && <ConfirmModal action={confirmAction} onClose={() => setConfirmAction(null)} />}
 
       {/* Restore Preview Modal */}

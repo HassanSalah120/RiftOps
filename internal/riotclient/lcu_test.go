@@ -665,6 +665,15 @@ func TestSetRolesUsesCurrentLobbyRoute(t *testing.T) {
 	}
 }
 
+func TestSetRolesRejectsInvalidOrDuplicateRoles(t *testing.T) {
+	lockfile := testLockfile("http://127.0.0.1:1")
+	for _, test := range [][2]string{{"MIDLANE", "TOP"}, {"TOP", "TOP"}, {"", "FILL"}} {
+		if err := lockfile.AutoSetRoles(context.Background(), test[0], test[1]); err == nil {
+			t.Fatalf("invalid roles were accepted: %q/%q", test[0], test[1])
+		}
+	}
+}
+
 func TestSetRolesFallsBackToV2LobbyRoute(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -758,6 +767,31 @@ func TestHonorPlayerUsesCurrentPayload(t *testing.T) {
 	}
 	if _, exists := received["honorCategory"]; exists {
 		t.Fatalf("honor payload still contains obsolete honorCategory: %#v", received)
+	}
+}
+
+func TestLCUMutationWrappersRejectInvalidInputs(t *testing.T) {
+	lockfile := testLockfile("http://127.0.0.1:1")
+	if err := lockfile.SetAvailability(context.Background(), "busy"); err == nil {
+		t.Fatal("invalid availability was accepted")
+	}
+	if err := lockfile.SetStatusMessage(context.Background(), strings.Repeat("x", 256)); err == nil {
+		t.Fatal("oversized status message was accepted")
+	}
+	if err := lockfile.SetProfileBackground(context.Background(), 0); err == nil {
+		t.Fatal("invalid profile background was accepted")
+	}
+	if err := lockfile.SetProfileIcon(context.Background(), 0); err == nil {
+		t.Fatal("invalid profile icon was accepted")
+	}
+	if err := lockfile.HonorPlayer(context.Background(), 1, "puuid", "UNKNOWN", 2); err == nil {
+		t.Fatal("invalid honor type was accepted")
+	}
+	if _, err := lockfile.FetchLCUGameDetail(context.Background(), 0); err == nil {
+		t.Fatal("invalid game id was accepted")
+	}
+	if err := lockfile.TogglePlayerMuted(context.Background(), map[string]any{"puuid": "player", "muted": "yes"}); err == nil {
+		t.Fatal("non-boolean mute value was accepted")
 	}
 }
 

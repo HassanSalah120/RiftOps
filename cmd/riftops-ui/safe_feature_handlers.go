@@ -166,6 +166,39 @@ func lcuCapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 		{id: "game-settings", shape: '{', probe: lf.FetchGameSettings},
 		{id: "input-settings", shape: '{', probe: lf.FetchInputSettings},
 		{id: "pending-rewards", shape: 0, probe: lf.FetchPendingRewards},
+		{id: "champion-swaps", shape: '[', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-champ-select/v1/session/champion-swaps")
+		}},
+		{id: "ongoing-swaps", shape: '{', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-champ-select/v1/ongoing-champion-swap")
+		}},
+		{id: "matchmaking-diagnostics", shape: '{', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-matchmaking/v1/search")
+		}},
+		{id: "leaver-buster", shape: '[', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-leaver-buster/v1/notifications")
+		}},
+		{id: "spectator", shape: '{', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-spectator/v1/spectate/config")
+		}},
+		{id: "custom-games", shape: '[', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-lobby/v1/custom-games")
+		}},
+		{id: "chat-privacy", shape: 0, probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-chat/v1/player-mutes")
+		}},
+		{id: "missions", shape: '[', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-missions/v1/missions")
+		}},
+		{id: "rewards", shape: '[', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-rewards/v1/grants")
+		}},
+		{id: "mastery", shape: '[', probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-champion-mastery/v1/local-player/champion-mastery")
+		}},
+		{id: "loadouts-v4", shape: 0, probe: func(ctx context.Context) ([]byte, error) {
+			return lf.DoRequest(ctx, http.MethodGet, "/lol-loadouts/v1/loadouts-ready")
+		}},
 	}
 	for _, capability := range probes {
 		raw, err := capability.probe(ctx)
@@ -252,7 +285,8 @@ func lcuFriendRequestActionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	body.PID = strings.TrimSpace(body.PID)
 	body.Action = strings.ToLower(strings.TrimSpace(body.Action))
-	if body.Action == "accept" || body.Direction != "" {
+	switch body.Action {
+	case "accept":
 		direction := body.Direction
 		if direction == "" {
 			direction = "both"
@@ -261,12 +295,12 @@ func lcuFriendRequestActionHandler(w http.ResponseWriter, r *http.Request) {
 			httpError(w, "League rejected the friend request", http.StatusBadGateway)
 			return
 		}
-	} else if body.Action == "decline" || body.Action == "delete" || body.Action == "remove" {
+	case "decline", "delete", "remove":
 		if err := lf.DeleteFriendRequest(r.Context(), body.PID); err != nil {
 			httpError(w, "League rejected the friend request removal", http.StatusBadGateway)
 			return
 		}
-	} else {
+	default:
 		httpError(w, "Action must be accept, decline, or delete", http.StatusBadRequest)
 		return
 	}
@@ -794,6 +828,10 @@ func lcuGameSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid settings backup", http.StatusBadRequest)
+		return
+	}
+	if len(body.General) == 0 && len(body.Input) == 0 {
+		httpError(w, "At least one settings section is required", http.StatusBadRequest)
 		return
 	}
 	if len(body.General) > 0 {

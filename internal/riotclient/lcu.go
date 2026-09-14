@@ -865,7 +865,7 @@ func (lf *Lockfile) FetchLCULeague(ctx context.Context, puuid string) ([]LCULeag
 
 	// Fallback endpoint: /lol-ranked/v1/ranked-stats/{puuid}
 	if puuid != "" {
-		path := fmt.Sprintf("/lol-ranked/v1/ranked-stats/%s", puuid)
+		path := fmt.Sprintf("/lol-ranked/v1/ranked-stats/%s", url.PathEscape(strings.TrimSpace(puuid)))
 		if body, err := lf.DoRequest(ctx, "GET", path); err == nil {
 			var stats struct {
 				Queues []LCULeagueEntry `json:"queues"`
@@ -1021,7 +1021,7 @@ func (lf *Lockfile) FetchLCUMatchHistory(ctx context.Context, begIdx, endIdx int
 
 	summoner, err := lf.FetchLCUSummoner(ctx)
 	if err == nil && summoner != nil && summoner.PUUID != "" {
-		path := fmt.Sprintf("/lol-match-history/v1/products/lol/%s/matches?begIndex=%d&endIndex=%d", summoner.PUUID, begIdx, endIdx)
+		path := fmt.Sprintf("/lol-match-history/v1/products/lol/%s/matches?begIndex=%d&endIndex=%d", url.PathEscape(strings.TrimSpace(summoner.PUUID)), begIdx, endIdx)
 		body, err := lf.DoRequest(ctx, "GET", path)
 		if err == nil && len(body) > 2 {
 			return body, nil
@@ -1035,6 +1035,9 @@ func (lf *Lockfile) FetchLCUMatchHistory(ctx context.Context, begIdx, endIdx int
 
 // FetchLCUGameDetail returns full game details (all 10 participants, perks, etc.) by gameId.
 func (lf *Lockfile) FetchLCUGameDetail(ctx context.Context, gameID int64) ([]byte, error) {
+	if gameID <= 0 {
+		return nil, fmt.Errorf("game ID must be positive")
+	}
 	path := fmt.Sprintf("/lol-match-history/v1/games/%d", gameID)
 	return lf.DoRequest(ctx, "GET", path)
 }
@@ -1088,7 +1091,10 @@ func (lf *Lockfile) FetchLCUSkins(ctx context.Context) ([]byte, error) {
 // the account.
 func (lf *Lockfile) FetchLCUChampions(ctx context.Context) ([]byte, error) {
 	summoner, err := lf.FetchLCUSummoner(ctx)
-	if err != nil {
+	if err != nil || summoner == nil || summoner.SummonerID <= 0 {
+		if err == nil {
+			err = errors.New("current summoner id is unavailable")
+		}
 		return nil, err
 	}
 	return lf.DoRequest(ctx, "GET", fmt.Sprintf("/lol-champions/v1/inventories/%d/champions-minimal", summoner.SummonerID))
@@ -1102,7 +1108,10 @@ func (lf *Lockfile) FetchLCUChampionSkins(ctx context.Context, championID int) (
 		return nil, fmt.Errorf("champion ID must be positive")
 	}
 	summoner, err := lf.FetchLCUSummoner(ctx)
-	if err != nil {
+	if err != nil || summoner == nil || summoner.SummonerID <= 0 {
+		if err == nil {
+			err = errors.New("current summoner id is unavailable")
+		}
 		return nil, err
 	}
 	path := fmt.Sprintf("/lol-champions/v1/inventories/%d/champions/%d/skins", summoner.SummonerID, championID)
@@ -1385,8 +1394,13 @@ func (lf *Lockfile) StartCustomGame(ctx context.Context) error {
 
 // AutoSetRoles sets the preferred primary and secondary roles in a lobby.
 func (lf *Lockfile) AutoSetRoles(ctx context.Context, first, second string) error {
-	if strings.TrimSpace(first) == "" || strings.TrimSpace(second) == "" {
-		return fmt.Errorf("role preferences must not be empty")
+	first, second = strings.ToUpper(strings.TrimSpace(first)), strings.ToUpper(strings.TrimSpace(second))
+	allowedRoles := map[string]bool{"TOP": true, "JUNGLE": true, "MIDDLE": true, "BOTTOM": true, "UTILITY": true, "FILL": true}
+	if !allowedRoles[first] || !allowedRoles[second] {
+		return fmt.Errorf("role preferences must be TOP, JUNGLE, MIDDLE, BOTTOM, UTILITY, or FILL")
+	}
+	if first == second {
+		return fmt.Errorf("primary and secondary roles must be different")
 	}
 	// Tests expect v1 nested first; real LCU v2 now requires flat — try nested
 	// first for compatibility, then flat as fallback. Routes v1 then v2 as
@@ -1580,6 +1594,10 @@ func (lf *Lockfile) SetAppearOffline(ctx context.Context, offline bool) error {
 }
 
 func (lf *Lockfile) SetAvailability(ctx context.Context, availability string) error {
+	availability = strings.ToLower(strings.TrimSpace(availability))
+	if availability != "chat" && availability != "away" && availability != "mobile" && availability != "offline" {
+		return fmt.Errorf("availability must be chat, away, mobile, or offline")
+	}
 	_, err := lf.doJSON(ctx, "PUT", "/lol-chat/v1/me", map[string]string{"availability": availability})
 	return err
 }
@@ -1587,6 +1605,9 @@ func (lf *Lockfile) SetAvailability(ctx context.Context, availability string) er
 // SetStatusMessage sets a custom chat status/bio message. The chat service
 // rate-limits rapid consecutive updates, so one delayed retry is attempted.
 func (lf *Lockfile) SetStatusMessage(ctx context.Context, msg string) error {
+	if len([]rune(msg)) > 255 {
+		return fmt.Errorf("status message must be 255 characters or fewer")
+	}
 	for attempt := 0; ; attempt++ {
 		_, err := lf.doJSON(ctx, "PUT", "/lol-chat/v1/me", map[string]string{"statusMessage": msg})
 		if err == nil || attempt >= 1 || !isTransientLCUError(err) {
@@ -1610,6 +1631,9 @@ func isTransientLCUError(err error) bool {
 
 // SetProfileBackground sets the player's loading screen background skin ID.
 func (lf *Lockfile) SetProfileBackground(ctx context.Context, skinID int) error {
+	if skinID <= 0 {
+		return fmt.Errorf("skin ID must be positive")
+	}
 	_, err := lf.doJSON(ctx, "POST", "/lol-summoner/v1/current-summoner/summoner-profile", map[string]any{
 		"key": "backgroundSkinId", "value": skinID,
 	})
@@ -1618,6 +1642,9 @@ func (lf *Lockfile) SetProfileBackground(ctx context.Context, skinID int) error 
 
 // SetProfileIcon changes the player's profile icon.
 func (lf *Lockfile) SetProfileIcon(ctx context.Context, iconID int) error {
+	if iconID <= 0 {
+		return fmt.Errorf("profile icon ID must be positive")
+	}
 	inventoryToken, tokenErr := lf.FetchInventoryToken(ctx)
 	payload := map[string]any{"profileIconId": iconID}
 	// Newer LCU schemas require inventoryToken; older clients reject unknown
@@ -1843,6 +1870,14 @@ func (lf *Lockfile) GetHonorBallot(ctx context.Context) ([]byte, error) {
 
 // HonorPlayer submits one post-game honor vote.
 func (lf *Lockfile) HonorPlayer(ctx context.Context, summonerID uint64, puuid, honorType string, gameID uint64) error {
+	puuid = strings.TrimSpace(puuid)
+	honorType = strings.ToUpper(strings.TrimSpace(honorType))
+	if summonerID == 0 || gameID == 0 || puuid == "" {
+		return fmt.Errorf("honor player details are incomplete")
+	}
+	if honorType != "HEART" && honorType != "HONORABLE" && honorType != "SHOTCALLER" && honorType != "GREAT" {
+		return fmt.Errorf("honor type is invalid")
+	}
 	_, err := lf.doJSON(ctx, "POST", "/lol-honor-v2/v1/honor-player", map[string]any{
 		"summonerId": summonerID, "puuid": puuid, "gameId": gameID, "honorType": honorType,
 	})

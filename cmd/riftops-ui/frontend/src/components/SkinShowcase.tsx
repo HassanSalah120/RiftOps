@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchLCUSkins, fetchLCULoot, fetchLCUProfile } from '../api';
+import { loadChampionCatalog, loadSkinCatalog } from '../leagueCatalog';
 import {
   Sparkles,
   Loader2,
@@ -346,11 +347,11 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
           setLastUpdated(cachedAt ? new Date(cachedAt) : null);
         }
       }
-      const [ownedRaw, lootRaw, skinsDb, champsSummary] = await Promise.all([
+      const [ownedRaw, lootRaw, skinCatalog, championCatalog] = await Promise.all([
         fetchLCUSkins(),
         remoteReadOnly ? Promise.resolve([]) : fetchLCULoot().catch(() => []),
-        fetch('/lol-game-data/assets/v1/skins.json').then((r) => r.json()).catch(() => ({})),
-        fetch('/lol-game-data/assets/v1/champion-summary.json').then((r) => r.json()).catch(() => []),
+        loadSkinCatalog(),
+        loadChampionCatalog(),
       ]);
 
       const shardSkinIds = new Set<number>();
@@ -364,27 +365,15 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
         });
       }
 
-      const skinDbMap = new Map();
-      if (skinsDb) {
-        const dbArray = Array.isArray(skinsDb) ? skinsDb : Object.values(skinsDb);
-        dbArray.forEach((s: any) => {
-          const id = numberField(s.id, s.skinId, s.championSkinId);
-          if (id !== null) skinDbMap.set(id, s);
-        });
-      }
+      const skinDbMap = new Map<number, any>(Object.values(skinCatalog).map((skin) => [skin.id, skin]));
 
       const champNames = new Map<number, string>();
       const champAliases = new Map<number, string>();
-      const champArray = Array.isArray(champsSummary)
-        ? champsSummary
-        : champsSummary && typeof champsSummary === 'object'
-        ? Object.values(champsSummary)
-        : [];
-      champArray.forEach((c: any) => {
-        const championId = numberField(c.id, c.championId);
+      Object.values(championCatalog).forEach((champion) => {
+        const championId = numberField(champion.key);
         if (championId !== null) {
-          champNames.set(championId, c.name || c.alias || `#${championId}`);
-          if (c.alias) champAliases.set(championId, String(c.alias));
+          champNames.set(championId, champion.name);
+          if (champion.id) champAliases.set(championId, String(champion.id));
         }
       });
 

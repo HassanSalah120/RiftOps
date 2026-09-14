@@ -691,7 +691,7 @@ export default function LiveSessionPage({
                       ? 'Launch the League Client and sign in. RiftOps will bind to the session automatically.'
                       : customSession
                       ? 'A custom lobby is currently open in League. Start it or close it here.'
-                      : 'Choose your desired queue from Play Flow or launch League directly.'}
+                      : 'Choose your desired queue from Play & Queue or launch League directly.'}
                   </p>
                 </div>
               </div>
@@ -723,7 +723,7 @@ export default function LiveSessionPage({
                     onClick={onOpenPlayFlow}
                     tone="quiet"
                   >
-                    Go to Play Flow
+                  Go to Play & Queue
                   </ActionButton>
 
                   <ActionButton

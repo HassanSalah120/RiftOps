@@ -103,10 +103,20 @@ func (lf *Lockfile) TogglePlayerMuted(ctx context.Context, payload map[string]an
 	if payload == nil {
 		return fmt.Errorf("player payload is required")
 	}
-	if _, ok := payload["puuid"].(string); !ok || strings.TrimSpace(payload["puuid"].(string)) == "" {
+	puuid, ok := payload["puuid"].(string)
+	puuid = strings.TrimSpace(puuid)
+	if !ok || puuid == "" || len([]rune(puuid)) > 128 {
 		return fmt.Errorf("player PUUID is required")
 	}
-	_, err := lf.doJSON(ctx, http.MethodPost, "/lol-champ-select/v1/toggle-player-muted", payload)
+	cleanPayload := map[string]any{"puuid": puuid}
+	if muted, present := payload["muted"]; present {
+		value, ok := muted.(bool)
+		if !ok {
+			return fmt.Errorf("muted must be a boolean")
+		}
+		cleanPayload["muted"] = value
+	}
+	_, err := lf.doJSON(ctx, http.MethodPost, "/lol-champ-select/v1/toggle-player-muted", cleanPayload)
 	return err
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Shield, Server, RotateCcw, Sparkles, Zap } from 'lucide-react';
+import { Play, Square, Shield, Server, RotateCcw } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
 import GameSelector from './components/GameSelector';
@@ -10,6 +10,7 @@ import MatchHistory from './components/MatchHistory';
 import PlayFlowPage from './components/PlayFlowPage';
 import LiveSessionPage from './components/LiveSessionPage';
 import CollectionWorkspace from './components/CollectionWorkspace';
+import ProgressPage from './components/ProgressPage';
 import QoLPanel from './components/QoLPanel';
 import LootDashboard from './components/LootDashboard';
 import QuickActions from './components/QuickActions';
@@ -113,55 +114,6 @@ export default function App() {
   const { connected: lcuConnected, performanceMode, setPerformanceMode, pageVisible } = useLCUConnection();
   const previousLcuConnection = useRef<boolean | null>(null);
   const toastTimer = useRef<number | null>(null);
-
-  const [autoAcceptActive, setAutoAcceptActive] = useState(() => {
-    try {
-      const stored = localStorage.getItem('riftops.playFlow');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (typeof parsed.autoAccept === 'boolean') return parsed.autoAccept;
-      }
-      return true;
-    } catch {
-      return true;
-    }
-  });
-
-  const [autoRunesActive, setAutoRunesActive] = useState(() => {
-    try {
-      const stored = localStorage.getItem('riftops.playFlow');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (typeof parsed.autoPick === 'boolean') return parsed.autoPick;
-      }
-      return true;
-    } catch {
-      return true;
-    }
-  });
-
-  const toggleAutoAccept = (enabled: boolean) => {
-    setAutoAcceptActive(enabled);
-    try {
-      const stored = localStorage.getItem('riftops.playFlow');
-      const parsed = stored ? JSON.parse(stored) : {};
-      parsed.autoAccept = enabled;
-      localStorage.setItem('riftops.playFlow', JSON.stringify(parsed));
-    } catch { /* optional */ }
-    api.saveQoLPreferences({ autoAccept: enabled }).catch(() => {});
-    showToast('Auto-Accept', enabled ? 'Auto-accept enabled for match ready checks.' : 'Auto-accept disabled.', 'info');
-  };
-
-  const toggleAutoRunes = (enabled: boolean) => {
-    setAutoRunesActive(enabled);
-    try {
-      const stored = localStorage.getItem('riftops.playFlow');
-      const parsed = stored ? JSON.parse(stored) : {};
-      parsed.autoPick = enabled;
-      localStorage.setItem('riftops.playFlow', JSON.stringify(parsed));
-    } catch { /* optional */ }
-    showToast('Auto-Runes', enabled ? 'Recommended runes will auto-equip upon champion lock.' : 'Auto-runes disabled.', 'info');
-  };
 
   useEffect(() => {
     try { localStorage.setItem('riftops.activeTab', activeTab); } catch { /* Preferences are optional. */ }
@@ -580,8 +532,6 @@ export default function App() {
         >
           Skip to workspace
         </a>
-      {/* Toast Notification */}
-      <Toast notification={notification} onClose={() => setNotification(null)} />
       <NotificationCenter
         open={notificationCenterOpen}
         entries={notificationHistory}
@@ -618,10 +568,12 @@ export default function App() {
           unreadNotifications={notificationHistory.filter((item) => !item.read).length}
         />
         <main id="riftops-main" className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col relative z-10" tabIndex={-1}>
+          {/* Toasts live in the workspace flow so they never cover page controls. */}
+          <Toast notification={notification} onClose={() => setNotification(null)} />
           {/* QoL Panel */}
           {activeTab === 'qol' && (
-            <div className="workspace-stage workspace-stage--qol flex flex-1 min-h-0 flex-col overflow-hidden animate-fadeIn">
-              <QoLPanel onOpenLive={() => setActiveTab('live')} />
+            <div className="workspace-stage workspace-stage--qol flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden animate-fadeIn">
+              <QoLPanel onOpenLive={() => setActiveTab('live')} onOpenPlayFlow={() => setActiveTab('play')} />
             </div>
           )}
 
@@ -712,30 +664,23 @@ export default function App() {
               <div className="dashboard-page__body flex-1 overflow-y-auto px-4 py-3 space-y-4">
                 {remoteClient && <div className="phone-session-banner"><Shield /><span><strong>Phone session connected</strong><small>Live League controls are routed through your paired RiftOps desktop.</small></span></div>}
 
-                {/* 3 Prominent Gamer Automation Cards */}
+                {/* Keep match-flow automation in one place: Play & Queue. */}
                 {!remoteClient && (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    {/* Card 1: Auto Accept */}
-                    <div className="glass-card p-4 rounded-xl flex items-center justify-between border border-white/[0.08] hover:border-[#c8aa6e]/30 transition">
+                    <div className="glass-card p-4 rounded-xl flex items-center justify-between gap-4 border border-primary/20 bg-primary/[0.04] hover:border-primary/35 transition md:col-span-2">
                       <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${autoAcceptActive ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-white/[0.04] text-text-dim'}`}>
-                          <Zap className="w-5 h-5" />
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-primary/15 text-primary border border-primary/30">
+                          <Play className="w-5 h-5" />
                         </div>
                         <div>
-                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                            Auto-Accept Match
-                            {autoAcceptActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
-                          </div>
-                          <div className="text-[11px] text-text-muted">Accept queues automatically</div>
+                          <div className="text-xs font-bold text-white">Queue automation</div>
+                          <div className="text-[11px] text-text-muted">Auto-accept, roles, picks, bans, and full auto are configured beside your queue.</div>
                         </div>
                       </div>
-                      <label className="toggle">
-                        <input type="checkbox" checked={autoAcceptActive} onChange={(e) => toggleAutoAccept(e.target.checked)} />
-                        <span className="slider" />
-                      </label>
+                      <button type="button" onClick={() => setActiveTab('play')} className="btn-secondary shrink-0 text-xs">Configure</button>
                     </div>
 
-                    {/* Card 2: Stealth Mode */}
+                    {/* Presence masking remains a dashboard-level control. */}
                     <div className="glass-card p-4 rounded-xl flex items-center justify-between border border-white/[0.08] hover:border-[#c8aa6e]/30 transition">
                       <div className="flex items-center gap-3">
                         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${snapshot.Enabled && snapshot.Status === 'offline' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40' : 'bg-white/[0.04] text-text-dim'}`}>
@@ -768,25 +713,6 @@ export default function App() {
                       </label>
                     </div>
 
-                    {/* Card 3: Auto-Equip Runes */}
-                    <div className="glass-card p-4 rounded-xl flex items-center justify-between border border-white/[0.08] hover:border-[#c8aa6e]/30 transition">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${autoRunesActive ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-white/[0.04] text-text-dim'}`}>
-                          <Sparkles className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                            Auto-Equip Runes
-                            {autoRunesActive && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
-                          </div>
-                          <div className="text-[11px] text-text-muted">Import recommended rune pages</div>
-                        </div>
-                      </div>
-                      <label className="toggle">
-                        <input type="checkbox" checked={autoRunesActive} onChange={(e) => toggleAutoRunes(e.target.checked)} />
-                        <span className="slider" />
-                      </label>
-                    </div>
                   </div>
                 )}
 
@@ -886,7 +812,7 @@ export default function App() {
              ═══════════════════════════════════════════════ */}
           {activeTab === 'play' && (
             <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden animate-fadeIn">
-              <PlayFlowPage remoteClient={remoteClient} showToast={(message, type = 'info') => showToast('Play Flow', message, type)} onOpenLive={() => setActiveTab('live')} />
+              <PlayFlowPage remoteClient={remoteClient} showToast={(message, type = 'info') => showToast('Play & Queue', message, type)} onOpenLive={() => setActiveTab('live')} />
             </div>
           )}
 
@@ -903,7 +829,7 @@ export default function App() {
              SOCIAL TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'social' && (
-            <div className="workspace-stage workspace-stage--social flex-1 min-h-0 min-w-0 overflow-y-auto p-4 animate-fadeIn">
+            <div className="workspace-stage workspace-stage--social flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-4 animate-fadeIn">
               <SocialCenter remoteClient={remoteClient} />
             </div>
           )}
@@ -923,6 +849,12 @@ export default function App() {
           {activeTab === 'skins' && (
             <div className="workspace-stage workspace-stage--skins flex-1 overflow-y-auto p-4 animate-fadeIn">
               <CollectionWorkspace remoteClient={remoteClient} />
+            </div>
+          )}
+
+          {activeTab === 'progress' && (
+            <div className="workspace-stage workspace-stage--progress flex-1 min-h-0 min-w-0 overflow-y-auto animate-fadeIn">
+              <ProgressPage remoteClient={remoteClient} />
             </div>
           )}
 

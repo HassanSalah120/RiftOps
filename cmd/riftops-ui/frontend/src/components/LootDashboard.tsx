@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckSquare, Clock3, Gem, Hammer, Loader2, PackageOpen, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import { craftLCULootRecipe, executeReviewedOperation, fetchLCULoot, fetchLCULootRecipes, fetchLCUWallet, fetchReviewedOperation, previewLootOperation, type LootOperationItem } from '../api';
 import { recipeActionLabel } from '../lootActions';
+import { loadSkinCatalog, resolveLootDisplay, skinArtSources, type CatalogSkin } from '../leagueCatalog';
 import type { ConfirmAction } from '../types';
 import ConfirmModal from './ConfirmModal';
 import { ActionFeedback, ContextPanel, EmptyState, type FeedbackState, StatusBadge, WorkspaceSection } from './DesignPrimitives';
@@ -86,13 +87,14 @@ const RESOURCE_DEFS = [
   },
 ] as const;
 
-function itemName(item: LootItem): string {
-  return String(item.itemDesc || item.localizedName || item.lootId || 'League loot');
+function itemName(item: LootItem, skins: Record<string, CatalogSkin> = {}): string {
+  return resolveLootDisplay(item, skins).label;
 }
 
-
-function GameAsset({ item, fallback, icon, cdn }: { item?: LootItem; fallback: string; icon?: string; cdn?: string }) {
+function GameAsset({ item, fallback, icon, cdn, skinArt }: { item?: LootItem; fallback: string; icon?: string; cdn?: string; skinArt?: CatalogSkin }) {
   const candidates = [
+    ...(skinArt?.assetPaths || []),
+    ...(skinArt ? skinArtSources(skinArt, 'grid') : []),
     icon || '',
     cdn || '',
     item?.asset || '',
@@ -100,10 +102,11 @@ function GameAsset({ item, fallback, icon, cdn }: { item?: LootItem; fallback: s
     fallback === 'EV' ? 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/currencies/images/jade_pass_token.png' : '',
   ].filter(Boolean);
   const [index, setIndex] = useState(0);
+  useEffect(() => setIndex(0), [item?.lootId, skinArt?.id, icon, cdn]);
   if (!candidates[index]) {
     if (fallback === 'LOOT') {
       return (
-        <span className="loot-resource__fallback loot-resource__fallback--icon flex items-center justify-center text-amber-300/80" title={item ? itemName(item) : 'Material'}>
+        <span className="loot-resource__fallback loot-resource__fallback--icon flex items-center justify-center text-amber-300/80" title={skinArt?.name || (item ? itemName(item) : 'Material')}>
           <Gem className="w-4 h-4" />
         </span>
       );
@@ -116,6 +119,8 @@ function GameAsset({ item, fallback, icon, cdn }: { item?: LootItem; fallback: s
 export default function LootDashboard() {
   const { connected } = useLCUConnection();
   const [loot, setLoot] = useState<LootItem[]>([]);
+  const [skinCatalog, setSkinCatalog] = useState<Record<string, CatalogSkin>>({});
+  const [skinArtByLootId, setSkinArtByLootId] = useState<Record<string, CatalogSkin>>({});
   const [wallet, setWallet] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -132,14 +137,23 @@ export default function LootDashboard() {
     setLoading(true);
     setError('');
     try {
-      const [body, walletBody] = await Promise.all([fetchLCULoot(), fetchLCUWallet().catch(() => ({}))]);
+      const [body, walletBody, skins] = await Promise.all([
+        fetchLCULoot(),
+        fetchLCUWallet().catch(() => ({})),
+        loadSkinCatalog(),
+      ]);
       const items = (Array.isArray(body) ? body : []) as LootItem[];
       setLoot(items);
+      setSkinCatalog(skins);
+      setSkinArtByLootId(Object.fromEntries(items.map((item) => {
+        const display = resolveLootDisplay(item, skins);
+        return display.skin ? [item.lootId, display.skin] : null;
+      }).filter((entry): entry is [string, CatalogSkin] => Boolean(entry))));
       setWallet(walletBody);
       const nextCounts = Object.fromEntries(items.map((item) => [item.lootId, Number(item.count) || 0]));
       try {
         const previous = JSON.parse(localStorage.getItem('riftops.loot.snapshot') || '{}') as Record<string, number>;
-        const changes = items.map((item) => ({ id: item.lootId, name: itemName(item), delta: (Number(item.count) || 0) - (previous[item.lootId] || 0), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })).filter((entry) => Object.keys(previous).length > 0 && entry.delta !== 0).slice(0, 8);
+        const changes = items.map((item) => ({ id: item.lootId, name: itemName(item, skins), delta: (Number(item.count) || 0) - (previous[item.lootId] || 0), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })).filter((entry) => Object.keys(previous).length > 0 && entry.delta !== 0).slice(0, 8);
         if (changes.length) setActivity((current) => [...changes, ...current].slice(0, 8));
         localStorage.setItem('riftops.loot.snapshot', JSON.stringify(nextCounts));
       } catch { /* Local inventory history is optional. */ }
@@ -172,7 +186,7 @@ export default function LootDashboard() {
     const walletValue = definition.key === 'blue' ? wallet.ip ?? wallet.blueEssence ?? wallet.blue_essence : definition.key === 'rp' ? wallet.rp ?? wallet.RP : undefined;
     return { ...definition, item: items[0], value: typeof walletValue === 'number' ? walletValue : inventoryValue };
   });
-  const craftableItems = useMemo(() => loot.filter((item) => (Number(item.count) || 0) > 0 && item.type !== 'CURRENCY').sort((a, b) => itemName(a).localeCompare(itemName(b))), [loot]);
+  const craftableItems = useMemo(() => loot.filter((item) => (Number(item.count) || 0) > 0 && item.type !== 'CURRENCY').sort((a, b) => itemName(a, skinCatalog).localeCompare(itemName(b, skinCatalog))), [loot, skinCatalog]);
   const selectedItem = craftableItems.find((item) => item.lootId === selectedLootId);
   const orange = resources.find((resource) => resource.key === 'orange')?.value || 0;
   const affordableUpgrades = loot.filter((item) => Number(item.upgradeEssenceValue) > 0 && Number(item.upgradeEssenceValue) <= orange).length;
@@ -239,11 +253,12 @@ export default function LootDashboard() {
           <WorkspaceSection eyebrow="SELECT" title="Choose a material" description="RiftOps asks League for the exact recipes attached to your selection." className="loot-forge">
             {loading ? <ActionFeedback state={{ tone: 'working', message: 'Loading inventory materials…' }} /> : craftableItems.length === 0 ? <EmptyState icon={PackageOpen} title="No craftable materials" description="Loot shards, tokens, and capsules will appear here when League reports them." /> : <div className="loot-material-list">{craftableItems.map((item) => {
               const selected = item.lootId === selectedLootId;
-              return <button type="button" key={item.lootId} className={selected ? 'is-selected' : ''} onClick={() => setSelectedLootId(item.lootId)} aria-pressed={selected}><span><GameAsset item={item} fallback="LOOT" /></span><div><strong>{itemName(item)}</strong><small>{item.rarity || item.type || 'League material'}</small></div><b>×{Number(item.count) || 0}</b></button>;
+              const display = resolveLootDisplay(item, skinCatalog);
+              return <button type="button" key={item.lootId} className={selected ? 'is-selected' : ''} onClick={() => setSelectedLootId(item.lootId)} aria-pressed={selected}><span><GameAsset item={item} skinArt={skinArtByLootId[item.lootId]} fallback="LOOT" /></span><div><strong>{display.label}</strong><small>{display.skin ? display.detail : item.rarity || item.type || display.detail}</small></div><b>×{Number(item.count) || 0}</b></button>;
             })}</div>}
           </WorkspaceSection>
 
-          <ContextPanel eyebrow="RECIPE INSPECTOR" title={selectedItem ? itemName(selectedItem) : 'Select a material'} description={selectedItem ? 'Available actions come directly from the signed-in League Client.' : 'Choose one inventory material to inspect its current recipes.'} footer={<ActionFeedback state={feedback} />}>
+          <ContextPanel eyebrow="RECIPE INSPECTOR" title={selectedItem ? itemName(selectedItem, skinCatalog) : 'Select a material'} description={selectedItem ? 'Available actions come directly from the signed-in League Client.' : 'Choose one inventory material to inspect its current recipes.'} footer={<ActionFeedback state={feedback} />}>
             {!selectedItem && <EmptyState icon={Hammer} title="Nothing selected" description="Pick a material from the list to keep selection, result, and follow-up actions together." />}
             {selectedItem && recipesLoading && <ActionFeedback state={{ tone: 'working', message: 'Reading live recipes…' }} />}
             {selectedItem && !recipesLoading && recipes.length === 0 && <EmptyState icon={Gem} title="No recipe available" description="This material cannot be crafted through the current League inventory state." />}

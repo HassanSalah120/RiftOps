@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Check,
   FolderOpen,
   HardDrive,
   Monitor,
+  MessageCircle,
   Play,
   Power,
   RefreshCw,
@@ -124,7 +125,36 @@ export default function SettingsPage({
   const [activeTab, setActiveTab] = useState<SettingsTab>('all');
   const [confirmModal, setConfirmModal] = useState<ConfirmAction | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [chatPrivacy, setChatPrivacy] = useState<api.ChatPrivacy | null>(null);
+  const [chatPrivacyBusy, setChatPrivacyBusy] = useState('');
   const { streamerMode, setStreamerMode } = useLCUConnection();
+
+  useEffect(() => {
+    if (!lcuConnected || (activeTab !== 'all' && activeTab !== 'league')) {
+      if (!lcuConnected) setChatPrivacy(null);
+      return undefined;
+    }
+    let cancelled = false;
+    void apiActions.fetchLCUChatPrivacy().then((value) => {
+      if (!cancelled) setChatPrivacy(value);
+    }).catch(() => {
+      if (!cancelled) setChatPrivacy(null);
+    });
+    return () => { cancelled = true; };
+  }, [activeTab, apiActions, lcuConnected]);
+
+  const updateChatPrivacy = async (key: string, value: boolean) => {
+    setChatPrivacyBusy(key);
+    try {
+      const settings = await apiActions.updateLCUChatSettings({ [key]: value });
+      setChatPrivacy((current) => current ? { ...current, settings: { ...current.settings, ...settings } } : current);
+      setSettingsFeedback({ tone: 'success', message: 'League chat privacy updated.' });
+    } catch (reason: any) {
+      setSettingsFeedback({ tone: 'error', message: reason?.message || 'League chat privacy could not be updated.' });
+    } finally {
+      setChatPrivacyBusy('');
+    }
+  };
 
   const handleManualUpdateCheck = async () => {
     setCheckingUpdates(true);
@@ -135,7 +165,7 @@ export default function SettingsPage({
       } else if (res.error) {
         showToast('Update check failed', res.error, 'error');
       } else {
-        const ver = res.currentVersion || snapshot.Version || '2.9.2';
+        const ver = res.currentVersion || snapshot.Version || '2.10.0';
         showToast('Up to date', `You are using the latest version of RiftOps (v${ver}).`, 'success');
       }
     } catch (err: any) {
@@ -624,6 +654,31 @@ export default function SettingsPage({
                     </label>
                   </div>
                 )}
+
+                <div className="mt-4 pt-4 border-t border-white/5 space-y-3" aria-labelledby="chat-privacy-title">
+                  <div className="flex items-center gap-3">
+                    <span className="w-9 h-9 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-300"><MessageCircle className="w-4 h-4" /></span>
+                    <div><small>CHAT PRIVACY</small><h3 id="chat-privacy-title">League chat settings</h3><p>Control client notifications and typing visibility. RiftOps changes only the supported League fields.</p></div>
+                  </div>
+                  {!lcuConnected && <p className="text-xs text-text-dim">Connect League to read your current chat privacy settings.</p>}
+                  {lcuConnected && !chatPrivacy && <p className="text-xs text-text-dim">Chat privacy is unavailable for this League patch.</p>}
+                  {chatPrivacy && <div className="space-y-2">
+                    {[
+                      ['friendRequestToastsDisabled', 'Friend request toasts', 'Hide League toast notifications for new friend requests.'],
+                      ['linkClickWarningEnabled', 'Link click warning', 'Warn before opening links sent through League chat.'],
+                      ['messageNotificationsEnabled', 'Message notifications', 'Show notifications for incoming chat messages.'],
+                      ['showWhenTypingEnabled', 'Show when typing', 'Let friends see when you are typing.'],
+                      ['chatFilterDisabled', 'Chat filter', 'Keep League’s chat filter enabled for incoming messages.'],
+                    ].map(([key, label, description]) => {
+                      const raw = chatPrivacy.settings[key];
+                      const checked = key === 'chatFilterDisabled' ? !raw : raw;
+                      return <div key={key} className="flex items-center justify-between gap-4 p-3 rounded-xl bg-dark-bg/40 border border-white/5">
+                        <div className="flex flex-col gap-0.5"><span className="text-xs font-bold text-white">{label}</span><span className="text-[11px] text-text-dim">{description}</span></div>
+                        <label className="toggle"><input type="checkbox" aria-label={label} checked={Boolean(checked)} disabled={chatPrivacyBusy === key} onChange={(event) => { const next = key === 'chatFilterDisabled' ? !event.target.checked : event.target.checked; void updateChatPrivacy(key, next); }} /><span className="slider" /></label>
+                      </div>;
+                    })}
+                  </div>}
+                </div>
               </div>
             </section>
           )}
@@ -648,7 +703,7 @@ export default function SettingsPage({
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] font-bold tracking-wider text-text-dim uppercase">VERSION</span>
                     <div className="flex items-center gap-2">
-                      <strong className="text-xs font-mono font-medium text-white">{snapshot.Version ? `v${snapshot.Version}` : '2.9.2'}</strong>
+                      <strong className="text-xs font-mono font-medium text-white">{snapshot.Version ? `v${snapshot.Version}` : '2.10.0'}</strong>
                       <button
                         type="button"
                         disabled={checkingUpdates}

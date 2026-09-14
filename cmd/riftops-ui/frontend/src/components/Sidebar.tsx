@@ -1,4 +1,4 @@
-import { Activity, Command, Gem, History, PanelLeftClose, PanelLeftOpen, Radar, RadioTower, Settings, Sparkles, Swords, Wand2, Users } from 'lucide-react';
+import { Activity, BookOpen, Command, Gem, History, PanelLeftClose, PanelLeftOpen, Radar, RadioTower, Settings, Sparkles, Swords, Wand2, Users } from 'lucide-react';
 import { useState } from 'react';
 import type { Tab } from '../types';
 import { tabAvailable } from '../clientCapabilities';
@@ -9,11 +9,12 @@ import { useLocale } from '../localeContext';
 
 const NAV = [
   { key: 'dashboard' as Tab, icon: Radar, label: 'Home', mobileLabel: 'Home', hint: 'Summoner & quick actions', group: 'game' },
-  { key: 'play' as Tab, icon: Swords, label: 'Play & Draft', mobileLabel: 'Play', hint: 'Queue & auto pick/ban', group: 'game' },
+  { key: 'play' as Tab, icon: Swords, label: 'Play & Queue', mobileLabel: 'Play', hint: 'Queue & auto pick/ban', group: 'game' },
   { key: 'live' as Tab, icon: Activity, label: 'Live Game', mobileLabel: 'Live', hint: 'Matchup & build helper', group: 'game' },
   { key: 'social' as Tab, icon: Users, label: 'Friends', mobileLabel: 'Friends', hint: 'Friends & invites', group: 'game' },
   { key: 'history' as Tab, icon: History, label: 'Match History', mobileLabel: 'History', hint: 'Recent games & stats', group: 'game' },
   { key: 'skins' as Tab, icon: Sparkles, label: 'Skins & Splash', mobileLabel: 'Skins', hint: 'Catalog & profile studio', group: 'collection' },
+  { key: 'progress' as Tab, icon: BookOpen, label: 'Progress', mobileLabel: 'Progress', hint: 'Missions, mastery & rewards', group: 'collection' },
   { key: 'loot' as Tab, icon: Gem, label: 'Hextech Loot', mobileLabel: 'Loot', hint: 'Disenchant & craft', group: 'collection' },
   { key: 'qol' as Tab, icon: Wand2, label: 'Automations', mobileLabel: 'Tools', hint: 'Client tools & helpers', group: 'tools' },
   { key: 'remote' as Tab, icon: RadioTower, label: 'Phone Companion', mobileLabel: 'Phone', hint: 'Pair your smartphone', group: 'tools' },
@@ -49,7 +50,7 @@ export default function Sidebar({
   });
 
   const translatedLabel = (key: Tab, fallback: string) => {
-    const map: Partial<Record<Tab, string>> = { dashboard: 'nav.command', play: 'nav.play', live: 'nav.live', social: 'nav.social', history: 'nav.history', skins: 'nav.skins', loot: 'nav.loot', qol: 'nav.qol', remote: 'nav.remote', settings: 'nav.settings' };
+    const map: Partial<Record<Tab, string>> = { dashboard: 'nav.command', play: 'nav.play', live: 'nav.live', social: 'nav.social', history: 'nav.history', skins: 'nav.skins', progress: 'nav.progress', loot: 'nav.loot', qol: 'nav.qol', remote: 'nav.remote', settings: 'nav.settings' };
     return map[key] ? t(map[key]!) : fallback;
   };
   const renderNavItem = (item: typeof NAV[number]) => {

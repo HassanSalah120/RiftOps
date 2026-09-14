@@ -50,13 +50,14 @@ var appIco []byte
 var appPng []byte
 
 var (
-	backendEngine *engine.Engine
-	qolManager    *qol.Manager
-	featureData   *featurestore.Store
-	preferredPort = 24080
-	port          = preferredPort
-	clientURL     = fmt.Sprintf("http://127.0.0.1:%d", port)
-	portFileName  = "ui-port"
+	backendEngine    *engine.Engine
+	qolManager       *qol.Manager
+	qolPreferencesMu sync.Mutex
+	featureData      *featurestore.Store
+	preferredPort    = 24080
+	port             = preferredPort
+	clientURL        = fmt.Sprintf("http://127.0.0.1:%d", port)
+	portFileName     = "ui-port"
 
 	httpServer *http.Server
 
@@ -1547,6 +1548,10 @@ type lcuOverviewResponse struct {
 // request. This replaces three overlapping frontend polls and reuses the same
 // lockfile/phase read for status, health, and QoL.
 func lcuOverviewHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
@@ -1619,6 +1624,10 @@ func lcuOverviewHandler(w http.ResponseWriter, r *http.Request) {
 // the overview endpoint for clients that need a direct refresh (for example a
 // phone opening the Live Session page after a backgrounded tab resumes).
 func lcuActiveGameHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	ctx, cancel := context.WithTimeout(r.Context(), 1200*time.Millisecond)
@@ -1635,6 +1644,10 @@ func lcuActiveGameHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	lf := riotclient.GetLCULockfile()
 	connected := lf != nil
@@ -1700,6 +1713,10 @@ func checkLcuPaths() string {
 }
 
 func lcuProfileHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected — launch Riot Client first", http.StatusServiceUnavailable)
@@ -1716,6 +1733,10 @@ func lcuProfileHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuLaunchLeagueHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if err := riotclient.LaunchLeague(r.Context()); err != nil {
 		httpError(w, "Failed to launch League of Legends", http.StatusInternalServerError)
 		slog.Error("lcuLaunchLeagueHandler", "error", err)
@@ -1757,6 +1778,10 @@ func lcuMatchHistoryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuGameDetailHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -1767,8 +1792,8 @@ func lcuGameDetailHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "missing gameId param", http.StatusBadRequest)
 		return
 	}
-	var gameID int64
-	if _, err := fmt.Sscanf(gameIDStr, "%d", &gameID); err != nil {
+	gameID, err := strconv.ParseInt(strings.TrimSpace(gameIDStr), 10, 64)
+	if err != nil || gameID <= 0 {
 		httpError(w, "invalid gameId", http.StatusBadRequest)
 		return
 	}
@@ -1783,6 +1808,10 @@ func lcuGameDetailHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuSkinsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected — launch League of Legends first", http.StatusServiceUnavailable)
@@ -1799,6 +1828,10 @@ func lcuSkinsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuBackgroundChampionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected — launch League of Legends first", http.StatusServiceUnavailable)
@@ -1868,6 +1901,10 @@ func requireLCUPhase(w http.ResponseWriter, r *http.Request, lf *riotclient.Lock
 }
 
 func lcuAutoAcceptHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -1885,6 +1922,10 @@ func lcuAutoAcceptHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuDeclineReadyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -1902,6 +1943,10 @@ func lcuDeclineReadyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuAutoRequeueHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -1919,6 +1964,10 @@ func lcuAutoRequeueHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuStopQueueHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -1936,6 +1985,10 @@ func lcuStopQueueHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuQuitCustomHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2054,6 +2107,10 @@ func lcuCurrentLobbyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuAutoRolesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var body struct {
 		First  string `json:"first"`
 		Second string `json:"second"`
@@ -2067,6 +2124,10 @@ func lcuAutoRolesHandler(w http.ResponseWriter, r *http.Request) {
 	body.Second = strings.ToUpper(strings.TrimSpace(body.Second))
 	if !allowedRoles[body.First] || !allowedRoles[body.Second] {
 		httpError(w, "Roles must be TOP, JUNGLE, MIDDLE, BOTTOM, UTILITY, or FILL", http.StatusBadRequest)
+		return
+	}
+	if body.First == body.Second {
+		httpError(w, "Primary and secondary roles must be different", http.StatusBadRequest)
 		return
 	}
 	lf := riotclient.GetLCULockfile()
@@ -2123,6 +2184,10 @@ func lcuCustomStartHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuLootHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2211,6 +2276,10 @@ func lcuLootCraftHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuDodgeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2228,6 +2297,10 @@ func lcuDodgeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuAppearOfflineHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2249,6 +2322,10 @@ func lcuAppearOfflineHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuAvailabilityHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2305,6 +2382,10 @@ func lcuStatusMessageHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuProfileBackgroundHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2330,6 +2411,10 @@ func lcuProfileBackgroundHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuProfileIconHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2416,6 +2501,10 @@ func lcuErrorDetail(raw string) string {
 }
 
 func lcuHonorBallotHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2431,9 +2520,16 @@ func lcuHonorBallotHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuHonorPlayerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+		return
+	}
+	if !requireLCUPhase(w, r, lf, "EndOfGame", "PreEndOfGame", "WaitingForStats") {
 		return
 	}
 	var body struct {
@@ -2452,6 +2548,10 @@ func lcuHonorPlayerHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Honor player details are incomplete", http.StatusBadRequest)
 		return
 	}
+	if body.HonorType != "HEART" && body.HonorType != "HONORABLE" && body.HonorType != "SHOTCALLER" && body.HonorType != "GREAT" {
+		httpError(w, "Honor type is invalid", http.StatusBadRequest)
+		return
+	}
 	if err := lf.HonorPlayer(r.Context(), body.SummonerID, body.PUUID, body.HonorType, body.GameID); err != nil {
 		httpError(w, "Failed to honor player", http.StatusInternalServerError)
 		return
@@ -2461,6 +2561,10 @@ func lcuHonorPlayerHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuPlayAgainHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2478,6 +2582,10 @@ func lcuPlayAgainHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuClaimEventRewardsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2493,6 +2601,10 @@ func lcuClaimEventRewardsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuGameflowPhaseHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -2594,7 +2706,11 @@ func champSelectLockfile(w http.ResponseWriter, r *http.Request) *riotclient.Loc
 // session shape, the LCU remains the final authority.
 func validateChampSelectActionPayload(payload []byte, actionID, championID int) error {
 	var session struct {
-		Actions [][]struct {
+		QueueID  int    `json:"queueId"`
+		GameMode string `json:"gameMode"`
+		GameType string `json:"gameType"`
+		MapID    int    `json:"mapId"`
+		Actions  [][]struct {
 			ID         *int   `json:"id"`
 			ChampionID int    `json:"championId"`
 			Completed  bool   `json:"completed"`
@@ -2608,6 +2724,10 @@ func validateChampSelectActionPayload(payload []byte, actionID, championID int) 
 		return nil
 	}
 	found := false
+	hasArenaMetadata := session.QueueID != 0 || session.MapID != 0 || strings.TrimSpace(session.GameMode) != "" || strings.TrimSpace(session.GameType) != ""
+	isArena := session.QueueID == 1700 || session.QueueID == 1710 || session.MapID == 30 ||
+		strings.EqualFold(strings.TrimSpace(session.GameMode), "ARENA") || strings.EqualFold(strings.TrimSpace(session.GameMode), "CHERRY") ||
+		strings.EqualFold(strings.TrimSpace(session.GameType), "ARENA") || strings.EqualFold(strings.TrimSpace(session.GameType), "CHERRY")
 	for _, turn := range session.Actions {
 		for _, action := range turn {
 			if action.ID == nil {
@@ -2615,8 +2735,14 @@ func validateChampSelectActionPayload(payload []byte, actionID, championID int) 
 			}
 			if *action.ID == actionID {
 				found = true
+				if action.Type != "pick" && action.Type != "ban" {
+					return fmt.Errorf("champion-select action %d has an unsupported type", actionID)
+				}
 				if championID == riotclient.ArenaBraveryChampionID && action.Type != "pick" {
 					return fmt.Errorf("Arena Bravery is only valid for a pick action")
+				}
+				if championID == riotclient.ArenaBraveryChampionID && hasArenaMetadata && !isArena {
+					return fmt.Errorf("Arena Bravery is only valid in an Arena champion-select session")
 				}
 				if action.Completed {
 					return fmt.Errorf("champion-select action %d is already complete", actionID)
@@ -2963,6 +3089,181 @@ func lcuFriendsHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+func mergeQoLPreferences(current qol.Preferences, patch map[string]json.RawMessage) (qol.Preferences, error) {
+	decode := func(key string, target any) error {
+		raw, ok := patch[key]
+		if !ok {
+			return nil
+		}
+		return json.Unmarshal(raw, target)
+	}
+	if err := decode("autoAccept", &current.AutoAccept); err != nil {
+		return current, err
+	}
+	if err := decode("autoAcceptDelaySeconds", &current.AutoAcceptDelaySeconds); err != nil {
+		return current, err
+	}
+	if err := decode("autoAcceptRandomDelay", &current.AutoAcceptRandomDelay); err != nil {
+		return current, err
+	}
+	if err := decode("autoPlayAgain", &current.AutoPlayAgain); err != nil {
+		return current, err
+	}
+	if err := decode("autoHonor", &current.AutoHonor); err != nil {
+		return current, err
+	}
+	if err := decode("autoStartQueue", &current.AutoStartQueue); err != nil {
+		return current, err
+	}
+	if err := decode("autoClaimRewards", &current.AutoClaimRewards); err != nil {
+		return current, err
+	}
+	if err := decode("grindMode", &current.GrindMode); err != nil {
+		return current, err
+	}
+	if err := decode("rolePresets", &current.RolePresets); err != nil {
+		return current, err
+	}
+	if raw, ok := patch["playFlow"]; ok {
+		if err := mergePlayFlowPreferences(&current, raw); err != nil {
+			return current, err
+		}
+	}
+	if current.AutoAcceptDelaySeconds < 0 {
+		current.AutoAcceptDelaySeconds = 0
+	} else if current.AutoAcceptDelaySeconds > qol.MaxAutoAcceptDelaySeconds {
+		current.AutoAcceptDelaySeconds = qol.MaxAutoAcceptDelaySeconds
+	}
+	if current.PlayFlow != nil {
+		// Root QoL controls remain the background worker's source of truth. Keep
+		// the mirrored Play & Queue view in sync when QoLPanel updates one of
+		// those fields without sending a playFlow patch.
+		if _, hasPlayFlow := patch["playFlow"]; !hasPlayFlow {
+			flow := *current.PlayFlow
+			flow.AutoAccept = current.AutoAccept
+			flow.AutoAcceptDelaySeconds = current.AutoAcceptDelaySeconds
+			flow.AutoAcceptRandomDelay = current.AutoAcceptRandomDelay
+			flow.AutoQueue = current.AutoStartQueue
+			normalized, err := qol.NormalizePlayFlowPreferences(flow)
+			if err != nil {
+				return current, err
+			}
+			current.PlayFlow = &normalized
+		} else {
+			// A Play & Queue update also feeds the background worker's shared
+			// fields so there is only one visible editor for match-flow behavior.
+			flow := *current.PlayFlow
+			var flowPatch map[string]json.RawMessage
+			_ = json.Unmarshal(patch["playFlow"], &flowPatch)
+			if _, present := flowPatch["autoAccept"]; !present {
+				flow.AutoAccept = current.AutoAccept
+			}
+			if _, present := flowPatch["autoAcceptDelaySeconds"]; !present {
+				flow.AutoAcceptDelaySeconds = current.AutoAcceptDelaySeconds
+			}
+			if _, present := flowPatch["autoAcceptRandomDelay"]; !present {
+				flow.AutoAcceptRandomDelay = current.AutoAcceptRandomDelay
+			}
+			if _, present := flowPatch["autoQueue"]; !present {
+				flow.AutoQueue = current.AutoStartQueue
+			}
+			normalized, err := qol.NormalizePlayFlowPreferences(flow)
+			if err != nil {
+				return current, err
+			}
+			current.PlayFlow = &normalized
+			flow = normalized
+			current.AutoAccept = flow.AutoAccept
+			current.AutoAcceptDelaySeconds = flow.AutoAcceptDelaySeconds
+			current.AutoAcceptRandomDelay = flow.AutoAcceptRandomDelay
+			current.AutoStartQueue = flow.AutoQueue
+		}
+	}
+	return current, nil
+}
+
+func mergePlayFlowPreferences(current *qol.Preferences, raw json.RawMessage) error {
+	if current == nil {
+		return fmt.Errorf("playFlow preferences are unavailable")
+	}
+	var patch map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &patch); err != nil || patch == nil {
+		return fmt.Errorf("playFlow preferences must be an object")
+	}
+	known := map[string]bool{
+		"primaryRole": true, "secondaryRole": true,
+		"pickChampionId": true, "fallbackPickChampionId": true,
+		"banChampionId": true, "fallbackBanChampionId": true,
+		"pickRunePageId": true, "fallbackPickRunePageId": true,
+		"pickTimingMode": true, "pickTimingSeconds": true,
+		"banTimingMode": true, "banTimingSeconds": true,
+		"selectedQueue": true, "autoRoles": true, "autoQueue": true,
+		"autoAccept": true, "autoAcceptDelaySeconds": true,
+		"autoAcceptRandomDelay": true, "autoBan": true, "autoPick": true, "roleAwarePicks": true, "rolePickPlans": true, "autoPickOrderToLast": true, "autoPickOrderTarget": true,
+		"instantLock": true, "autoRoleQuestLoadout": true, "arenaBraveryPick": true,
+	}
+	for key := range patch {
+		if !known[key] {
+			return fmt.Errorf("unsupported playFlow preference %q", key)
+		}
+	}
+	flow := qol.DefaultPlayFlowPreferences()
+	if current.PlayFlow != nil {
+		flow = *current.PlayFlow
+	}
+	decode := func(key string, target any) error {
+		value, ok := patch[key]
+		if !ok {
+			return nil
+		}
+		return json.Unmarshal(value, target)
+	}
+	fields := []struct {
+		key    string
+		target any
+	}{
+		{"primaryRole", &flow.PrimaryRole}, {"secondaryRole", &flow.SecondaryRole},
+		{"pickChampionId", &flow.PickChampionID}, {"fallbackPickChampionId", &flow.FallbackPickChampionID},
+		{"banChampionId", &flow.BanChampionID}, {"fallbackBanChampionId", &flow.FallbackBanChampionID},
+		{"pickRunePageId", &flow.PickRunePageID}, {"fallbackPickRunePageId", &flow.FallbackPickRunePageID},
+		{"pickTimingMode", &flow.PickTimingMode}, {"pickTimingSeconds", &flow.PickTimingSeconds},
+		{"banTimingMode", &flow.BanTimingMode}, {"banTimingSeconds", &flow.BanTimingSeconds},
+		{"selectedQueue", &flow.SelectedQueue}, {"autoRoles", &flow.AutoRoles}, {"autoQueue", &flow.AutoQueue},
+		{"autoAccept", &flow.AutoAccept}, {"autoAcceptDelaySeconds", &flow.AutoAcceptDelaySeconds},
+		{"autoAcceptRandomDelay", &flow.AutoAcceptRandomDelay}, {"autoBan", &flow.AutoBan}, {"autoPick", &flow.AutoPick}, {"roleAwarePicks", &flow.RoleAwarePicks}, {"autoPickOrderToLast", &flow.AutoPickOrderToLast}, {"autoPickOrderTarget", &flow.AutoPickOrderTarget},
+		{"instantLock", &flow.InstantLock}, {"autoRoleQuestLoadout", &flow.AutoRoleQuestLoadout}, {"arenaBraveryPick", &flow.ArenaBraveryPick},
+	}
+	for _, field := range fields {
+		if err := decode(field.key, field.target); err != nil {
+			return fmt.Errorf("invalid playFlow preference %q: %w", field.key, err)
+		}
+	}
+	if encodedPlans, ok := patch["rolePickPlans"]; ok {
+		var planPatch map[string]json.RawMessage
+		if err := json.Unmarshal(encodedPlans, &planPatch); err != nil || planPatch == nil {
+			return fmt.Errorf("invalid playFlow preference %q: must be an object", "rolePickPlans")
+		}
+		plans := make(map[string]qol.RolePickPlan, len(flow.RolePickPlans)+len(planPatch))
+		for role, plan := range flow.RolePickPlans {
+			plans[role] = plan
+		}
+		for role, encodedPlan := range planPatch {
+			var plan qol.RolePickPlan
+			if err := json.Unmarshal(encodedPlan, &plan); err != nil {
+				return fmt.Errorf("invalid role pick plan %q: %w", role, err)
+			}
+			plans[role] = plan
+		}
+		flow.RolePickPlans = plans
+	}
+	normalized, err := qol.NormalizePlayFlowPreferences(flow)
+	if err != nil {
+		return err
+	}
+	current.PlayFlow = &normalized
+	return nil
+}
+
 func qolPreferencesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == http.MethodGet {
@@ -2973,8 +3274,17 @@ func qolPreferencesHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var preferences qol.Preferences
-	if err := json.NewDecoder(r.Body).Decode(&preferences); err != nil {
+	var patch map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		httpError(w, "Invalid QoL preferences", http.StatusBadRequest)
+		return
+	}
+	// Merge and persist under one lock so two quick switch changes cannot read
+	// the same old snapshot and overwrite each other's fields.
+	qolPreferencesMu.Lock()
+	defer qolPreferencesMu.Unlock()
+	preferences, err := mergeQoLPreferences(qolManager.Preferences(), patch)
+	if err != nil {
 		httpError(w, "Invalid QoL preferences", http.StatusBadRequest)
 		return
 	}
@@ -3002,6 +3312,10 @@ func qolStateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuHealthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -3030,6 +3344,10 @@ func lcuHealthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuServerStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	region := r.URL.Query().Get("region")
 	if region == "" {
 		region = "NA"
@@ -3068,10 +3386,21 @@ func qolQueuePresetsHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if body.Queue == "" || body.Preset.First == "" || body.Preset.Second == "" {
-		httpError(w, "Queue and both roles are required", http.StatusBadRequest)
+	body.Queue = strings.ToLower(strings.TrimSpace(body.Queue))
+	if body.Queue == "" {
+		httpError(w, "Queue is required", http.StatusBadRequest)
 		return
 	}
+	if _, ok := qol.QueueKeyLabels()[body.Queue]; !ok {
+		httpError(w, "That queue preset is not supported", http.StatusBadRequest)
+		return
+	}
+	normalizedPreset, presetErr := qol.NormalizeRolePreset(body.Preset)
+	if presetErr != nil {
+		httpError(w, presetErr.Error(), http.StatusBadRequest)
+		return
+	}
+	body.Preset = normalizedPreset
 	prefs := qolManager.Preferences()
 	if prefs.RolePresets == nil {
 		prefs.RolePresets = make(map[string]qol.RolePreset)
@@ -3085,6 +3414,14 @@ func qolQueuePresetsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func lcuAssetProxyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !remoteAssetPathAllowed(r.URL.Path) {
+		httpError(w, "Asset path is not allowed", http.StatusNotFound)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		http.Error(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -3116,6 +3453,10 @@ func lcuAssetProxyHandler(w http.ResponseWriter, r *http.Request) {
 // through the same-origin API. Keeping this behind /api avoids frontend dev
 // servers and packaged builds taking different metadata paths.
 func lcuProfileIconMetadataHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		http.Error(w, "LCU not connected", http.StatusServiceUnavailable)
@@ -3136,6 +3477,10 @@ func lcuProfileIconMetadataHandler(w http.ResponseWriter, r *http.Request) {
 // for the signed-in account. Catalogue metadata remains a separate discovery
 // source and must never be treated as ownership proof.
 func lcuOwnedProfileIconsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	lf := riotclient.GetLCULockfile()
 	if lf == nil {
 		http.Error(w, "LCU not connected", http.StatusServiceUnavailable)

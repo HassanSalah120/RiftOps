@@ -4,14 +4,15 @@ import {
   Map, Pencil, RefreshCw, RotateCcw, Search, Shield, Sparkles, Swords, Users, Volume2, VolumeX, WifiOff,
 } from 'lucide-react';
 import {
-  DDBASE, ddChampionIcon, fetchDDChampions, fetchDDragonVersion,
+  DDBASE, ddChampionIcon, fetchDDragonVersion,
   fetchLCUChampSelect, fetchLCUChampSelectBannable, fetchLCUChampSelectPickable,
-  fetchLCUChampSelectPickOrderSwaps, fetchLCUChampSelectPositionSwaps,
+  fetchLCUChampSelectPickOrderSwaps, fetchLCUChampSelectPositionSwaps, fetchLCUChampSelectChampionSwaps, fetchLCUChampSelectOngoingSwaps, clearLCUChampSelectOngoingSwap,
   fetchLCUChampSelectSkins, fetchLCURunePages, mutateLCUChampSelectSwap, rerollLCUChampSelect,
-  selectLCURunePage, submitLCUChampSelectAction, swapLCUChampSelectBench,
+  mutateLCUChampSelectChampionSwap, selectLCURunePage, submitLCUChampSelectAction, swapLCUChampSelectBench,
   updateLCUChampSelectSelection, muteLCUChampSelectPlayer,
 } from '../api';
-import type { DDChampion, DDChampionList, LCURunePage } from '../api';
+import type { DDChampion, LCURunePage, OngoingSwap } from '../api';
+import { loadChampionCatalog } from '../leagueCatalog';
 import {
   currentChampSelectTurn,
   firstLocalPendingPick,
@@ -53,6 +54,7 @@ type Session = Omit<BaseChampSelectSession, 'timer'> & {
   theirTeam?: TeamMember[];
   benchEnabled?: boolean;
   benchChampionIds?: number[];
+  championSwaps?: ChampSelectSwap[];
 };
 
 type Skin = {
@@ -109,7 +111,7 @@ function swapNumber(swap: ChampSelectSwap, fields: string[]): number {
   return -1;
 }
 
-function swapState(swap: ChampSelectSwap): string {
+function swapState(swap: { state?: unknown; status?: unknown }): string {
   return String(swap.state || swap.status || '').trim().toUpperCase();
 }
 
@@ -130,7 +132,7 @@ function swapIsPending(swap: ChampSelectSwap): boolean {
   return state.includes('PENDING') || state.includes('REQUEST') || state.includes('OFFER');
 }
 
-function swapIsFinished(swap: ChampSelectSwap): boolean {
+function swapIsFinished(swap: { state?: unknown; status?: unknown }): boolean {
   const state = swapState(swap);
   return state.includes('ACCEPT') || state.includes('DECLIN') || state.includes('CANCEL') || state.includes('COMPLETE') || state.includes('REJECT');
 }
@@ -169,6 +171,7 @@ export default function ChampSelectWorkspace({
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
   const [actionFailures, setActionFailures] = useState<ActionFailure[]>([]);
+  const [ongoingSwaps, setOngoingSwaps] = useState<{ champion: OngoingSwap | null; pickOrder: OngoingSwap | null; position: OngoingSwap | null }>({ champion: null, pickOrder: null, position: null });
   const [query, setQuery] = useState('');
   const [selectedChampion, setSelectedChampion] = useState(0);
   const [timerDeadline, setTimerDeadline] = useState(0);
@@ -188,10 +191,12 @@ export default function ChampSelectWorkspace({
     if (!connected || !active || !pageVisible) return;
     if (!loadedOnce.current) setLoading(true);
     try {
-      const [rawSession, pickOrderSwaps, positionSwaps] = await Promise.all([
+      const [rawSession, pickOrderSwaps, positionSwaps, championSwaps, ongoing] = await Promise.all([
         fetchLCUChampSelect(),
         fetchLCUChampSelectPickOrderSwaps().catch(() => []),
         fetchLCUChampSelectPositionSwaps().catch(() => []),
+        fetchLCUChampSelectChampionSwaps().catch(() => []),
+        fetchLCUChampSelectOngoingSwaps().catch(() => ({ champion: null, pickOrder: null, position: null })),
       ]);
       const next = rawSession as Session;
       // Some client builds embed pickOrderSwaps in the session while others
@@ -201,13 +206,16 @@ export default function ChampSelectWorkspace({
         ...next,
         pickOrderSwaps: pickOrderSwaps.length ? pickOrderSwaps : next.pickOrderSwaps || [],
         positionSwaps: positionSwaps.length ? positionSwaps : next.positionSwaps || [],
+        championSwaps: championSwaps.length ? championSwaps.map((swap) => ({ ...swap })) : next.championSwaps || [],
       });
+      setOngoingSwaps(ongoing);
       // Anchor the countdown to wall-clock time so browser tab throttling or
       // slow polls cannot make the displayed timer drift from League's clock.
       setTimerDeadline(Date.now() + readTimeLeft(next.timer));
       setError('');
     } catch (reason: any) {
       setSession(null);
+      setOngoingSwaps({ champion: null, pickOrder: null, position: null });
       setError(reason?.message || 'Champion Select session is unavailable.');
     } finally {
       loadedOnce.current = true;
@@ -220,7 +228,7 @@ export default function ChampSelectWorkspace({
     catalogueLoaded.current = true;
     const [ddVersion, ddChampions, availablePick, availableBan, availableSkins, pages] = await Promise.all([
       fetchDDragonVersion().catch(() => ({ version: version })),
-      fetchDDChampions().catch(() => ({ data: {} } as DDChampionList)),
+      loadChampionCatalog(),
       fetchLCUChampSelectPickable().catch(() => []),
       fetchLCUChampSelectBannable().catch(() => []),
       fetchLCUChampSelectSkins().catch(() => []),
@@ -228,7 +236,7 @@ export default function ChampSelectWorkspace({
     ]);
     setVersion(ddVersion.version || version);
     const mapped: Record<number, DDChampion> = {};
-    Object.values(ddChampions.data || {}).forEach((champ) => { mapped[Number(champ.key)] = champ; });
+    Object.values(ddChampions).forEach((champ) => { mapped[Number(champ.key)] = champ; });
     setChampions(mapped);
     setPickable(availablePick.map(Number).filter(Boolean));
     setBannable(availableBan.map(Number).filter(Boolean));
@@ -297,7 +305,12 @@ export default function ChampSelectWorkspace({
   const swapEntries = useMemo(() => [
     ...(session?.pickOrderSwaps || []).map((swap) => ({ kind: 'pick-order' as const, swap })),
     ...(session?.positionSwaps || []).map((swap) => ({ kind: 'position' as const, swap })),
-  ].filter(({ swap }) => !swapIsFinished(swap)), [session?.pickOrderSwaps, session?.positionSwaps]);
+    ...(session?.championSwaps || []).map((swap) => ({ kind: 'champion' as const, swap })),
+  ].filter(({ swap }) => !swapIsFinished(swap)), [session?.championSwaps, session?.pickOrderSwaps, session?.positionSwaps]);
+  const ongoingEntries = useMemo(() => (Object.entries(ongoingSwaps) as Array<[keyof typeof ongoingSwaps, OngoingSwap | null]>).filter((entry): entry is [keyof typeof ongoingSwaps, OngoingSwap] => {
+    const swap = entry[1];
+    return Boolean(swap && !swapIsFinished(swap));
+  }), [ongoingSwaps]);
   const isAllyAction = useCallback((action: SelectAction) => action.isAllyAction !== undefined ? action.isAllyAction : myCells.has(action.actorCellId), [myCells]);
   const isPlanningDeclaration = !!planningPick && pending === planningPick && !isLocalTurn;
   const canChooseChampion = hasChampSelectActionID(pending) && (isLocalTurn || isPlanningDeclaration) && (pending.type === 'pick' || pending.type === 'ban');
@@ -364,15 +377,16 @@ export default function ChampSelectWorkspace({
     setRunePages((pages) => pages.map((page) => ({ ...page, current: page.id === id, isActive: page.id === id })));
   };
 
-  const runSwap = (kind: 'pick-order' | 'position', swap: ChampSelectSwap, action: 'request' | 'accept' | 'cancel' | 'decline') => {
+  const runSwap = (kind: 'champion' | 'pick-order' | 'position', swap: ChampSelectSwap, action: 'request' | 'accept' | 'cancel' | 'decline') => {
     const id = swapNumber(swap, ['id', 'swapId', 'cellId', 'targetCellId', 'otherCellId']);
     if (id < 0) {
       notify('League did not provide a valid swap target yet.', 'error');
       return;
     }
-    const label = kind === 'pick-order' ? 'pick-order' : 'role';
+    const label = kind === 'champion' ? 'champion' : kind === 'pick-order' ? 'pick-order' : 'role';
     const actionLabel = action === 'request' ? 'requested' : action === 'accept' ? 'accepted' : action === 'decline' ? 'declined' : 'cancelled';
-    void runAction(`swap-${kind}-${id}-${action}`, () => mutateLCUChampSelectSwap(kind, id, action), `${label} swap ${actionLabel}.`);
+    const mutate = kind === 'champion' ? () => mutateLCUChampSelectChampionSwap(id, action) : () => mutateLCUChampSelectSwap(kind, id, action);
+    void runAction(`swap-${kind}-${id}-${action}`, mutate, `${label} swap ${actionLabel}.`);
   };
 
   const mutePlayer = (member: TeamMember, muted: boolean) => {
@@ -436,7 +450,7 @@ export default function ChampSelectWorkspace({
                   const requester = swapNumber(swap, ['requesterCellId', 'requestingCellId']);
                   const pendingSwap = swapIsPending(swap);
                   const localRequester = requester >= 0 && requester === session.localPlayerCellId;
-                  const title = kind === 'pick-order' ? 'Pick-order swap' : 'Role swap';
+                  const title = kind === 'champion' ? 'Champion swap' : kind === 'pick-order' ? 'Pick-order swap' : 'Role swap';
                   const target = swapTargetName(swap, session.myTeam || [], session.localPlayerCellId);
                   const disabled = busy !== '' || id < 0;
                   return <div className="champ-select-workspace__swap" key={`${kind}-${id}-${index}`}>
@@ -448,6 +462,7 @@ export default function ChampSelectWorkspace({
                     </div>
                   </div>;
                 })}
+                {ongoingEntries.map(([kind, swap]) => <div className="champ-select-workspace__swap-notice" key={`ongoing-${kind}-${swap.id}`}><span><strong>{kind === 'champion' ? 'Champion' : kind === 'pickOrder' ? 'Pick-order' : 'Position'} swap in progress</strong><small>{swap.state || 'Waiting for League'}</small></span><button type="button" onClick={() => void runAction(`clear-${kind}`, () => clearLCUChampSelectOngoingSwap(kind, Number(swap.id)), 'Swap notification dismissed.')} disabled={busy !== ''}>Dismiss</button></div>)}
               </div>
             </div>
 

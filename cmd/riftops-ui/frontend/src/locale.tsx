@@ -6,8 +6,8 @@ type Messages = Record<string, string>;
 
 const messages: Record<Locale, Messages> = {
   en: {
-    'nav.command': 'Home', 'nav.play': 'Play & Draft', 'nav.live': 'Live Game', 'nav.social': 'Friends',
-    'nav.history': 'Match History', 'nav.skins': 'Skins & Splash', 'nav.loot': 'Hextech Loot', 'nav.qol': 'Automations',
+    'nav.command': 'Home', 'nav.play': 'Play & Queue', 'nav.live': 'Live Game', 'nav.social': 'Friends',
+    'nav.history': 'Match History', 'nav.skins': 'Skins & Splash', 'nav.progress': 'Progress', 'nav.loot': 'Hextech Loot', 'nav.qol': 'Automations',
     'nav.remote': 'Phone Companion', 'nav.settings': 'Settings', 'nav.socialHint': 'Friends and invitations',
     'social.title': 'Social Center', 'social.description': 'Friends, requests, and lobby invitations from the local League Client.',
     'social.search': 'Search friends or Riot ID…', 'social.all': 'All', 'social.online': 'Online', 'social.favorites': 'Favorites',
@@ -17,7 +17,7 @@ const messages: Record<Locale, Messages> = {
   },
   ar: {
     'nav.command': 'الرئيسية', 'nav.play': 'الردهة والاختيار', 'nav.live': 'اللعبة المباشرة', 'nav.social': 'الأصدقاء',
-    'nav.history': 'سجل المباريات', 'nav.skins': 'المظاهر والملف', 'nav.loot': 'غنائم هيكستيك', 'nav.qol': 'الأتمتة والأدوات',
+    'nav.history': 'سجل المباريات', 'nav.skins': 'المظاهر والملف', 'nav.progress': 'التقدم', 'nav.loot': 'غنائم هيكستيك', 'nav.qol': 'الأتمتة والأدوات',
     'nav.remote': 'مرافق الهاتف', 'nav.settings': 'الإعدادات', 'nav.socialHint': 'الأصدقاء والدعوات',
     'social.title': 'مركز الأصدقاء', 'social.description': 'الأصدقاء والطلبات ودعوات الردهة من عميل League المحلي.',
     'social.search': 'ابحث عن صديق أو Riot ID…', 'social.all': 'الكل', 'social.online': 'متصل', 'social.favorites': 'المفضلة',

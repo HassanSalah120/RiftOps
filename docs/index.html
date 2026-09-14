@@ -4,14 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RiftOps — The Local-First League Operations Deck</title>
-  <meta name="description" content="The local-first League of Legends operations deck for Windows and macOS. 100% Ban-Safe, zero-memory companion. Control champ select from your phone, track live games, and explore your skin vault." />
+  <meta name="description" content="The local-first League of Legends operations deck for Windows and macOS. Role-aware draft safety, named champion and skin catalogs, progress tracking, and zero-memory local automation." />
   <meta name="theme-color" content="#030a16" />
 
   <!-- OpenGraph / Social Meta -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://hassansalah120.github.io/RiftOps/" />
   <meta property="og:title" content="RiftOps — The Modern League Operations Deck" />
-  <meta property="og:description" content="100% Ban-Safe, zero-memory companion for League of Legends. Explore skins, manage loot, automate queue loops, and control champ select from your phone." />
+  <meta property="og:description" content="Role-aware, 100% Ban-Safe League companion with queue diagnostics, named champion and skin catalogs, progress tracking, and local-first automation." />
   <meta property="og:image" content="https://hassansalah120.github.io/RiftOps/assets/screenshots/command-center.png" />
 
   <!-- Favicons -->
@@ -38,11 +38,11 @@
       <a href="#" class="brand">
         <img src="assets/branding/riftops-logo.png" alt="RiftOps Logo" class="brand-crest" width="36" height="36" />
         <span class="brand-title">RiftOps</span>
-        <span class="brand-version">v2.9.2</span>
+        <span class="brand-version">v2.10.0</span>
       </a>
 
       <nav class="nav-links">
-        <a href="#showcase">11 Decks</a>
+        <a href="#showcase">12 Decks</a>
         <a href="#features">Features</a>
         <a href="#safety">Ban-Safety</a>
         <a href="#phone">Phone Companion</a>
@@ -56,7 +56,7 @@
           </svg>
           <span>Star on GitHub</span>
         </a>
-        <a href="#download" class="btn-gold" id="header-download-btn">Download v2.9.2</a>
+        <a href="#download" class="btn-gold" id="header-download-btn">Download v2.10.0</a>
       </div>
     </div>
   </header>
@@ -75,7 +75,7 @@
       </h1>
 
       <p class="hero-description">
-        Launch Riot titles, explore your entire 1,940+ skin collection, automate grind workflows, track real-time match telemetry, and control champion select from your smartphone.
+        Launch Riot titles, queue with role-aware draft safety, explore named champion and skin data, review progress and rewards, track live matches, and control champion select from your smartphone.
       </p>
 
       <div class="hero-buttons">
@@ -128,12 +128,12 @@
     </div>
   </section>
 
-  <!-- Interactive 11-Deck Showcase Section -->
+  <!-- Interactive 12-Deck Showcase Section -->
   <section id="showcase" class="section showcase-section">
     <div class="container">
       <div class="section-header text-center">
         <span class="kicker">EXPLORE THE ARSENAL</span>
-        <h2 class="section-title">11 Specialized Workspaces</h2>
+        <h2 class="section-title">12 Specialized Workspaces</h2>
         <p class="section-desc">Click any deck below to inspect its dedicated feature set and authentic Hextech UI.</p>
       </div>
 
@@ -149,6 +149,7 @@
           <button class="deck-tab" data-target="tab-live">📡 Live Session</button>
           <button class="deck-tab" data-target="tab-social">👥 Social Center</button>
           <button class="deck-tab" data-target="tab-history">📈 Match History</button>
+          <button class="deck-tab" data-target="tab-progress">📊 Progress</button>
           <button class="deck-tab" data-target="tab-settings">⚙️ Settings & Switcher</button>
           <button class="deck-tab" data-target="tab-remote">📱 Phone Companion</button>
         </div>
@@ -444,6 +445,38 @@
           </div>
         </div>
 
+        <!-- Progress -->
+        <div class="deck-panel" id="tab-progress">
+          <div class="deck-preview-card">
+            <div class="preview-img-container">
+              <img src="assets/screenshots/command-center.png" alt="Progress workspace" />
+            </div>
+            <div class="deck-highlights">
+              <div class="highlight-item">
+                <div class="hl-icon">📚</div>
+                <div>
+                  <h4>Missions & Objectives</h4>
+                  <p>Track active objectives, series context, rewards, and expiry windows before your next queue.</p>
+                </div>
+              </div>
+              <div class="highlight-item">
+                <div class="hl-icon">🏅</div>
+                <div>
+                  <h4>Named Champion Mastery</h4>
+                  <p>Readable champion names, levels, points, milestones, and recent mastery changes replace raw LCU IDs.</p>
+                </div>
+              </div>
+              <div class="highlight-item">
+                <div class="hl-icon">🎁</div>
+                <div>
+                  <h4>Reviewed Rewards</h4>
+                  <p>Inspect reward contents and selection limits, then confirm choices explicitly before sending them to League.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Settings Deck -->
         <div class="deck-panel" id="tab-settings">
           <div class="deck-preview-card">
@@ -542,13 +575,25 @@
         <div class="feature-card">
           <div class="feat-icon-badge purple">💎</div>
           <h3>Cosmetic Vault & Skin Studio</h3>
-          <p>Explore all 1,940+ skins with real ownership indicators, splash artwork, chromas, and craftable shard inventory tracking.</p>
+          <p>Explore named champions and 1,940+ skins with real ownership indicators, splash artwork, chromas, and craftable shard inventory tracking.</p>
         </div>
 
         <div class="feature-card">
           <div class="feat-icon-badge gold">🤖</div>
           <h3>Grind Mode Automations</h3>
-          <p>Automate repetitive client tasks: auto-accept queue pops, auto-return to lobby post-match, auto-honor teammates, and inspect read-only queue and account diagnostics.</p>
+          <p>Run explicit session-only Full Auto with queue diagnostics, restriction warnings, auto-accept queue pops, post-game actions, and safe stop behavior.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feat-icon-badge blue">🎯</div>
+          <h3>Role-Aware Draft Safety</h3>
+          <p>Use lane-specific primary and fallback picks, wait safely for Fill assignment, protect manual hovers, and never submit a blind champion choice.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feat-icon-badge green">📊</div>
+          <h3>Progress & Reviewed Rewards</h3>
+          <p>Read missions, named champion mastery, and League loadouts; inspect reward contents and limits before explicitly confirming a selection.</p>
         </div>
 
         <div class="feature-card">
@@ -752,7 +797,7 @@
           <h3>Windows Desktop</h3>
           <p class="dl-os-desc">For Windows 10 and Windows 11 (64-bit)</p>
           <div class="dl-tags">
-            <span class="dl-version-tag">v2.9.2</span>
+            <span class="dl-version-tag">v2.10.0</span>
             <span>Setup Installer</span>
           </div>
           <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn-gold btn-block" id="dl-btn-win-setup">
@@ -767,7 +812,7 @@
           <h3>macOS Desktop</h3>
           <p class="dl-os-desc">For macOS 12 Monterey and newer</p>
           <div class="dl-tags">
-            <span class="dl-version-tag">v2.9.2</span>
+            <span class="dl-version-tag">v2.10.0</span>
             <span>WebKit Native</span>
             <span>Universal (.zip)</span>
           </div>

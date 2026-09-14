@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,15 +24,190 @@ type RolePreset struct {
 	Second string `json:"second"`
 }
 
+// RolePickPlan stores the champion and rune choices used after League assigns
+// a concrete lane. FILL is intentionally not a key: League must resolve it to
+// an actual lane before the plan can be used.
+type RolePickPlan struct {
+	PickChampionID         int `json:"pickChampionId"`
+	FallbackPickChampionID int `json:"fallbackPickChampionId"`
+	PickRunePageID         int `json:"pickRunePageId"`
+	FallbackPickRunePageID int `json:"fallbackPickRunePageId"`
+}
+
+// PlayFlowPreferences is the validated policy used by Play & Queue. The
+// browser keeps its legacy riftops.playFlow copy for compatibility, while the
+// backend stores the canonical copy so every mutation starts from validated
+// values.
+type PlayFlowPreferences struct {
+	PrimaryRole            string                  `json:"primaryRole"`
+	SecondaryRole          string                  `json:"secondaryRole"`
+	PickChampionID         int                     `json:"pickChampionId"`
+	FallbackPickChampionID int                     `json:"fallbackPickChampionId"`
+	BanChampionID          int                     `json:"banChampionId"`
+	FallbackBanChampionID  int                     `json:"fallbackBanChampionId"`
+	PickRunePageID         int                     `json:"pickRunePageId"`
+	FallbackPickRunePageID int                     `json:"fallbackPickRunePageId"`
+	PickTimingMode         string                  `json:"pickTimingMode"`
+	PickTimingSeconds      int                     `json:"pickTimingSeconds"`
+	BanTimingMode          string                  `json:"banTimingMode"`
+	BanTimingSeconds       int                     `json:"banTimingSeconds"`
+	SelectedQueue          int                     `json:"selectedQueue"`
+	AutoRoles              bool                    `json:"autoRoles"`
+	AutoQueue              bool                    `json:"autoQueue"`
+	AutoAccept             bool                    `json:"autoAccept"`
+	AutoAcceptDelaySeconds int                     `json:"autoAcceptDelaySeconds"`
+	AutoAcceptRandomDelay  bool                    `json:"autoAcceptRandomDelay"`
+	AutoBan                bool                    `json:"autoBan"`
+	AutoPick               bool                    `json:"autoPick"`
+	RoleAwarePicks         bool                    `json:"roleAwarePicks"`
+	RolePickPlans          map[string]RolePickPlan `json:"rolePickPlans,omitempty"`
+	AutoPickOrderToLast    bool                    `json:"autoPickOrderToLast"`
+	AutoPickOrderTarget    string                  `json:"autoPickOrderTarget"`
+	InstantLock            bool                    `json:"instantLock"`
+	AutoRoleQuestLoadout   bool                    `json:"autoRoleQuestLoadout"`
+	ArenaBraveryPick       bool                    `json:"arenaBraveryPick"`
+}
+
+const MaxPlayFlowTimingSeconds = 60
+
+// NormalizeRolePreset canonicalizes and validates a primary/secondary role
+// pair before it is persisted or sent to League.
+func NormalizeRolePreset(preset RolePreset) (RolePreset, error) {
+	preset.First = strings.ToUpper(strings.TrimSpace(preset.First))
+	preset.Second = strings.ToUpper(strings.TrimSpace(preset.Second))
+	allowedRoles := map[string]bool{"TOP": true, "JUNGLE": true, "MIDDLE": true, "BOTTOM": true, "UTILITY": true, "FILL": true}
+	if !allowedRoles[preset.First] || !allowedRoles[preset.Second] {
+		return preset, fmt.Errorf("roles must be TOP, JUNGLE, MIDDLE, BOTTOM, UTILITY, or FILL")
+	}
+	if preset.First == preset.Second {
+		return preset, fmt.Errorf("primary and secondary roles must be different")
+	}
+	return preset, nil
+}
+
+// DefaultPlayFlowPreferences matches the safe first-run Play & Queue policy.
+func DefaultPlayFlowPreferences() PlayFlowPreferences {
+	return PlayFlowPreferences{
+		PrimaryRole: "TOP", SecondaryRole: "FILL",
+		PickTimingMode: "immediate", PickTimingSeconds: 2,
+		BanTimingMode: "immediate", BanTimingSeconds: 2,
+		AutoRoles: true, AutoQueue: true, AutoAccept: true,
+		AutoBan: true, AutoPick: true,
+		AutoPickOrderTarget: "latest",
+	}
+}
+
+// NormalizePlayFlowPreferences trims and bounds a Play & Queue policy. The
+// server clamps timing values so callers cannot bypass the UI safety limits.
+func NormalizePlayFlowPreferences(preferences PlayFlowPreferences) (PlayFlowPreferences, error) {
+	if preferences.PrimaryRole = strings.ToUpper(strings.TrimSpace(preferences.PrimaryRole)); preferences.PrimaryRole == "" {
+		preferences.PrimaryRole = "TOP"
+	}
+	if preferences.SecondaryRole = strings.ToUpper(strings.TrimSpace(preferences.SecondaryRole)); preferences.SecondaryRole == "" {
+		preferences.SecondaryRole = "FILL"
+	}
+	roles, err := NormalizeRolePreset(RolePreset{First: preferences.PrimaryRole, Second: preferences.SecondaryRole})
+	if err != nil {
+		return preferences, err
+	}
+	preferences.PrimaryRole, preferences.SecondaryRole = roles.First, roles.Second
+	if preferences.PickTimingMode == "" {
+		preferences.PickTimingMode = "immediate"
+	}
+	if preferences.BanTimingMode == "" {
+		preferences.BanTimingMode = "immediate"
+	}
+	allowedTiming := map[string]bool{"immediate": true, "last-second": true, "after": true}
+	if !allowedTiming[preferences.PickTimingMode] || !allowedTiming[preferences.BanTimingMode] {
+		return preferences, fmt.Errorf("timing mode must be immediate, last-second, or after")
+	}
+	if preferences.SelectedQueue < 0 {
+		return preferences, fmt.Errorf("queue id must not be negative")
+	}
+	for _, value := range []int{
+		preferences.PickChampionID, preferences.FallbackPickChampionID,
+		preferences.BanChampionID, preferences.FallbackBanChampionID,
+		preferences.PickRunePageID, preferences.FallbackPickRunePageID,
+	} {
+		if value < 0 {
+			return preferences, fmt.Errorf("champion and rune ids must not be negative")
+		}
+	}
+	if len(preferences.RolePickPlans) > 5 {
+		return preferences, fmt.Errorf("role pick plans must contain only the five playable lanes")
+	}
+	for role, plan := range preferences.RolePickPlans {
+		if role != "TOP" && role != "JUNGLE" && role != "MIDDLE" && role != "BOTTOM" && role != "UTILITY" {
+			return preferences, fmt.Errorf("role pick plan %q is not a playable lane", role)
+		}
+		for _, value := range []int{plan.PickChampionID, plan.FallbackPickChampionID, plan.PickRunePageID, plan.FallbackPickRunePageID} {
+			if value < 0 {
+				return preferences, fmt.Errorf("role pick champion and rune ids must not be negative")
+			}
+		}
+	}
+	if preferences.PickTimingSeconds < 0 {
+		preferences.PickTimingSeconds = 0
+	} else if preferences.PickTimingSeconds > MaxPlayFlowTimingSeconds {
+		preferences.PickTimingSeconds = MaxPlayFlowTimingSeconds
+	}
+	if preferences.BanTimingSeconds < 0 {
+		preferences.BanTimingSeconds = 0
+	} else if preferences.BanTimingSeconds > MaxPlayFlowTimingSeconds {
+		preferences.BanTimingSeconds = MaxPlayFlowTimingSeconds
+	}
+	if preferences.AutoAcceptDelaySeconds < 0 {
+		preferences.AutoAcceptDelaySeconds = 0
+	} else if preferences.AutoAcceptDelaySeconds > MaxAutoAcceptDelaySeconds {
+		preferences.AutoAcceptDelaySeconds = MaxAutoAcceptDelaySeconds
+	}
+	if preferences.AutoPickOrderTarget == "" {
+		preferences.AutoPickOrderTarget = "latest"
+	}
+	if preferences.AutoPickOrderTarget != "latest" && preferences.AutoPickOrderTarget != "pick-1" && preferences.AutoPickOrderTarget != "pick-2" && preferences.AutoPickOrderTarget != "pick-3" && preferences.AutoPickOrderTarget != "pick-4" && preferences.AutoPickOrderTarget != "pick-5" {
+		return preferences, fmt.Errorf("auto pick-order target must be latest or pick-1 through pick-5")
+	}
+	return preferences, nil
+}
+
 // Preferences holds all opt-in QoL automations and presets.
 type Preferences struct {
-	AutoAccept       bool                  `json:"autoAccept"`
-	AutoPlayAgain    bool                  `json:"autoPlayAgain"`
-	AutoHonor        bool                  `json:"autoHonor"`
+	AutoAccept             bool `json:"autoAccept"`
+	AutoAcceptDelaySeconds int  `json:"autoAcceptDelaySeconds"`
+	AutoAcceptRandomDelay  bool `json:"autoAcceptRandomDelay"`
+	AutoPlayAgain          bool `json:"autoPlayAgain"`
+	AutoHonor              bool `json:"autoHonor"`
+	// AutoStartQueue is retained for stored-preference compatibility. Queue
+	// start is owned by Play & Queue and is never executed by this background
+	// manager; Play & Queue may use it only during an explicit Full auto run.
 	AutoStartQueue   bool                  `json:"autoStartQueue"`
 	AutoClaimRewards bool                  `json:"autoClaimRewards"`
 	GrindMode        bool                  `json:"grindMode"`
 	RolePresets      map[string]RolePreset `json:"rolePresets,omitempty"`
+	PlayFlow         *PlayFlowPreferences  `json:"playFlow,omitempty"`
+}
+
+// MaxAutoAcceptDelaySeconds is the safety ceiling for the ready-check delay.
+// Keep this policy in the backend so API callers and persisted preferences
+// cannot configure a delay longer than the UI supports.
+const MaxAutoAcceptDelaySeconds = 8
+
+func normalizePreferences(preferences Preferences) Preferences {
+	if preferences.AutoAcceptDelaySeconds < 0 {
+		preferences.AutoAcceptDelaySeconds = 0
+	} else if preferences.AutoAcceptDelaySeconds > MaxAutoAcceptDelaySeconds {
+		preferences.AutoAcceptDelaySeconds = MaxAutoAcceptDelaySeconds
+	}
+	if preferences.PlayFlow != nil {
+		if normalized, err := NormalizePlayFlowPreferences(*preferences.PlayFlow); err == nil {
+			preferences.PlayFlow = &normalized
+		} else {
+			// An invalid persisted policy must never be replayed into LCU. Drop
+			// only that optional policy and keep the other QoL preferences usable.
+			preferences.PlayFlow = nil
+		}
+	}
+	return preferences
 }
 
 type Manager struct {
@@ -47,6 +223,7 @@ func NewManager(path string) (*Manager, error) {
 		if err := json.Unmarshal(data, &manager.preferences); err != nil {
 			return manager, fmt.Errorf("decode QoL preferences: %w", err)
 		}
+		manager.preferences = normalizePreferences(manager.preferences)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return manager, fmt.Errorf("read QoL preferences: %w", err)
 	}
@@ -56,10 +233,40 @@ func NewManager(path string) (*Manager, error) {
 func (m *Manager) Preferences() Preferences {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.preferences
+	return clonePreferences(m.preferences)
+}
+
+func clonePreferences(preferences Preferences) Preferences {
+	if preferences.RolePresets != nil {
+		presets := make(map[string]RolePreset, len(preferences.RolePresets))
+		for key, value := range preferences.RolePresets {
+			presets[key] = value
+		}
+		preferences.RolePresets = presets
+	}
+	if preferences.PlayFlow != nil {
+		flow := *preferences.PlayFlow
+		if flow.RolePickPlans != nil {
+			plans := make(map[string]RolePickPlan, len(flow.RolePickPlans))
+			for role, plan := range flow.RolePickPlans {
+				plans[role] = plan
+			}
+			flow.RolePickPlans = plans
+		}
+		preferences.PlayFlow = &flow
+	}
+	return preferences
 }
 
 func (m *Manager) Update(preferences Preferences) error {
+	if preferences.PlayFlow != nil {
+		normalized, err := NormalizePlayFlowPreferences(*preferences.PlayFlow)
+		if err != nil {
+			return err
+		}
+		preferences.PlayFlow = &normalized
+	}
+	preferences = clonePreferences(normalizePreferences(preferences))
 	data, err := json.MarshalIndent(preferences, "", "  ")
 	if err != nil {
 		return err
@@ -104,18 +311,26 @@ func (m *Manager) Run(ctx context.Context) {
 	lastPhase := ""
 	handled := make(map[string]bool) // tracks which automations fired per phase
 	cooldowns := make(map[string]time.Time)
+	var readyAcceptAt time.Time
+	readyAcceptConfig := struct {
+		delaySeconds int
+		random       bool
+		valid        bool
+	}{}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			prefs := m.Preferences()
+			prefs := normalizePreferences(m.Preferences())
 			if !prefs.AutoAccept && !prefs.AutoPlayAgain && !prefs.AutoHonor &&
-				!prefs.AutoStartQueue && !prefs.AutoClaimRewards && !prefs.GrindMode {
+				!prefs.AutoClaimRewards && !prefs.GrindMode {
 				lastPhase = ""
 				handled = make(map[string]bool)
 				cooldowns = make(map[string]time.Time)
+				readyAcceptAt = time.Time{}
+				readyAcceptConfig.valid = false
 				continue
 			}
 			lockfile := riotclient.GetLCULockfile()
@@ -123,6 +338,8 @@ func (m *Manager) Run(ctx context.Context) {
 				lastPhase = ""
 				handled = make(map[string]bool)
 				cooldowns = make(map[string]time.Time)
+				readyAcceptAt = time.Time{}
+				readyAcceptConfig.valid = false
 				continue
 			}
 			requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -136,19 +353,42 @@ func (m *Manager) Run(ctx context.Context) {
 			if phase != lastPhase {
 				lastPhase = phase
 				handled = make(map[string]bool)
+				readyAcceptAt = time.Time{}
+				readyAcceptConfig.valid = false
 			}
 
 			grind := prefs.GrindMode
 
 			// ── Auto-accept ready check ──
 			if (prefs.AutoAccept || grind) && phase == "ReadyCheck" && !handled["accept"] {
+				now := time.Now()
+				delaySeconds := prefs.AutoAcceptDelaySeconds
+				if !readyAcceptConfig.valid || readyAcceptAt.IsZero() ||
+					readyAcceptConfig.delaySeconds != delaySeconds || readyAcceptConfig.random != prefs.AutoAcceptRandomDelay {
+					chosenDelay := delaySeconds
+					if prefs.AutoAcceptRandomDelay {
+						chosenDelay = rand.Intn(delaySeconds + 1)
+					}
+					readyAcceptAt = now.Add(time.Duration(chosenDelay) * time.Second)
+					readyAcceptConfig = struct {
+						delaySeconds int
+						random       bool
+						valid        bool
+					}{delaySeconds: delaySeconds, random: prefs.AutoAcceptRandomDelay, valid: true}
+				}
+				if now.Before(readyAcceptAt) {
+					continue
+				}
 				actionCtx, actionCancel := context.WithTimeout(ctx, 2*time.Second)
 				err = lockfile.AcceptReadyCheck(actionCtx)
 				actionCancel()
 				if err == nil {
 					handled["accept"] = true
-					slog.Info("qol: automatically accepted ready check")
+					slog.Info("qol: automatically accepted ready check", "delaySeconds", readyAcceptConfig.delaySeconds, "randomDelay", readyAcceptConfig.random)
 				}
+			} else {
+				readyAcceptAt = time.Time{}
+				readyAcceptConfig.valid = false
 			}
 
 			// ── Auto-play-again ──
@@ -183,30 +423,11 @@ func (m *Manager) Run(ctx context.Context) {
 				}
 			}
 
-			// ── Auto-start queue after returning to lobby ──
-			if (prefs.AutoStartQueue || grind) && phase == "Lobby" && !handled["startqueue"] {
-				// Short delay: wait for lobby to fully form
-				if _, ok := cooldowns["startqueue"]; !ok {
-					cooldowns["startqueue"] = time.Now().Add(2 * time.Second)
-				}
-				if time.Now().After(cooldowns["startqueue"]) {
-					// A custom/practice lobby is already ready for an explicit
-					// Start button. Never replace it with a matchmade queue.
-					if m.isCustomLobby(lockfile) {
-						handled["startqueue"] = true
-						continue
-					}
-					// Apply role presets if configured for this queue type
-					m.applyRolePreset(lockfile, prefs)
-					actionCtx, actionCancel := context.WithTimeout(ctx, 2*time.Second)
-					err = lockfile.AutoRequeue(actionCtx)
-					actionCancel()
-					if err == nil {
-						handled["startqueue"] = true
-						slog.Info("qol: automatically started matchmaking")
-					}
-				}
-			}
+			// Queue start is intentionally not owned by this background manager.
+			// Returning from a live game must leave the lobby idle until the user
+			// presses Start queue in Play & Queue (or explicitly runs Full auto
+			// there). Keeping this action out of the always-on loop prevents a
+			// saved preference from silently starting the next match.
 
 			// ── Auto-claim event rewards ──
 			if (prefs.AutoClaimRewards || grind) && !handled["rewards"] {

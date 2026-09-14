@@ -24,6 +24,13 @@ func TestValidateChampSelectActionPayloadRejectsStaleAndOccupiedActions(t *testi
 	}
 }
 
+func TestValidateChampSelectActionPayloadRejectsUnsupportedActionType(t *testing.T) {
+	body := []byte(`{"actions":[[{"id":4,"championId":0,"type":"trade","completed":false}]]}`)
+	if err := validateChampSelectActionPayload(body, 4, 84); err == nil {
+		t.Fatal("unsupported champion-select action type was accepted")
+	}
+}
+
 func TestValidateChampSelectActionPayloadDoesNotBlockUnknownShapes(t *testing.T) {
 	if err := validateChampSelectActionPayload([]byte(`{"unexpected":true}`), 4, 84); err != nil {
 		t.Fatalf("unknown session shape should remain LCU-authoritative: %v", err)
@@ -31,14 +38,21 @@ func TestValidateChampSelectActionPayloadDoesNotBlockUnknownShapes(t *testing.T)
 }
 
 func TestValidateChampSelectActionPayloadAllowsArenaBraveryPick(t *testing.T) {
-	body := []byte(`{"actions":[[{"id":12,"championId":0,"type":"pick","completed":false}]]}`)
+	body := []byte(`{"queueId":1700,"gameMode":"CHERRY","actions":[[{"id":12,"championId":0,"type":"pick","completed":false}]]}`)
 	if err := validateChampSelectActionPayload(body, 12, -3); err != nil {
 		t.Fatalf("Arena Bravery pick was rejected: %v", err)
 	}
 }
 
+func TestValidateChampSelectActionPayloadRejectsArenaBraveryOutsideArena(t *testing.T) {
+	body := []byte(`{"queueId":420,"gameMode":"CLASSIC","actions":[[{"id":12,"championId":0,"type":"pick","completed":false}]]}`)
+	if err := validateChampSelectActionPayload(body, 12, -3); err == nil {
+		t.Fatal("Arena Bravery was accepted outside Arena")
+	}
+}
+
 func TestValidateChampSelectActionPayloadRejectsArenaBraveryBan(t *testing.T) {
-	body := []byte(`{"actions":[[{"id":12,"championId":0,"type":"ban","completed":false}]]}`)
+	body := []byte(`{"queueId":1700,"gameMode":"CHERRY","actions":[[{"id":12,"championId":0,"type":"ban","completed":false}]]}`)
 	if err := validateChampSelectActionPayload(body, 12, -3); err == nil {
 		t.Fatal("Arena Bravery was accepted for a ban action")
 	}

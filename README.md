@@ -2,7 +2,7 @@
   <img src="assets/branding/riftops-full-logo.png" alt="RiftOps Logo" width="340" />
   <h1>RiftOps</h1>
   <p><strong>The Local-First League of Legends Operations Deck & Companion for Windows and macOS</strong></p>
-  <p>Launch Riot games, automate safe queue workflows, track live matches, explore your skin vault, and inspect Hextech loot from one unified cockpit.</p>
+  <p>Launch Riot games, run safe role-aware queue workflows, track live matches, explore your champion and skin catalog, and inspect Hextech loot from one unified cockpit.</p>
 
   <p>
     <a href="https://github.com/HassanSalah120/RiftOps/releases"><img src="https://img.shields.io/github/v/release/HassanSalah120/RiftOps?display_name=tag&sort=semver&color=c8aa6e&label=release" alt="Latest Release" /></a>
@@ -39,7 +39,10 @@
 - 🎭 **Native Streamer & Privacy Mode**: One toggle anonymizes summoner names, profile IDs, and friend identities with lore-friendly aliases across all screens.
 - 💎 **Cosmetic Vault**: Explore and filter all 1,940+ skins with real ownership indicators, splash art, chromas, and craftable loot shards.
 - 🛠️ **Hextech Loot Workshop**: Real spendable balances with authentic in-game currency icons (BE, OE, RP, Mythic Essence, Keys) and 1-click recipe inspector.
-- 🤖 **Grind Mode Automation**: Persistent auto-accept queue pops, auto-return to lobby, auto-honor ally, and auto-claim event battle pass milestones.
+- 🎯 **Role-Aware Draft Safety**: Primary/fallback picks and runes per lane, Fill-aware waiting, manual-hover protection, and bounded retries that never guess a champion.
+- 📊 **Progress Command Center**: Read missions, mastery with champion names, reviewed reward choices, and League loadouts from one workspace.
+- 🤖 **Grind Mode Automation**: Explicit session-only Full Auto, queue diagnostics, restriction warnings, auto-accept, auto-return to lobby, and auto-honor workflows.
+- 🧭 **Expanded LCU Tools**: Champion swaps, matchmaking diagnostics, custom sessions, friend spectating, chat privacy, and capability-gated safety controls.
 - 📱 **Zero-Cloud Phone Companion**: Pair any phone on your local Wi-Fi with a 5-minute single-use QR code to accept queues and manage champion select remotely.
 
 ---
@@ -56,6 +59,8 @@ Browse every skin on your account alongside the ones still missing with instant 
 - **Authentic Collection Stats**: Live counts for owned normal skins, champion coverage percentage, and shard readiness.
 - **Deep Filtering**: Filter by champion, ownership status (All / Owned / Missing), tier (Epic, Legendary, Mythic, Standard, Legacy), and chromas.
 - **Splash Art Resolution**: Instant high-resolution artwork loaded from Riot Data Dragon and CommunityDragon caching.
+
+The shared catalog resolver also supplies readable champion and skin names wherever League only returns numeric IDs, with graceful offline fallbacks.
 
 ---
 
@@ -124,7 +129,18 @@ Follow your match from queue pop through Champion Select, loading screen, active
 
 ---
 
-### 7. Social Center & Privacy Shield
+### 7. Progress, Mastery & Rewards
+See what is ready before the next match: mission objectives, expiry windows, named champion mastery, recent mastery changes, pending reward contents, and account loadouts. Reward selections use the same reviewed-operation confirmation flow as other consequential League actions.
+
+<div align="center">
+  <img src="assets/screenshots/command-center.png" alt="Progress workspace" width="100%" style="border-radius: 8px;" />
+</div>
+
+- **Named Champion Data**: Numeric LCU champion IDs are resolved to names and icons through the local catalog.
+- **Reward Detail**: Pending grants show strategy, selection limits, item names, quantities, and review state before anything is sent to League.
+- **Safe by Default**: Missions and mastery are read-only; reward choices and loadout changes require explicit review.
+
+### 8. Social Center & Privacy Shield
 Fast, lightweight friend directory with built-in Streamer Mode and bulk lobby invitations.
 
 <div align="center">
@@ -137,7 +153,7 @@ Fast, lightweight friend directory with built-in Streamer Mode and bulk lobby in
 
 ---
 
-### 8. Application Settings & Encrypted Account Switcher
+### 9. Application Settings & Encrypted Account Switcher
 Granular workspace control, Riot Client executable auto-detection, and DPAPI-secured session storage.
 
 <div align="center">
@@ -150,7 +166,7 @@ Granular workspace control, Riot Client executable auto-detection, and DPAPI-sec
 
 ---
 
-### 9. Match History & Performance Analytics
+### 10. Match History & Performance Analytics
 Deep match telemetry, KDA trends, champion performance, and timeline breakdowns.
 
 <div align="center">

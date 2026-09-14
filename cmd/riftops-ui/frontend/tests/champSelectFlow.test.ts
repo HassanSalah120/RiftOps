@@ -3,13 +3,18 @@ import test from 'node:test';
 import {
   champSelectSessionKey,
   chooseChampSelectChampion,
+  chooseLastPickOrderSwap,
+  choosePickOrderSwap,
   currentLocalChampSelectAction,
   draftTimingRemainingMs,
   firstLocalPendingPick,
   hasChampSelectActionID,
   liveLocalChampSelectAction,
   localAssignedPosition,
+  isManualChampSelectHover,
   occupiedChampSelectChampionIDs,
+  rolePickPlanFor,
+  resolveDraftContext,
   runePageForPick,
   type ChampSelectSession,
 } from '../src/champSelectFlow.ts';
@@ -85,6 +90,63 @@ test('fallback picks can use a dedicated rune page or inherit the primary page',
   assert.equal(runePageForPick(0, 0, true), 0);
 });
 
+test('last-pick swap chooses the latest teammate and ignores pending requests', () => {
+  const session: ChampSelectSession = {
+    localPlayerCellId: 4,
+    myTeam: [
+      { cellId: 4, pickTurn: 2 },
+      { cellId: 7, pickTurn: 4 },
+      { cellId: 9, pickTurn: 6 },
+    ],
+  };
+  const choice = chooseLastPickOrderSwap(session, [
+    { id: 11, targetCellId: 7, targetPickTurn: 4, state: 'AVAILABLE' },
+    { id: 12, targetCellId: 9, targetPickTurn: 6, state: 'AVAILABLE' },
+    { id: 13, targetCellId: 9, targetPickTurn: 6, state: 'PENDING' },
+  ]);
+  assert.equal(choice?.id, 12);
+  assert.equal(choice?.targetCellId, 9);
+  assert.equal(choice?.targetPickTurn, 6);
+});
+
+test('last-pick swap is unnecessary when the local player is already latest', () => {
+  const session: ChampSelectSession = {
+    localPlayerCellId: 4,
+    myTeam: [{ cellId: 4, pickTurn: 6 }, { cellId: 7, pickTurn: 4 }],
+  };
+  assert.equal(chooseLastPickOrderSwap(session, [{ id: 11, targetCellId: 7, targetPickTurn: 4 }]), null);
+});
+
+test('last-pick swap does not choose a known earlier teammate', () => {
+  const session: ChampSelectSession = {
+    localPlayerCellId: 4,
+    myTeam: [{ cellId: 4, pickTurn: 2 }, { cellId: 7, pickTurn: 4 }, { cellId: 9, pickTurn: 6 }],
+  };
+  assert.equal(chooseLastPickOrderSwap(session, [{ id: 11, targetCellId: 7, targetPickTurn: 4 }]), null);
+});
+
+test('pick-order swap can target a specific teammate pick', () => {
+  const session: ChampSelectSession = {
+    localPlayerCellId: 4,
+    myTeam: [{ cellId: 4, pickTurn: 1 }, { cellId: 7, pickTurn: 3 }, { cellId: 9, pickTurn: 5 }],
+  };
+  const choice = choosePickOrderSwap(session, [
+    { id: 11, targetCellId: 7, targetPickTurn: 3, state: 'AVAILABLE' },
+    { id: 12, targetCellId: 9, targetPickTurn: 5, state: 'AVAILABLE' },
+  ], 'pick-3');
+  assert.equal(choice?.id, 11);
+  assert.equal(choice?.targetPickTurn, 3);
+});
+
+test('specific pick-order target is skipped when it is local or unavailable', () => {
+  const session: ChampSelectSession = {
+    localPlayerCellId: 4,
+    myTeam: [{ cellId: 4, pickTurn: 3 }, { cellId: 9, pickTurn: 5 }],
+  };
+  assert.equal(choosePickOrderSwap(session, [{ id: 12, targetCellId: 9, targetPickTurn: 5 }], 'pick-3'), null);
+  assert.equal(choosePickOrderSwap(session, [{ id: 12, targetCellId: 9, targetPickTurn: 5 }], 'pick-4'), null);
+});
+
 test('session fallback key is stable across hover and completion updates', () => {
   const session: ChampSelectSession = {
     localPlayerCellId: 4,
@@ -101,4 +163,46 @@ test('local assigned position normalizes lane aliases and ignores Fill', () => {
   assert.equal(localAssignedPosition({ localPlayerCellId: 4, myTeam: [{ cellId: 4, position: 'ADC' }] }), 'BOTTOM');
   assert.equal(localAssignedPosition({ localPlayerCellId: 4, myTeam: [{ cellId: 4, assignedRole: 'FILL' }] }), null);
   assert.equal(localAssignedPosition({ localPlayerCellId: 4, myTeam: [{ cellId: 9, assignedPosition: 'TOP' }] }), null);
+});
+
+test('role-aware pick plans resolve only after Fill becomes a concrete lane', () => {
+  const plans = {
+    JUNGLE: { pickChampionId: 19, fallbackPickChampionId: 32, pickRunePageId: 4, fallbackPickRunePageId: 0 },
+  } as const;
+  assert.equal(rolePickPlanFor('JUNGLE', plans)?.pickChampionId, 19);
+  assert.equal(rolePickPlanFor('jungle', plans)?.fallbackPickChampionId, 32);
+  assert.equal(rolePickPlanFor('FILL', plans), null);
+  assert.equal(rolePickPlanFor(null, plans), null);
+});
+
+test('draft context blocks missing lanes and selects the assigned role profile', () => {
+  const legacy = { pickChampionId: 103, fallbackPickChampionId: 84, pickRunePageId: 1, fallbackPickRunePageId: 0 };
+  const plans = { JUNGLE: { pickChampionId: 19, fallbackPickChampionId: 32, pickRunePageId: 4, fallbackPickRunePageId: 0 } };
+  const waiting = resolveDraftContext({ localPlayerCellId: 4, myTeam: [{ cellId: 4, assignedPosition: 'FILL' }] }, { roleAwarePicks: true, rolePickPlans: plans, legacyPickPlan: legacy });
+  assert.equal(waiting.state, 'waiting-for-role');
+  assert.equal(waiting.pickPlan, null);
+
+  const ready = resolveDraftContext({ localPlayerCellId: 4, myTeam: [{ cellId: 4, assignedRole: 'JG' }] }, { roleAwarePicks: true, rolePickPlans: plans, legacyPickPlan: legacy });
+  assert.equal(ready.state, 'ready');
+  assert.equal(ready.planSource, 'role');
+  assert.equal(ready.pickPlan?.pickChampionId, 19);
+
+  const missing = resolveDraftContext({ localPlayerCellId: 4, myTeam: [{ cellId: 4, assignedRole: 'SUPPORT' }] }, { roleAwarePicks: true, rolePickPlans: plans, legacyPickPlan: legacy });
+  assert.equal(missing.state, 'missing-plan');
+  assert.equal(missing.pickPlan, null);
+});
+
+test('roleless queues keep the legacy pick plan even when role-aware mode is enabled', () => {
+  const legacy = { pickChampionId: 103, fallbackPickChampionId: 84, pickRunePageId: 1, fallbackPickRunePageId: 0 };
+  const context = resolveDraftContext({ localPlayerCellId: 4, myTeam: [{ cellId: 4, assignedPosition: 'FILL' }] }, { roleAwarePicks: true, rolePickPlans: {}, legacyPickPlan: legacy, queueKind: 'roleless' });
+  assert.equal(context.state, 'ready');
+  assert.equal(context.planSource, 'legacy');
+  assert.equal(context.pickPlan?.pickChampionId, 103);
+});
+
+test('manual champion hovers are respected unless RiftOps is still waiting for its own hover', () => {
+  assert.equal(isManualChampSelectHover(84, 103, false), true);
+  assert.equal(isManualChampSelectHover(84, 103, true), false);
+  assert.equal(isManualChampSelectHover(103, 103, false), false);
+  assert.equal(isManualChampSelectHover(0, 103, false), false);
 });

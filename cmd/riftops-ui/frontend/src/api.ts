@@ -1,4 +1,5 @@
 import type { Release, Snapshot } from './types';
+import type { PickRole, RolePickPlan } from './champSelectFlow';
 
 type JsonCacheEntry = { expiresAt: number; value: unknown };
 const jsonCache = new Map<string, JsonCacheEntry>();
@@ -738,12 +739,45 @@ export function craftLCULootRecipe(recipeName: string, lootIds: string[], repeat
 
 export interface QoLPreferences {
   autoAccept: boolean;
+  autoAcceptDelaySeconds?: number;
+  autoAcceptRandomDelay?: boolean;
   autoPlayAgain: boolean;
   autoHonor: boolean;
   autoStartQueue: boolean;
   autoClaimRewards: boolean;
   grindMode: boolean;
   rolePresets?: Record<string, RolePreset>;
+  playFlow?: Partial<PlayFlowPreferences>;
+}
+
+export interface PlayFlowPreferences {
+  primaryRole: string;
+  secondaryRole: string;
+  pickChampionId: number;
+  fallbackPickChampionId: number;
+  banChampionId: number;
+  fallbackBanChampionId: number;
+  pickRunePageId: number;
+  fallbackPickRunePageId: number;
+  pickTimingMode: 'immediate' | 'last-second' | 'after';
+  pickTimingSeconds: number;
+  banTimingMode: 'immediate' | 'last-second' | 'after';
+  banTimingSeconds: number;
+  selectedQueue: number;
+  autoRoles: boolean;
+  autoQueue: boolean;
+  autoAccept: boolean;
+  autoAcceptDelaySeconds: number;
+  autoAcceptRandomDelay: boolean;
+  autoBan: boolean;
+  autoPick: boolean;
+  roleAwarePicks: boolean;
+  rolePickPlans: Partial<Record<PickRole, RolePickPlan>>;
+  autoPickOrderToLast: boolean;
+  autoPickOrderTarget: 'latest' | 'pick-1' | 'pick-2' | 'pick-3' | 'pick-4' | 'pick-5';
+  instantLock: boolean;
+  autoRoleQuestLoadout: boolean;
+  arenaBraveryPick: boolean;
 }
 
 export interface RolePreset {
@@ -1474,6 +1508,112 @@ export function clearReviewedOperationReceipts(): Promise<void> {
   return fetch('/api/operations/receipts/clear', { method: 'POST' }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Could not clear operation receipts');
   });
+}
+
+export interface LCUChampionSwap { id: number; cellId: number; state: string }
+export interface OngoingSwap {
+  id: number;
+  state: string;
+  initiatedByLocalPlayer: boolean;
+  otherSummonerIndex?: number;
+  requesterChampionId?: number;
+  requesterChampionName?: string;
+  responderChampionName?: string;
+  requesterIndex?: number;
+  responderIndex?: number;
+  requesterPosition?: string;
+  responderPosition?: string;
+  type?: string;
+}
+
+async function expansionJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, { cache: 'no-store', ...init });
+  if (!response.ok) throw new Error((await response.text()).trim() || 'League capability is unavailable');
+  return response.json() as Promise<T>;
+}
+
+export function fetchLCUChampSelectChampionSwaps(): Promise<LCUChampionSwap[]> {
+  return expansionJSON<LCUChampionSwap[]>('/api/lcu/champ-select/champion-swaps');
+}
+
+export function mutateLCUChampSelectChampionSwap(id: number, action: ChampSelectSwapAction): Promise<LCUChampionSwap | { ok: boolean }> {
+  return expansionJSON(`/api/lcu/champ-select/champion-swaps`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action }) });
+}
+
+export function fetchLCUChampSelectOngoingSwaps(): Promise<{ champion: OngoingSwap | null; pickOrder: OngoingSwap | null; position: OngoingSwap | null }> {
+  return expansionJSON('/api/lcu/champ-select/ongoing-swaps');
+}
+
+export function clearLCUChampSelectOngoingSwap(kind: 'champion' | 'pickOrder' | 'position', id: number): Promise<{ ok: boolean }> {
+  return expansionJSON('/api/lcu/champ-select/ongoing-swap/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id }) });
+}
+
+export interface MatchmakingDiagnostics {
+  queueId: number;
+  inQueue: boolean;
+  state: string;
+  elapsedSeconds: number;
+  estimatedSeconds: number;
+  readyCheck: { state: string; playerResponse: string; timerSeconds: number } | null;
+  errors: Array<{ id: number; type: string; message: string; penalizedSummonerId: number | null; penaltySeconds: number }>;
+  lowPriority: { penalizedSummonerIds: number[]; penaltySeconds: number; reason: string } | null;
+}
+
+export function fetchLCUMatchmakingDiagnostics(): Promise<MatchmakingDiagnostics> { return expansionJSON('/api/lcu/matchmaking/status'); }
+export interface LeaverRestrictionStatus {
+  notifications: Array<{ id: number; type: string; punishedGamesRemaining: number; lockoutRemainingMs: number }>;
+  ranked: { needsAck: boolean; punishedGamesRemaining: number } | null;
+}
+export function fetchLCULeaverRestrictions(): Promise<LeaverRestrictionStatus> { return expansionJSON('/api/lcu/matchmaking/restrictions'); }
+export function fetchLCUSpectatorConfig(): Promise<{ isEnabled: boolean; spectatableQueues: number[] }> { return expansionJSON('/api/lcu/spectator/config'); }
+export function launchLCUSpectator(puuid: string): Promise<{ available: boolean; launched: boolean; reason?: string; queueType?: string }> { return expansionJSON('/api/lcu/spectator/launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ puuid }) }); }
+export function dismissLCULeaverNotification(id: number): Promise<{ ok: boolean }> { return expansionJSON('/api/lcu/matchmaking/restrictions/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); }
+
+export interface CustomGamesDirectory {
+  availability: string;
+  countdownMs: number;
+  games: Array<{ id: number; name: string; owner: string; gameType: string; mapId: number; passwordRequired: boolean; players: { filled: number; maximum: number }; spectators: { filled: number; maximum: number }; spectatorPolicy: string }>;
+  invitations: Array<{ id: string; type: string; senderPuuid: string; senderName: string; canAccept: boolean; restrictions: string[]; state: string; receivedAt: string }>;
+  warnings?: string[];
+}
+export function fetchLCUCustomGames(): Promise<CustomGamesDirectory> { return expansionJSON('/api/lcu/custom-games'); }
+export function refreshLCUCustomGames(): Promise<CustomGamesDirectory> { return expansionJSON('/api/lcu/custom-games/refresh', { method: 'POST' }); }
+export function actOnLCULobbyInvitation(invitationId: string, action: 'accept' | 'decline'): Promise<{ ok: boolean }> { return expansionJSON('/api/lcu/lobby-invitations/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invitationId, action }) }); }
+
+export interface ChatPrivacy {
+  mutes: Array<{ puuid: string; playerMuted: boolean; settingsMuted: boolean; systemMuted: boolean }>;
+  settings: Record<string, boolean>;
+}
+export function fetchLCUChatPrivacy(): Promise<ChatPrivacy> { return expansionJSON('/api/lcu/chat/privacy'); }
+export function updateLCUChatMutes(puuids: string[], muted: boolean): Promise<{ ok: boolean; updated: string[] }> { return expansionJSON('/api/lcu/chat/mutes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ puuids, muted }) }); }
+export function updateLCUChatSettings(settings: Record<string, boolean>): Promise<Record<string, boolean>> { return expansionJSON('/api/lcu/chat/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) }); }
+
+export interface ProgressMissions { missions: any[]; series: any[]; refreshedAt: string }
+export interface ProgressRewards { grants: any[] }
+export interface ProgressMastery { totalScore: number; champions: any[]; milestones?: unknown; notification?: { championId: number; grade: string; pointsGained: number; won: boolean } | null; rewardGrants: any[] }
+export function fetchProgressMissions(): Promise<ProgressMissions> { return expansionJSON('/api/lcu/progress/missions'); }
+export function fetchProgressRewards(status = 'PENDING_SELECTION'): Promise<ProgressRewards> { return expansionJSON(`/api/lcu/progress/rewards?status=${encodeURIComponent(status)}`); }
+export function fetchProgressMastery(): Promise<ProgressMastery> { return expansionJSON('/api/lcu/progress/mastery'); }
+export function markProgressRewardsViewed(grantIds: string[]): Promise<{ ok: boolean }> { return expansionJSON('/api/lcu/progress/rewards/viewed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grantIds }) }); }
+export function replayProgressReward(rewardGroupId: string): Promise<{ ok: boolean }> { return expansionJSON('/api/lcu/progress/rewards/replay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rewardGroupId }) }); }
+export function acknowledgeProgressMastery(): Promise<{ ok: boolean }> { return expansionJSON('/api/lcu/progress/mastery/notification/ack', { method: 'POST' }); }
+export function dismissProgressMasteryGrant(id: string): Promise<{ ok: boolean }> { return expansionJSON('/api/lcu/progress/mastery/reward-grant/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); }
+export function scoutProgressMastery(puuids: string[]): Promise<any[]> { return expansionJSON('/api/lcu/mastery/scouting', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ puuids }) }); }
+
+export interface LeagueLoadouts { ready: boolean; items: any[] }
+export function fetchLeagueLoadouts(scope = 'account', itemId = ''): Promise<LeagueLoadouts> { const query = new URLSearchParams({ scope }); if (itemId) query.set('itemId', itemId); return expansionJSON(`/api/lcu/loadouts?${query.toString()}`); }
+
+export interface ExpandedReviewedOperationRequest {
+  kind: string;
+  rewardSelections?: Array<{ grantId: string; rewardGroupId: string; selections: string[] }>;
+  customJoin?: { gameId: number; asSpectator: boolean; password?: string };
+  invitation?: { invitationId: string };
+  customSession?: { lobbyId: string };
+  loadoutChange?: { id: string; name?: string };
+  muteUpdate?: { puuids: string[]; muted: boolean };
+}
+export function previewExpandedReviewedOperation(request: ExpandedReviewedOperationRequest): Promise<ReviewedOperationPreview & { details?: Record<string, unknown> }> {
+  return expansionJSON('/api/operations/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) });
 }
 
 export interface ClientSettingsBackup { id: string; name: string; accountKey: string; createdAt: string }

@@ -1,7 +1,7 @@
 import type { Tab } from './types';
 
-export const ALL_TABS: readonly Tab[] = ['dashboard', 'play', 'live', 'social', 'history', 'skins', 'loot', 'qol', 'remote', 'settings'];
-export const PHONE_TABS: readonly Tab[] = ['dashboard', 'play', 'live', 'social', 'history', 'skins'];
+export const ALL_TABS: readonly Tab[] = ['dashboard', 'play', 'live', 'social', 'history', 'skins', 'progress', 'loot', 'qol', 'remote', 'settings'];
+export const PHONE_TABS: readonly Tab[] = ['dashboard', 'play', 'live', 'social', 'history', 'skins', 'progress'];
 export const DESKTOP_ONLY_ACTIONS = new Set(['launch', 'stop', 'toggle-mask']);
 
 export function availableTabs(remoteClient: boolean): readonly Tab[] {

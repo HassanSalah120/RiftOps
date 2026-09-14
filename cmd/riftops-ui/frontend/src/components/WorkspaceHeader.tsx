@@ -3,12 +3,13 @@ import type { Tab } from '../types';
 
 const TAB_LABELS: Record<Tab, string> = {
   dashboard: 'Home',
-  play: 'Play & Draft',
+  play: 'Play & Queue',
   live: 'Live Game',
   social: 'Friends',
   qol: 'Automations',
   history: 'Match History',
   skins: 'Skins & Splash',
+  progress: 'Progress',
   loot: 'Hextech Loot',
   remote: 'Phone Companion',
   settings: 'Settings',

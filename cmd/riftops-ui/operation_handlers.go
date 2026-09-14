@@ -30,6 +30,7 @@ type reviewedOperation struct {
 	Cancel       chan struct{}
 	Started      bool
 	LootItems    map[string]lootOperationItem
+	Expansion    *expansionOperation
 }
 
 type lootOperationItem struct {
@@ -40,6 +41,27 @@ type lootOperationItem struct {
 	Repeat     int      `json:"repeat"`
 	Label      string   `json:"label,omitempty"`
 	Outputs    any      `json:"outputs,omitempty"`
+}
+
+type rewardSelectionOperation struct {
+	GrantID       string   `json:"grantId"`
+	RewardGroupID string   `json:"rewardGroupId"`
+	Selections    []string `json:"selections"`
+}
+
+type expansionOperation struct {
+	RewardSelections []rewardSelectionOperation
+	CustomJoin       *struct {
+		GameID      int64
+		AsSpectator bool
+		Password    string
+	}
+	InvitationID  string
+	CustomLobbyID string
+	LoadoutID     string
+	LoadoutName   string
+	MutePUUIDs    []string
+	MuteValue     bool
 }
 
 var reviewedOperations = struct {
@@ -65,20 +87,132 @@ func operationPreviewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Kind      string              `json:"kind"`
-		TargetIDs []string            `json:"targetIds"`
-		LootItems []lootOperationItem `json:"lootItems"`
+		Kind             string                     `json:"kind"`
+		TargetIDs        []string                   `json:"targetIds"`
+		LootItems        []lootOperationItem        `json:"lootItems"`
+		RewardSelections []rewardSelectionOperation `json:"rewardSelections"`
+		CustomJoin       *struct {
+			GameID      int64  `json:"gameId"`
+			AsSpectator bool   `json:"asSpectator"`
+			Password    string `json:"password"`
+		} `json:"customJoin"`
+		Invitation *struct {
+			InvitationID string `json:"invitationId"`
+		} `json:"invitation"`
+		CustomSession *struct {
+			LobbyID string `json:"lobbyId"`
+		} `json:"customSession"`
+		LoadoutChange *struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"loadoutChange"`
+		MuteUpdate *struct {
+			PUUIDs []string `json:"puuids"`
+			Muted  bool     `json:"muted"`
+		} `json:"muteUpdate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid operation preview", http.StatusBadRequest)
 		return
 	}
 	body.Kind = strings.ToLower(strings.TrimSpace(body.Kind))
-	if body.Kind != "friend-remove" && body.Kind != "friend-invite" && body.Kind != "request-accept" && body.Kind != "request-decline" && body.Kind != "loot-craft" {
+	allowedKind := map[string]bool{
+		"friend-remove": true, "friend-invite": true, "request-accept": true, "request-decline": true, "loot-craft": true,
+		"reward-select": true, "reward-select-bulk": true, "custom-game-join": true, "lobby-invitation-accept": true,
+		"custom-champ-select-cancel": true, "loadout-rename": true, "loadout-delete": true, "chat-mute-bulk": true,
+	}
+	if !allowedKind[body.Kind] {
 		httpError(w, "Unsupported reviewed operation", http.StatusBadRequest)
 		return
 	}
-	if body.Kind == "loot-craft" {
+	var expansion *expansionOperation
+	if body.Kind == "reward-select" || body.Kind == "reward-select-bulk" {
+		if len(body.RewardSelections) == 0 || len(body.RewardSelections) > 20 || (body.Kind == "reward-select" && len(body.RewardSelections) != 1) {
+			httpError(w, "Select between 1 and 20 reward grants", http.StatusBadRequest)
+			return
+		}
+		expansion = &expansionOperation{RewardSelections: body.RewardSelections}
+		for index := range expansion.RewardSelections {
+			selection := &expansion.RewardSelections[index]
+			selection.GrantID = strings.TrimSpace(selection.GrantID)
+			selection.RewardGroupID = strings.TrimSpace(selection.RewardGroupID)
+			if selection.GrantID == "" || selection.RewardGroupID == "" || len(selection.Selections) == 0 || len(selection.Selections) > 20 {
+				httpError(w, "Reward selection input is invalid", http.StatusBadRequest)
+				return
+			}
+			seenSelections := make(map[string]struct{}, len(selection.Selections))
+			for selectionIndex := range selection.Selections {
+				selection.Selections[selectionIndex] = strings.TrimSpace(selection.Selections[selectionIndex])
+				if selection.Selections[selectionIndex] == "" || len(selection.Selections[selectionIndex]) > 160 {
+					httpError(w, "Reward selection input is invalid", http.StatusBadRequest)
+					return
+				}
+				if _, exists := seenSelections[selection.Selections[selectionIndex]]; exists {
+					httpError(w, "Reward selections must be unique", http.StatusBadRequest)
+					return
+				}
+				seenSelections[selection.Selections[selectionIndex]] = struct{}{}
+			}
+			body.TargetIDs = append(body.TargetIDs, selection.GrantID)
+		}
+	} else if body.Kind == "custom-game-join" {
+		if body.CustomJoin == nil || body.CustomJoin.GameID <= 0 || len(body.CustomJoin.Password) > 128 {
+			httpError(w, "Custom-game join input is invalid", http.StatusBadRequest)
+			return
+		}
+		expansion = &expansionOperation{CustomJoin: &struct {
+			GameID      int64
+			AsSpectator bool
+			Password    string
+		}{body.CustomJoin.GameID, body.CustomJoin.AsSpectator, body.CustomJoin.Password}}
+		body.TargetIDs = []string{fmt.Sprintf("custom-game-%d", body.CustomJoin.GameID)}
+	} else if body.Kind == "lobby-invitation-accept" {
+		if body.Invitation == nil || strings.TrimSpace(body.Invitation.InvitationID) == "" || len(body.Invitation.InvitationID) > 160 {
+			httpError(w, "Invitation input is invalid", http.StatusBadRequest)
+			return
+		}
+		expansion = &expansionOperation{InvitationID: strings.TrimSpace(body.Invitation.InvitationID)}
+		body.TargetIDs = []string{expansion.InvitationID}
+	} else if body.Kind == "custom-champ-select-cancel" {
+		if body.CustomSession == nil || strings.TrimSpace(body.CustomSession.LobbyID) == "" || len(body.CustomSession.LobbyID) > 160 {
+			httpError(w, "Custom session input is invalid", http.StatusBadRequest)
+			return
+		}
+		expansion = &expansionOperation{CustomLobbyID: strings.TrimSpace(body.CustomSession.LobbyID)}
+		body.TargetIDs = []string{expansion.CustomLobbyID}
+	} else if body.Kind == "loadout-rename" || body.Kind == "loadout-delete" {
+		if body.LoadoutChange == nil || strings.TrimSpace(body.LoadoutChange.ID) == "" || len(body.LoadoutChange.ID) > 160 || (body.Kind == "loadout-rename" && (strings.TrimSpace(body.LoadoutChange.Name) == "" || len(body.LoadoutChange.Name) > 80)) {
+			httpError(w, "Loadout input is invalid", http.StatusBadRequest)
+			return
+		}
+		expansion = &expansionOperation{LoadoutID: strings.TrimSpace(body.LoadoutChange.ID), LoadoutName: strings.TrimSpace(body.LoadoutChange.Name)}
+		body.TargetIDs = []string{expansion.LoadoutID}
+	} else if body.Kind == "chat-mute-bulk" {
+		if body.MuteUpdate == nil || len(body.MuteUpdate.PUUIDs) == 0 || len(body.MuteUpdate.PUUIDs) > 100 {
+			httpError(w, "Select between 1 and 100 players", http.StatusBadRequest)
+			return
+		}
+		seenPUUIDs := make(map[string]struct{}, len(body.MuteUpdate.PUUIDs))
+		cleanPUUIDs := make([]string, 0, len(body.MuteUpdate.PUUIDs))
+		for _, rawPUUID := range body.MuteUpdate.PUUIDs {
+			puuid := strings.TrimSpace(rawPUUID)
+			if puuid == "" || len(puuid) > 160 {
+				httpError(w, "A valid player PUUID is required", http.StatusBadRequest)
+				return
+			}
+			if _, exists := seenPUUIDs[puuid]; exists {
+				continue
+			}
+			seenPUUIDs[puuid] = struct{}{}
+			cleanPUUIDs = append(cleanPUUIDs, puuid)
+		}
+		if len(cleanPUUIDs) == 0 {
+			httpError(w, "Select at least one player", http.StatusBadRequest)
+			return
+		}
+		expansion = &expansionOperation{MutePUUIDs: cleanPUUIDs, MuteValue: body.MuteUpdate.Muted}
+		body.TargetIDs = []string{"chat-mute-bulk"}
+	} else if body.Kind == "loot-craft" {
 		body.TargetIDs = nil
 		if len(body.LootItems) == 0 || len(body.LootItems) > 20 {
 			httpError(w, "Select between 1 and 20 loot recipes", http.StatusBadRequest)
@@ -157,9 +291,9 @@ func operationPreviewHandler(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "Select at least one target", http.StatusBadRequest)
 		return
 	}
-	verb := map[string]string{"friend-remove": "REMOVE", "friend-invite": "INVITE", "request-accept": "ACCEPT", "request-decline": "DECLINE", "loot-craft": "CRAFT"}[body.Kind]
-	noun := map[string]string{"friend-remove": "FRIENDS", "friend-invite": "FRIENDS", "request-accept": "REQUESTS", "request-decline": "REQUESTS", "loot-craft": "RECIPES"}[body.Kind]
-	op := &reviewedOperation{ID: operationID(), Kind: body.Kind, TargetIDs: clean, Confirmation: fmt.Sprintf("%s %d %s", verb, len(clean), noun), State: "preview", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(2 * time.Minute).UTC(), Cancel: make(chan struct{}), LootItems: resolvedLoot}
+	verb := map[string]string{"friend-remove": "REMOVE", "friend-invite": "INVITE", "request-accept": "ACCEPT", "request-decline": "DECLINE", "loot-craft": "CRAFT", "reward-select": "SELECT", "reward-select-bulk": "SELECT", "custom-game-join": "JOIN", "lobby-invitation-accept": "ACCEPT", "custom-champ-select-cancel": "CANCEL", "loadout-rename": "RENAME", "loadout-delete": "DELETE", "chat-mute-bulk": "UPDATE"}[body.Kind]
+	noun := map[string]string{"friend-remove": "FRIENDS", "friend-invite": "FRIENDS", "request-accept": "REQUESTS", "request-decline": "REQUESTS", "loot-craft": "RECIPES", "reward-select": "REWARD", "reward-select-bulk": "REWARDS", "custom-game-join": "CUSTOM GAME", "lobby-invitation-accept": "INVITATION", "custom-champ-select-cancel": "CHAMPION SELECT", "loadout-rename": "LOADOUT", "loadout-delete": "LOADOUT", "chat-mute-bulk": "CHAT MUTES"}[body.Kind]
+	op := &reviewedOperation{ID: operationID(), Kind: body.Kind, TargetIDs: clean, Confirmation: fmt.Sprintf("%s %d %s", verb, len(clean), noun), State: "preview", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(2 * time.Minute).UTC(), Cancel: make(chan struct{}), LootItems: resolvedLoot, Expansion: expansion}
 	reviewedOperations.Lock()
 	reviewedOperations.items[op.ID] = op
 	reviewedOperations.Unlock()
@@ -169,7 +303,22 @@ func operationPreviewHandler(w http.ResponseWriter, r *http.Request) {
 			lootPreview = append(lootPreview, item)
 		}
 	}
-	writeSafeJSON(w, map[string]any{"id": op.ID, "kind": op.Kind, "targetIds": op.TargetIDs, "lootItems": lootPreview, "confirmation": op.Confirmation, "expiresAt": op.ExpiresAt, "state": op.State})
+	details := map[string]any{}
+	if expansion != nil {
+		details["targetCount"] = len(op.TargetIDs)
+		if expansion.CustomJoin != nil {
+			details["gameId"] = expansion.CustomJoin.GameID
+			details["asSpectator"] = expansion.CustomJoin.AsSpectator
+		}
+		if expansion.LoadoutID != "" {
+			details["loadoutId"] = expansion.LoadoutID
+			details["name"] = expansion.LoadoutName
+		}
+		if expansion.InvitationID != "" {
+			details["invitationId"] = expansion.InvitationID
+		}
+	}
+	writeSafeJSON(w, map[string]any{"id": op.ID, "kind": op.Kind, "targetIds": op.TargetIDs, "lootItems": lootPreview, "confirmation": op.Confirmation, "expiresAt": op.ExpiresAt, "state": op.State, "details": details})
 }
 
 func findLootRecipe(body []byte, recipeName string) (map[string]any, bool) {
@@ -442,6 +591,10 @@ func runReviewedOperation(op *reviewedOperation) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
+	if op.Expansion != nil {
+		runExpansionOperation(op, lf, ctx)
+		return
+	}
 	for _, target := range op.TargetIDs {
 		select {
 		case <-op.Cancel:
@@ -498,6 +651,209 @@ func runReviewedOperation(op *reviewedOperation) {
 		}
 	}
 	finishOperation(op, false, "")
+}
+
+func runExpansionOperation(op *reviewedOperation, lf *riotclient.Lockfile, ctx context.Context) {
+	if op.Expansion == nil {
+		finishOperation(op, false, "")
+		return
+	}
+	if expansionCancelled(op) {
+		finishOperation(op, true, "Cancelled by user")
+		return
+	}
+	result := featurestore.BatchItemResult{TargetID: op.TargetIDs[0], Status: "failed"}
+	var actionErr error
+	switch op.Kind {
+	case "reward-select", "reward-select-bulk":
+		grants, err := lf.FetchRewardGrants(ctx, "PENDING_SELECTION")
+		if err != nil {
+			actionErr = err
+			break
+		}
+		byID := make(map[string]riotclient.LCURewardGrant, len(grants))
+		for _, grant := range grants {
+			byID[grant.Info.ID] = grant
+		}
+		validatedSelections := make([]rewardSelectionOperation, 0, len(op.Expansion.RewardSelections))
+		for _, selection := range op.Expansion.RewardSelections {
+			grant, ok := byID[selection.GrantID]
+			if !ok || grant.Info.Status != "PENDING_SELECTION" || grant.Info.RewardGroupID != selection.RewardGroupID {
+				actionErr = fmt.Errorf("reward grant changed")
+				break
+			}
+			cleanSelections, validationErr := validateRewardSelections(grant, selection.Selections)
+			if validationErr != nil {
+				actionErr = validationErr
+				break
+			}
+			selection.Selections = cleanSelections
+			validatedSelections = append(validatedSelections, selection)
+		}
+		if actionErr == nil {
+			if op.Kind == "reward-select-bulk" {
+				bulk := make([]riotclient.LCURewardSelection, 0, len(validatedSelections))
+				for _, selection := range validatedSelections {
+					bulk = append(bulk, riotclient.LCURewardSelection{GrantID: selection.GrantID, RewardGroupID: selection.RewardGroupID, Selections: selection.Selections})
+				}
+				_, actionErr = lf.SelectRewardsBulk(ctx, bulk)
+			} else {
+				for _, selection := range validatedSelections {
+					if err := lf.SelectReward(ctx, selection.GrantID, selection.RewardGroupID, selection.Selections); err != nil {
+						actionErr = err
+						break
+					}
+				}
+			}
+		}
+	case "custom-game-join":
+		games, err := lf.FetchCustomGames(ctx)
+		if err != nil {
+			actionErr = err
+			break
+		}
+		found := false
+		for _, game := range games {
+			if game.ID == op.Expansion.CustomJoin.GameID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			actionErr = fmt.Errorf("custom game is no longer available")
+			break
+		}
+		actionErr = lf.JoinCustomGame(ctx, op.Expansion.CustomJoin.GameID, riotclient.LCUCustomJoinParameters{AsSpectator: op.Expansion.CustomJoin.AsSpectator, Password: op.Expansion.CustomJoin.Password})
+	case "lobby-invitation-accept":
+		invitations, err := lf.FetchReceivedInvitations(ctx)
+		if err != nil {
+			actionErr = err
+			break
+		}
+		found := false
+		for _, invitation := range invitations {
+			if invitation.InvitationID == op.Expansion.InvitationID && invitation.CanAcceptInvitation {
+				found = true
+				break
+			}
+		}
+		if !found {
+			actionErr = fmt.Errorf("invitation is no longer available")
+			break
+		}
+		actionErr = lf.ActOnReceivedInvitation(ctx, op.Expansion.InvitationID, "accept")
+	case "custom-champ-select-cancel":
+		lobby, err := lf.FetchCurrentLobby(ctx)
+		if err != nil || !containsTargetBytes(lobby, op.Expansion.CustomLobbyID) {
+			if err != nil {
+				actionErr = err
+			} else {
+				actionErr = fmt.Errorf("custom lobby changed")
+			}
+			break
+		}
+		actionErr = lf.CancelCustomChampSelect(ctx)
+	case "loadout-rename", "loadout-delete":
+		loadout, err := lf.FetchLoadout(ctx, op.Expansion.LoadoutID)
+		if err != nil {
+			actionErr = err
+			break
+		}
+		if op.Kind == "loadout-delete" {
+			actionErr = lf.DeleteLoadout(ctx, loadout.ID)
+		} else {
+			loadout.Name = op.Expansion.LoadoutName
+			_, actionErr = lf.UpdateLoadout(ctx, loadout)
+		}
+	case "chat-mute-bulk":
+		friends, err := lf.FetchLCUFriends(ctx)
+		if err != nil {
+			actionErr = err
+			break
+		}
+		var friendValue any
+		if json.Unmarshal(friends, &friendValue) != nil {
+			actionErr = fmt.Errorf("friend list changed")
+			break
+		}
+		for _, puuid := range op.Expansion.MutePUUIDs {
+			if !containsJSONString(friendValue, puuid) {
+				actionErr = fmt.Errorf("a selected friend is no longer present")
+				break
+			}
+		}
+		if actionErr == nil {
+			actionErr = lf.UpdateChatMutes(ctx, op.Expansion.MutePUUIDs, op.Expansion.MuteValue)
+		}
+	default:
+		actionErr = fmt.Errorf("unsupported reviewed expansion")
+	}
+	if actionErr == nil {
+		result.Status = "succeeded"
+		result.Detail = "League accepted the reviewed action"
+	} else {
+		result.Detail = "League rejected the reviewed action"
+	}
+	op.mu.Lock()
+	op.Results = append(op.Results, result)
+	op.Completed = len(op.Results)
+	op.mu.Unlock()
+	if actionErr != nil && mutationResultAmbiguous(actionErr) {
+		finishOperation(op, false, "League returned an ambiguous mutation result; no retry was attempted")
+		return
+	}
+	finishOperation(op, false, "")
+}
+
+func validateRewardSelections(grant riotclient.LCURewardGrant, selections []string) ([]string, error) {
+	if len(selections) == 0 || len(selections) > 20 {
+		return nil, fmt.Errorf("reward selection count changed")
+	}
+	available := make(map[string]bool, len(grant.RewardGroup.Rewards))
+	for _, reward := range grant.RewardGroup.Rewards {
+		available[reward.ID] = true
+	}
+	clean := make([]string, 0, len(selections))
+	seen := make(map[string]struct{}, len(selections))
+	for _, rawSelection := range selections {
+		selection := strings.TrimSpace(rawSelection)
+		if selection == "" || !available[selection] {
+			return nil, fmt.Errorf("reward selection changed")
+		}
+		if _, exists := seen[selection]; exists {
+			return nil, fmt.Errorf("reward selection count changed")
+		}
+		seen[selection] = struct{}{}
+		clean = append(clean, selection)
+	}
+	config := grant.RewardGroup.SelectionStrategyConfig
+	if config == nil {
+		return clean, nil
+	}
+	if config.MinSelectionsAllowed > 0 && len(clean) < config.MinSelectionsAllowed {
+		return nil, fmt.Errorf("reward selection count changed")
+	}
+	if config.MaxSelectionsAllowed > 0 && len(clean) > config.MaxSelectionsAllowed {
+		return nil, fmt.Errorf("reward selection count changed")
+	}
+	return clean, nil
+}
+
+func expansionCancelled(op *reviewedOperation) bool {
+	select {
+	case <-op.Cancel:
+		return true
+	default:
+		return false
+	}
+}
+
+func containsTargetBytes(body []byte, target string) bool {
+	var value any
+	if json.Unmarshal(body, &value) != nil {
+		return false
+	}
+	return containsTarget(value, target)
 }
 
 func operationTargetPresent(ctx context.Context, lf *riotclient.Lockfile, kind, target string, lootItem lootOperationItem) (bool, error) {
