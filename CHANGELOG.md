@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.10.4 — 2026-09-15
+
+- Kept the runtime status active when League refreshes its chat configuration after RiftOps has already established the trusted proxy session.
+
 ## v2.10.3 — 2026-09-15
 
 - Fixed Windows release packaging so presence masking ships with a publicly trusted DuckDNS certificate instead of silently falling back to an untrusted local certificate.

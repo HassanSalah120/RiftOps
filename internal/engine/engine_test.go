@@ -38,6 +38,29 @@ func TestFailPreservesDisabledState(t *testing.T) {
 	}
 }
 
+func TestActiveProxyIsNotDowngradedByLaterChatEndpointRefresh(t *testing.T) {
+	backend, _ := newTestEngine(t)
+	backend.emit(Snapshot{
+		Phase:   PhaseActive,
+		Game:    model.GameLeague,
+		Status:  model.StatusOffline,
+		Enabled: true,
+		Detail:  "League chat proxy connected",
+	})
+	backend.emit(Snapshot{
+		Phase:   PhaseWaiting,
+		Game:    model.GameLeague,
+		Status:  model.StatusOffline,
+		Enabled: true,
+		Detail:  "Riot chat endpoint found; completing secure handshake",
+	})
+
+	snapshot := backend.Snapshot()
+	if snapshot.Phase != PhaseActive || snapshot.Detail != "League chat proxy connected" {
+		t.Fatalf("active proxy snapshot was downgraded: %+v", snapshot)
+	}
+}
+
 func TestInvalidGameDoesNotLeaveEngineRunning(t *testing.T) {
 	backend, _ := newTestEngine(t)
 	for range 2 {

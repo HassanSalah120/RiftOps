@@ -1152,6 +1152,13 @@ func (e *Engine) sendNotification(ctx context.Context, proxy *chatproxy.Proxy, m
 
 func (e *Engine) emit(snapshot Snapshot) {
 	e.mu.Lock()
+	// Riot and League can re-fetch client config after the XMPP session is
+	// already established. Endpoint discovery is not a disconnect, so do not
+	// replace a confirmed active proxy state with another handshake wait.
+	if e.snapshot.Phase == PhaseActive && snapshot.Phase == PhaseWaiting {
+		e.mu.Unlock()
+		return
+	}
 	if snapshot.StartedAt.IsZero() {
 		snapshot.StartedAt = e.snapshot.StartedAt
 	}
