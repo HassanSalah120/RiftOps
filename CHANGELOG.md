@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.10.1 — 2026-09-15
+
+### Riot Client chat and launch compatibility
+
+- Reuse an already-open Riot Client with native friends and chat instead of returning the old “Riot Client is already running” preflight error.
+- Launch League through the existing Riot Client LCU when the client is already open.
+- Keep the clean-start requirement for other game launches that need product-specific launch arguments.
+- Add a bounded 30-second chat-proxy handshake timeout that restores native Riot chat when the local proxy is not accepted.
+
 ## v2.10.0 — 2026-09-15
 
 This release consolidates the current RiftOps work into a safer, more informative League operations deck.

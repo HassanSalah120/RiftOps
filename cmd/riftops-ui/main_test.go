@@ -244,6 +244,21 @@ func TestLaunchGameArgsKeepsGameArgsWhenLocaleIsAutomatic(t *testing.T) {
 	}
 }
 
+func TestShouldAttachExistingClientForNativeChat(t *testing.T) {
+	if !shouldAttachExistingClient(model.GameRiotClient, 1, false) {
+		t.Fatal("expected an already-open Riot Client to use native chat")
+	}
+	if !shouldAttachExistingClient(model.GameLeague, 1, false) {
+		t.Fatal("expected League to reuse the existing Riot Client and launch through LCU")
+	}
+	if shouldAttachExistingClient(model.GameRiotClient, 0, false) {
+		t.Fatal("an absent Riot Client cannot be attached")
+	}
+	if shouldAttachExistingClient(model.GameRiotClient, 1, true) {
+		t.Fatal("restart mode must take precedence over attachment")
+	}
+}
+
 func TestCustomStartRejectsNonPostBeforeTouchingLCU(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	lcuCustomStartHandler(recorder, httptest.NewRequest(http.MethodGet, "/api/lcu/custom-start", nil))

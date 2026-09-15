@@ -1021,12 +1021,22 @@ func startEngine(w http.ResponseWriter, r *http.Request) {
 		slog.Info("launch preflight could not resolve Riot Client", "error", err)
 		return
 	}
+	attachExisting := false
 	if !body.StopExisting {
 		adapter := platform.New()
 		processes, err := adapter.KnownProcesses(r.Context())
 		if err == nil && len(processes) > 0 {
-			httpError(w, "Riot Client is already running. Restart it with RiftOps to apply the launch profile.", http.StatusConflict)
-			return
+			// Riot Client owns its native friends/chat connection once it is
+			// already open. Reusing it keeps chat available instead of forcing a
+			// destructive restart just to install RiftOps' optional presence proxy.
+			// League can still be requested through the existing LCU product
+			// launcher; other game launches require a clean start so their launch
+			// product and profile arguments are not silently ignored.
+			attachExisting = shouldAttachExistingClient(game, len(processes), body.StopExisting)
+			if !attachExisting {
+				httpError(w, "Riot Client is already running. Restart it with RiftOps to apply the launch profile.", http.StatusConflict)
+				return
+			}
 		}
 	}
 	go func() {
@@ -1035,11 +1045,23 @@ func startEngine(w http.ResponseWriter, r *http.Request) {
 			Status:         profile.Status,
 			Patchline:      profile.Patchline,
 			StopExisting:   body.StopExisting,
+			AttachExisting: attachExisting,
 			RiotClientArgs: append([]string(nil), profile.RiotClientArgs...),
 			GameArgs:       launchGameArgs(profile),
 		})
 	}()
+	if attachExisting && game == model.GameLeague {
+		go func() {
+			if err := riotclient.LaunchLeague(context.Background()); err != nil {
+				slog.Warn("could not launch League through the existing Riot Client", "error", err)
+			}
+		}()
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func shouldAttachExistingClient(game model.Game, processCount int, stopExisting bool) bool {
+	return (game == model.GameRiotClient || game == model.GameLeague) && processCount > 0 && !stopExisting
 }
 
 // launchGameArgs appends only the validated, Riot-supported locale flag. The

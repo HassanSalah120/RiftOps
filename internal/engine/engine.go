@@ -40,6 +40,8 @@ const (
 	PhaseError          Phase = "error"
 )
 
+const chatHandshakeTimeout = 30 * time.Second
+
 type Snapshot struct {
 	Phase     Phase
 	Status    model.Status
@@ -52,10 +54,14 @@ type Snapshot struct {
 }
 
 type RunOptions struct {
-	Game           model.Game
-	Status         model.Status
-	Patchline      string
-	StopExisting   bool
+	Game         model.Game
+	Status       model.Status
+	Patchline    string
+	StopExisting bool
+	// AttachExisting keeps a running Riot Client intact and observes its native
+	// friends/chat session. It is used when the client was opened before
+	// RiftOps; no launch profile or presence proxy is injected in that mode.
+	AttachExisting bool
 	FreshLogin     bool
 	RiotClientArgs []string
 	GameArgs       []string
@@ -417,8 +423,12 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		return e.fail(game, status, fmt.Errorf("inspect Riot processes: %w", err))
 	}
 	allowMultiple := hasAllowMultipleClients(options.RiotClientArgs)
-	if len(processes) > 0 && !options.StopExisting && !allowMultiple {
+	attachExisting := options.AttachExisting && len(processes) > 0 && !options.StopExisting && !allowMultiple
+	if len(processes) > 0 && !options.StopExisting && !allowMultiple && !attachExisting {
 		return e.fail(game, status, ErrRiotAlreadyRunning)
+	}
+	if attachExisting {
+		return e.attachExistingClient(ctx, adapter, game, status)
 	}
 	if len(processes) > 0 && options.StopExisting {
 		if err := adapter.StopKnownProcesses(ctx); err != nil {
@@ -506,10 +516,15 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		defer e.commandMu.Unlock()
 		e.handleCommand(context.Background(), command)
 	})
+	chatConnected := make(chan struct{}, 1)
 	proxy.SetSessionHandler(func() {
 		snapshot := e.phaseSnapshot(PhaseActive, game, "League chat proxy connected")
 		snapshot.ChatPort = chatPort
 		e.emit(snapshot)
+		select {
+		case chatConnected <- struct{}{}:
+		default:
+		}
 	})
 	var connectedNotification sync.Once
 	proxy.SetRosterHandler(func() {
@@ -573,6 +588,8 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 
 	processDone := make(chan error, 1)
 	go func() { processDone <- process.Wait() }()
+	handshakeTimer := time.NewTimer(chatHandshakeTimeout)
+	defer handshakeTimer.Stop()
 	select {
 	case <-ctx.Done():
 		_ = process.Kill()
@@ -599,11 +616,60 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		e.policy = nil
 		e.mu.Unlock()
 		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
+	case <-chatConnected:
+		return waitForRiotShutdown(ctx, adapter)
+	case <-handshakeTimer.C:
+		slog.Warn("Riot did not establish a chat connection through the presence proxy; restarting with native Riot chat")
+		fallback := e.phaseSnapshot(PhaseLaunching, game, "Riot chat handshake timed out; restoring native friends and chat")
+		fallback.Enabled = false
+		e.emit(fallback)
+		stopProxy()
+		_ = configServer.Close(context.Background())
+		stopCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		if stopErr := adapter.StopKnownProcesses(stopCtx); stopErr != nil {
+			stop()
+			return e.fail(game, status, fmt.Errorf("stop Riot Client for native-chat fallback: %w", stopErr))
+		}
+		if stopErr := waitForNoRiotProcesses(stopCtx, adapter); stopErr != nil {
+			stop()
+			return e.fail(game, status, stopErr)
+		}
+		stop()
+		e.mu.Lock()
+		e.proxy = nil
+		e.policy = nil
+		e.mu.Unlock()
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
 	case err := <-processDone:
 		if err != nil {
 			slog.Debug("launched Riot process exited", "error", err)
 		}
 		return waitForRiotShutdown(ctx, adapter)
+	}
+}
+
+func (e *Engine) attachExistingClient(ctx context.Context, adapter platform.Adapter, game model.Game, status model.Status) error {
+	snapshot := e.phaseSnapshot(PhaseActive, game, "Using the running Riot Client with native friends and chat")
+	snapshot.Status = status
+	snapshot.Enabled = false
+	e.emit(snapshot)
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			processes, err := adapter.KnownProcesses(ctx)
+			if err != nil {
+				slog.Debug("could not inspect attached Riot Client", "error", err)
+				continue
+			}
+			if len(processes) == 0 {
+				return nil
+			}
+		}
 	}
 }
 
