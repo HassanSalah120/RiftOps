@@ -156,6 +156,28 @@ func TestLCUActionReturnsErrorOnNonSuccessStatus(t *testing.T) {
 	}
 }
 
+func TestLaunchLeagueProductUsesCurrentRiotEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/product-launcher/v1/products/league_of_legends/patchlines/live" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("content type = %q", r.Header.Get("Content-Type"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`"session-id"`))
+	}))
+	defer server.Close()
+
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	if err := testLockfile(server.URL).launchLeagueProduct(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestChampSelectSwapActionUsesValidatedLCURoute(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/lol-champ-select/v1/session/position-swaps/12/accept" {

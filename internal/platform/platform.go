@@ -143,7 +143,11 @@ func (r LaunchRequest) Arguments() ([]string, error) {
 		if patchline == "" {
 			patchline = "live"
 		}
-		arguments = append(arguments, "--launch-product="+product, "--launch-patchline="+patchline)
+		arguments = append(arguments,
+			"--launch-product="+product,
+			"--launch-patchline="+patchline,
+			"--allow-direct-launch",
+		)
 	} else if r.Game != model.GameRiotClient {
 		return nil, fmt.Errorf("game %q is not directly launchable", r.Game)
 	}

@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.10.5 — 2026-09-15
+
+- Fixed one-click League launch against Riot Client's current product-launcher endpoint.
+- Added Riot's direct-launch flag to normal and fallback startup paths.
+- Kept the trusted presence proxy active while League finishes opening.
+
 ## v2.10.4 — 2026-09-15
 
 - Kept the runtime status active when League refreshes its chat configuration after RiftOps has already established the trusted proxy session.

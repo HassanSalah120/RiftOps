@@ -941,6 +941,13 @@ func (lf *Lockfile) FetchLCUProfile(ctx context.Context) (*LCUProfile, error) {
 	return profile, nil
 }
 
+const leagueProductLaunchPath = "/product-launcher/v1/products/league_of_legends/patchlines/live"
+
+func (lf *Lockfile) launchLeagueProduct(ctx context.Context) error {
+	_, err := lf.doJSON(ctx, http.MethodPost, leagueProductLaunchPath, map[string]any{})
+	return err
+}
+
 // LaunchLeague tells the Riot Client LCU to launch League of Legends.
 // It tries the Riot Client's product-launcher API first, then uses the
 // operating system's app-launch mechanism when the LCU is not ready yet.
@@ -966,7 +973,7 @@ func LaunchLeague(ctx context.Context) error {
 		// transport so loopback validation, auth, bounded responses, and useful
 		// status errors are consistent with every other endpoint.
 		launchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_, launchErr := lf.doJSON(launchCtx, http.MethodPost, "/product-launcher/v1/products/league_of_legends/launch", map[string]any{})
+		launchErr := lf.launchLeagueProduct(launchCtx)
 		cancel()
 		if launchErr == nil {
 			slog.Info("lcu: launched League via Riot Client API")

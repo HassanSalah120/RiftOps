@@ -21,6 +21,7 @@ func launchLeagueFallback(ctx context.Context) error {
 		cmd := exec.CommandContext(ctx, riotExe,
 			"--launch-product=league_of_legends",
 			"--launch-patchline=live",
+			"--allow-direct-launch",
 		)
 		hideCommandWindow(cmd)
 		if err := cmd.Start(); err == nil {

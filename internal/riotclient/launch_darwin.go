@@ -32,7 +32,7 @@ func launchLeagueFallback(ctx context.Context) error {
 
 	// If League lives in a custom location but the Riot Client is installed,
 	// give it the product request and let it resolve the registered install.
-	cmd := exec.CommandContext(ctx, "open", "-a", "Riot Client", "--args", "--launch-product=league_of_legends", "--launch-patchline=live")
+	cmd := exec.CommandContext(ctx, "open", "-a", "Riot Client", "--args", "--launch-product=league_of_legends", "--launch-patchline=live", "--allow-direct-launch")
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("League of Legends was not found in Applications; open Riot Client and install or launch League once: %w", err)
 	}

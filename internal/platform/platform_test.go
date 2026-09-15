@@ -14,7 +14,7 @@ func TestLaunchArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--client-config-url=http://127.0.0.1:1234", "--launch-product=league_of_legends", "--launch-patchline=live", "--allow-multiple-clients", "--", "--locale=en_US"}
+	want := []string{"--client-config-url=http://127.0.0.1:1234", "--launch-product=league_of_legends", "--launch-patchline=live", "--allow-direct-launch", "--allow-multiple-clients", "--", "--locale=en_US"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
