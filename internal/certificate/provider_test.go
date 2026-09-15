@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"net"
 	"os"
@@ -90,6 +91,17 @@ func TestProviderGeneratesLocalhostDNSCertificate(t *testing.T) {
 	}
 	if err := certificate.Leaf.VerifyHostname("localhost"); err != nil {
 		t.Fatalf("generated certificate does not verify localhost: %v", err)
+	}
+}
+
+func TestProviderLoadCachedDoesNotGenerateMissingCertificate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.pfx")
+	_, err := (Provider{CachePath: path, Hostname: "example.duckdns.org"}).LoadCached(context.Background())
+	if err == nil {
+		t.Fatal("LoadCached unexpectedly generated a certificate")
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("LoadCached created or changed the cache: %v", statErr)
 	}
 }
 

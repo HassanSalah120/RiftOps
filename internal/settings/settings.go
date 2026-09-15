@@ -20,19 +20,23 @@ type StartupStatus string
 const StartupLast StartupStatus = "last"
 
 type Settings struct {
-	Version           int             `json:"version"`
-	Enabled           bool            `json:"enabled"`
-	Status            model.Status    `json:"status"`
-	StartupStatus     StartupStatus   `json:"startupStatus"`
-	DefaultGame       model.Game      `json:"defaultGame"`
-	ConnectToMUC      bool            `json:"connectToMUC"`
-	CheckUpdates      bool            `json:"checkUpdates"`
-	RiotClientPath    string          `json:"riotClientPath,omitempty"`
-	PromptedUpdate    string          `json:"promptedUpdate,omitempty"`
-	IntroductionShown bool            `json:"introductionShown"`
-	PhoneAccess       bool            `json:"phoneAccess"`
-	ActiveProfileID   string          `json:"activeProfileId"`
-	Profiles          []LaunchProfile `json:"profiles"`
+	Version           int           `json:"version"`
+	Enabled           bool          `json:"enabled"`
+	Status            model.Status  `json:"status"`
+	StartupStatus     StartupStatus `json:"startupStatus"`
+	DefaultGame       model.Game    `json:"defaultGame"`
+	ConnectToMUC      bool          `json:"connectToMUC"`
+	CheckUpdates      bool          `json:"checkUpdates"`
+	RiotClientPath    string        `json:"riotClientPath,omitempty"`
+	PromptedUpdate    string        `json:"promptedUpdate,omitempty"`
+	IntroductionShown bool          `json:"introductionShown"`
+	PhoneAccess       bool          `json:"phoneAccess"`
+	// ProxyHostname is a user-owned DuckDNS hostname used only when a trusted
+	// local chat certificate has been provisioned. The DNS/API token is never
+	// persisted in settings.
+	ProxyHostname   string          `json:"proxyHostname,omitempty"`
+	ActiveProfileID string          `json:"activeProfileId"`
+	Profiles        []LaunchProfile `json:"profiles"`
 }
 
 // Clone returns a fully independent settings snapshot. Settings is otherwise
@@ -83,6 +87,9 @@ func (s *Settings) Validate() error {
 	}
 	if len(s.RiotClientPath) > 4096 || strings.ContainsRune(s.RiotClientPath, '\x00') {
 		return fmt.Errorf("Riot Client location is invalid")
+	}
+	if len(s.ProxyHostname) > 253 || strings.ContainsAny(s.ProxyHostname, "\r\n\x00") {
+		return fmt.Errorf("proxy hostname is invalid")
 	}
 	if len(s.Profiles) == 0 {
 		return fmt.Errorf("at least one launch profile is required")

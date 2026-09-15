@@ -7,6 +7,7 @@ export type ChampSelectAction = {
   isInProgress?: boolean;
   pickTurn?: number;
   type?: string;
+  [key: string]: unknown;
 };
 
 // LCU exposes pick-order and position swaps as small, versioned objects. The
@@ -64,6 +65,7 @@ export type DraftContextOptions = {
 
 export type ChampSelectSession = {
   actions?: ChampSelectAction[][];
+  id?: string | number;
   pickOrderSwaps?: ChampSelectSwap[];
   positionSwaps?: ChampSelectSwap[];
   localPlayerCellId?: number;
@@ -103,9 +105,79 @@ export type ChampSelectSession = {
   };
 };
 
+function numericField(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isSafeInteger(number) ? number : undefined;
+}
+
+/**
+ * League has kept the champion-select payload mostly stable, but a few
+ * client/legacy routes use different casing (and `actorCellID`). Keep that
+ * dialect handling here so the automation loop has one canonical vocabulary.
+ */
+export function champSelectActionType(action: ChampSelectAction | null | undefined): 'pick' | 'ban' | null {
+  const value = String(action?.type || '').trim().toUpperCase().replace(/[-\s]/g, '_');
+  if (value === 'PICK' || value === 'CHAMPION_PICK' || value === 'CHAMPIONPICK') return 'pick';
+  if (value === 'BAN' || value === 'CHAMPION_BAN' || value === 'CHAMPIONBAN') return 'ban';
+  return null;
+}
+
+export function normalizeChampSelectPhase(value: unknown): string {
+  const phase = String(value || '').trim().toUpperCase().replace(/[-\s]/g, '_');
+  if (phase === 'BANPICK' || phase === 'BAN_PICK') return 'BAN_PICK';
+  if (phase === 'FINALIZATION' || phase === 'PLANNING') return phase;
+  return phase;
+}
+
+export function normalizeChampSelectSession(value: unknown): ChampSelectSession {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const raw = value as Record<string, unknown>;
+  const rawActions = Array.isArray(raw.actions) ? raw.actions : [];
+  // A few legacy/custom-session responses flatten actions into one array.
+  // Treat that as a single turn instead of silently dropping every action.
+  const actionTurns = rawActions.length > 0 && !Array.isArray(rawActions[0]) ? [rawActions] : rawActions;
+  const actions = actionTurns.map((turn) => (Array.isArray(turn) ? turn : [])
+    .filter((action): action is Record<string, unknown> => Boolean(action && typeof action === 'object' && !Array.isArray(action)))
+    .map((action) => {
+      const normalizedType = champSelectActionType({ type: String(action.type || '') });
+      return {
+        ...action,
+        id: numericField(action.id),
+        actorCellId: numericField(action.actorCellId ?? action.actorCellID),
+        championId: numericField(action.championId ?? action.championID),
+        type: normalizedType || String(action.type || '').trim().toLowerCase().replace(/[-\s]/g, '_') || undefined,
+      } as ChampSelectAction;
+    }));
+  const rawTimer = raw.timer && typeof raw.timer === 'object' && !Array.isArray(raw.timer)
+    ? raw.timer as Record<string, unknown>
+    : undefined;
+  const myTeam = Array.isArray(raw.myTeam)
+    ? raw.myTeam.filter((member): member is Record<string, unknown> => Boolean(member && typeof member === 'object' && !Array.isArray(member))).map((member) => ({
+      ...member,
+      cellId: numericField(member.cellId ?? member.cellID),
+      pickTurn: numericField(member.pickTurn),
+      championId: numericField(member.championId ?? member.championID),
+    }))
+    : undefined;
+  return {
+    ...raw as ChampSelectSession,
+    localPlayerCellId: numericField(raw.localPlayerCellId ?? raw.localPlayerCellID),
+    gameId: (raw.gameId ?? raw.gameID) as string | number | undefined,
+    queueId: (raw.queueId ?? raw.queueID) as string | number | undefined,
+    actions,
+    myTeam,
+    timer: rawTimer ? {
+      ...rawTimer,
+      phase: normalizeChampSelectPhase(rawTimer.phase),
+      timeLeft: Number(rawTimer.timeLeft ?? rawTimer.timeLeftInPhase),
+      adjustedTimeLeftInPhase: Number(rawTimer.adjustedTimeLeftInPhase ?? rawTimer.adjustedTimeLeft),
+    } : undefined,
+  };
+}
+
 export function localAssignedPosition(session: ChampSelectSession | null | undefined): string | null {
-  const localCell = session?.localPlayerCellId;
-  const member = localCell === undefined ? session?.myTeam?.[0] : session?.myTeam?.find((entry) => entry.cellId === localCell);
+  const localCell = numericField(session?.localPlayerCellId);
+  const member = localCell === undefined ? session?.myTeam?.[0] : session?.myTeam?.find((entry) => numericField(entry.cellId) === localCell);
   const value = String(member?.assignedPosition || member?.assignedRole || member?.position || member?.role || '').trim().toUpperCase();
   if (!value || value === 'FILL' || value === 'NONE' || value === 'UNASSIGNED') return null;
   if (value === 'MID' || value === 'MIDDLE') return 'MIDDLE';
@@ -190,20 +262,24 @@ export function hasChampSelectActionID(action: ChampSelectAction | null | undefi
 }
 
 export function flattenChampSelectActions(session: ChampSelectSession | null | undefined): ChampSelectAction[] {
-  return (session?.actions || []).flatMap((turn) => turn || []);
+  const turns = session?.actions || [];
+  if (turns.length > 0 && !Array.isArray(turns[0])) {
+    return turns as unknown as ChampSelectAction[];
+  }
+  return turns.flatMap((turn) => turn || []);
 }
 
 export function occupiedChampSelectChampionIDs(session: ChampSelectSession | null | undefined, excludedActionID?: number): Set<number> {
   return new Set(flattenChampSelectActions(session)
     .filter((action) => Number(action.id) !== excludedActionID)
-    .filter((action) => action.type === 'ban' || action.type === 'pick')
+    .filter((action) => champSelectActionType(action) !== null)
     .map((action) => Number(action.championId || 0))
     .filter((championID) => championID > 0));
 }
 
 export function chooseChampSelectChampion(candidates: number[], occupied: Set<number>, available: number[] | null): number {
   const unique = candidates.filter((championID, index) => championID > 0 && candidates.indexOf(championID) === index);
-  return unique.find((championID) => !occupied.has(championID) && (!available || available.length === 0 || available.includes(championID))) || 0;
+  return unique.find((championID) => !occupied.has(championID) && (!available || available.includes(championID))) || 0;
 }
 
 function integerField(value: unknown): number | undefined {
@@ -254,7 +330,7 @@ function pickTurnForCell(session: ChampSelectSession, cellID: number): number {
     if (integerField(member.cellId) === cellID) highest = Math.max(highest, integerField(member.pickTurn) ?? -1);
   }
   for (const action of flattenChampSelectActions(session)) {
-    if (action.type !== 'pick' || integerField(action.actorCellId) !== cellID) continue;
+    if (champSelectActionType(action) !== 'pick' || integerField(action.actorCellId) !== cellID) continue;
     highest = Math.max(highest, integerField(action.pickTurn) ?? -1);
   }
   return highest;
@@ -341,24 +417,29 @@ export function runePageForPick(primaryRunePageID: number, fallbackRunePageID: n
 }
 
 function isPendingDraftAction(action: ChampSelectAction): boolean {
-  return !action.completed && (action.type === 'pick' || action.type === 'ban');
+  return !action.completed && champSelectActionType(action) !== null;
 }
 
 // LCU groups simultaneous actions into turns. The first group with an
 // unfinished pick/ban is authoritative; future local actions are not yet
 // lockable even when they already exist in the session payload.
 export function currentChampSelectTurn(session: ChampSelectSession | null | undefined): ChampSelectAction[] {
-  return (session?.actions || []).find((turn) => (turn || []).some(isPendingDraftAction)) || [];
+  const turns = session?.actions || [];
+  if (turns.length > 0 && !Array.isArray(turns[0])) {
+    const flat = turns as unknown as ChampSelectAction[];
+    return flat.some(isPendingDraftAction) ? flat : [];
+  }
+  return turns.find((turn) => (turn || []).some(isPendingDraftAction)) || [];
 }
 
 export function currentLocalChampSelectAction(session: ChampSelectSession | null | undefined): ChampSelectAction | undefined {
-  const localCell = session?.localPlayerCellId;
+  const localCell = numericField(session?.localPlayerCellId);
   if (localCell === undefined || localCell === null) return undefined;
-  return currentChampSelectTurn(session).find((action) => action.actorCellId === localCell && isPendingDraftAction(action));
+  return currentChampSelectTurn(session).find((action) => integerField(action.actorCellId) === localCell && isPendingDraftAction(action));
 }
 
 export function liveLocalChampSelectAction(session: ChampSelectSession | null | undefined): ChampSelectAction | undefined {
-  const phase = String(session?.timer?.phase || '');
+  const phase = normalizeChampSelectPhase(session?.timer?.phase);
   if (phase && phase !== 'BAN_PICK') return undefined;
   return currentLocalChampSelectAction(session);
 }
@@ -366,12 +447,14 @@ export function liveLocalChampSelectAction(session: ChampSelectSession | null | 
 // During PLANNING, League permits declaring/hovering the first future pick,
 // even though it is not the player's live BAN_PICK turn yet.
 export function firstLocalPendingPick(session: ChampSelectSession | null | undefined): ChampSelectAction | undefined {
-  const localCell = session?.localPlayerCellId;
+  const localCell = numericField(session?.localPlayerCellId);
   if (localCell === undefined || localCell === null) return undefined;
-  return flattenChampSelectActions(session).find((action) => action.actorCellId === localCell && action.type === 'pick' && !action.completed);
+  return flattenChampSelectActions(session).find((action) => integerField(action.actorCellId) === localCell && champSelectActionType(action) === 'pick' && !action.completed);
 }
 
 export function champSelectSessionKey(session: ChampSelectSession): string {
+  const sessionID = String(session.id ?? '').trim();
+  if (sessionID && sessionID !== '0') return `champselect:session:${sessionID}`;
   const gameID = String(session.gameId ?? '').trim();
   if (gameID && gameID !== '0') return `champselect:game:${gameID}`;
 

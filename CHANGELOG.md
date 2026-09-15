@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.10.2 — 2026-09-15
+
+### Install-only trusted chat release path
+
+- Added a Deceive-style release option that bundles one validated trusted
+  proxy certificate and fixed DuckDNS hostname, so end users do not enter a
+  DuckDNS token.
+- Added build-time PFX validation and cleanup; certificate material is never
+  committed or logged.
+- Added bundled-proxy status reporting and hid per-user setup controls in
+  bundled releases.
+
 ## v2.10.1 — 2026-09-15
 
 ### Riot Client chat and launch compatibility

@@ -2757,10 +2757,16 @@ func validateChampSelectActionPayload(payload []byte, actionID, championID int) 
 			}
 			if *action.ID == actionID {
 				found = true
-				if action.Type != "pick" && action.Type != "ban" {
+				actionType := strings.ToLower(strings.TrimSpace(action.Type))
+				if actionType == "champion_pick" || actionType == "championpick" {
+					actionType = "pick"
+				} else if actionType == "champion_ban" || actionType == "championban" {
+					actionType = "ban"
+				}
+				if actionType != "pick" && actionType != "ban" {
 					return fmt.Errorf("champion-select action %d has an unsupported type", actionID)
 				}
-				if championID == riotclient.ArenaBraveryChampionID && action.Type != "pick" {
+				if championID == riotclient.ArenaBraveryChampionID && actionType != "pick" {
 					return fmt.Errorf("Arena Bravery is only valid for a pick action")
 				}
 				if championID == riotclient.ArenaBraveryChampionID && hasArenaMetadata && !isArena {
@@ -2771,7 +2777,13 @@ func validateChampSelectActionPayload(payload []byte, actionID, championID int) 
 				}
 				continue
 			}
-			if championID > 0 && action.ChampionID == championID && !action.Completed && (action.Type == "pick" || action.Type == "ban") {
+			actionType := strings.ToLower(strings.TrimSpace(action.Type))
+			if actionType == "champion_pick" || actionType == "championpick" {
+				actionType = "pick"
+			} else if actionType == "champion_ban" || actionType == "championban" {
+				actionType = "ban"
+			}
+			if championID > 0 && action.ChampionID == championID && !action.Completed && (actionType == "pick" || actionType == "ban") {
 				return fmt.Errorf("champion %d is already occupied by the draft", championID)
 			}
 		}

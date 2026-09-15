@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/HassanSalah120/RiftOps/internal/buildinfo"
+	"github.com/HassanSalah120/RiftOps/internal/certificate"
 	"github.com/HassanSalah120/RiftOps/internal/diagnostics"
 	"github.com/HassanSalah120/RiftOps/internal/engine"
 	"github.com/HassanSalah120/RiftOps/internal/model"
@@ -36,9 +37,17 @@ func run() error {
 	patchline := flag.String("patchline", "live", "Riot game patchline")
 	stopExisting := flag.Bool("stop-existing", false, "stop existing Riot processes before launch")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	validateProxyCertificate := flag.String("validate-proxy-certificate", "", "validate a PKCS#12 proxy certificate and exit")
+	proxyHostname := flag.String("proxy-hostname", "", "hostname expected by -validate-proxy-certificate")
 	flag.Var(&riotArgs, "riot-arg", "extra Riot Client argument; repeatable")
 	flag.Var(&gameArgs, "game-arg", "extra game argument; repeatable")
 	flag.Parse()
+	if *validateProxyCertificate != "" {
+		if *proxyHostname == "" {
+			return fmt.Errorf("-proxy-hostname is required with -validate-proxy-certificate")
+		}
+		return certificate.ValidatePKCS12File(*validateProxyCertificate, *proxyHostname)
+	}
 	if *showVersion {
 		fmt.Println("RiftOps", buildinfo.Version)
 		return nil

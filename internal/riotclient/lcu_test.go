@@ -466,24 +466,19 @@ func TestQuitCustomSessionUsesEarlyExitForPracticeGame(t *testing.T) {
 }
 
 func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
-	var actionPayload map[string]any
+	var lockCalls int
 	var hoverPayload map[string]any
-	var braveryPayload map[string]any
 	var selectionPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/actions/42":
-			if err := json.NewDecoder(r.Body).Decode(&actionPayload); err != nil {
-				t.Fatalf("decode action: %v", err)
-			}
+		case r.Method == http.MethodPost && r.URL.Path == "/lol-champ-select/v1/session/actions/42/complete":
+			lockCalls++
 		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/actions/0":
 			if err := json.NewDecoder(r.Body).Decode(&hoverPayload); err != nil {
 				t.Fatalf("decode hover: %v", err)
 			}
-		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/actions/2":
-			if err := json.NewDecoder(r.Body).Decode(&braveryPayload); err != nil {
-				t.Fatalf("decode bravery: %v", err)
-			}
+		case r.Method == http.MethodPost && r.URL.Path == "/lol-champ-select/v1/session/actions/2/complete":
+			lockCalls++
 		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/my-selection":
 			if err := json.NewDecoder(r.Body).Decode(&selectionPayload); err != nil {
 				t.Fatalf("decode selection: %v", err)
@@ -503,9 +498,6 @@ func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
 	if err := lf.UpdateChampSelectAction(context.Background(), 42, 103, true); err != nil {
 		t.Fatal(err)
 	}
-	if actionPayload["championId"] != float64(103) || actionPayload["completed"] != true {
-		t.Fatalf("action payload = %#v", actionPayload)
-	}
 	if err := lf.UpdateChampSelectAction(context.Background(), 0, 103, false); err != nil {
 		t.Fatalf("action id zero should be valid: %v", err)
 	}
@@ -518,14 +510,49 @@ func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
 	if err := lf.UpdateChampSelectAction(context.Background(), 2, ArenaBraveryChampionID, true); err != nil {
 		t.Fatalf("Arena Bravery should be accepted: %v", err)
 	}
-	if braveryPayload["championId"] != float64(ArenaBraveryChampionID) || braveryPayload["completed"] != true {
-		t.Fatalf("bravery payload = %#v", braveryPayload)
+	if lockCalls != 2 {
+		t.Fatalf("complete calls = %d, want 2", lockCalls)
 	}
 	if err := lf.UpdateChampSelectSelection(context.Background(), 4, 14, 12345); err != nil {
 		t.Fatal(err)
 	}
 	if selectionPayload["spell1Id"] != float64(4) || selectionPayload["spell2Id"] != float64(14) || selectionPayload["selectedSkinId"] != float64(12345) {
 		t.Fatalf("selection payload = %#v", selectionPayload)
+	}
+}
+
+func TestChampSelectActionFallsBackToLegacyPatchLockRoute(t *testing.T) {
+	var fallbackPayload map[string]any
+	var completeCalls, patchCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/lol-champ-select/v1/session/actions/7/complete":
+			completeCalls++
+			http.NotFound(w, r)
+			return
+		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/actions/7":
+			patchCalls++
+			if err := json.NewDecoder(r.Body).Decode(&fallbackPayload); err != nil {
+				t.Fatalf("decode fallback action: %v", err)
+			}
+		default:
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	if err := testLockfile(server.URL).UpdateChampSelectAction(context.Background(), 7, 103, true); err != nil {
+		t.Fatal(err)
+	}
+	if completeCalls != 1 || patchCalls != 1 {
+		t.Fatalf("fallback calls = complete:%d patch:%d, want one each", completeCalls, patchCalls)
+	}
+	if fallbackPayload["championId"] != float64(103) || fallbackPayload["completed"] != true {
+		t.Fatalf("fallback payload = %#v", fallbackPayload)
 	}
 }
 

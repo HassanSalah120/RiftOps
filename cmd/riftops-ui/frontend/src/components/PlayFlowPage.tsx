@@ -16,6 +16,7 @@ import {
 import type { DDChampion, LCUAvailableQueue, LCULobby, LCURunePage, MatchmakingDiagnostics, LeaverRestrictionStatus, PlayFlowPreferences, CustomGamesDirectory } from '../api';
 import { loadChampionCatalog } from '../leagueCatalog';
 import {
+  champSelectActionType,
   champSelectSessionKey,
   chooseChampSelectChampion,
   draftTimingRemainingMs,
@@ -24,6 +25,8 @@ import {
   hasChampSelectActionID,
   liveLocalChampSelectAction,
   localAssignedPosition,
+  normalizeChampSelectPhase,
+  normalizeChampSelectSession,
   isManualChampSelectHover,
   choosePickOrderSwap,
   occupiedChampSelectChampionIDs,
@@ -177,7 +180,7 @@ function lobbyIsCustom(lobby: LCULobby | null): boolean {
 function createConfiguredLobby(queueID: number, queues: LCUAvailableQueue[]): Promise<unknown> {
   if (isPracticeQueue(queueID)) return createPracticeToolLobby();
   const queue = findQueue(queueID, queues);
-  if (queue && String(queue.category || '').toLowerCase() === 'custom') {
+  if (queue && String(queue.category || '').trim().toLowerCase() === 'custom') {
     return createLCULobby(queueID, { category: queue.category, gameMode: queue.gameMode, queueName: queue.name, mapId: queue.mapId });
   }
   return createLCULobby(queueID);
@@ -828,8 +831,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     try {
       const ids = (kind === 'pick' ? await fetchLCUChampSelectPickable() : await fetchLCUChampSelectBannable()).map(Number).filter((id) => id > 0);
       availabilityRef.current[kind] = { ids, at: Date.now() };
-      // An empty catalogue can be a transient LCU state. Let the mutation give
-      // the authoritative answer instead of incorrectly blocking the action.
+      // An empty catalogue is authoritative for this poll: no configured
+      // champion may be sent until League exposes a live candidate list.
       return ids;
     } catch {
       return null;
@@ -928,7 +931,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     const config = prefsRef.current;
     let session: ChampSelectSession;
     try {
-      session = await fetchLCUChampSelect() as ChampSelectSession;
+      session = normalizeChampSelectSession(await fetchLCUChampSelect());
     } catch (e) {
       console.debug('[PlayFlow] champ-select fetch failed', e);
       draftRef.current = null;
@@ -982,9 +985,22 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         showToast(message, 'success');
         return;
       }
+      const observedChampionId = Number(observed.championId || 0);
+      if (observedChampionId > 0 && observedChampionId !== previous.championId) {
+        // League (or the player) changed the action while a lock response was
+        // still ambiguous. Never overwrite that newer choice on a later poll.
+        manualOverrideRef.current[`${sessionKey}:${previous.actionId}`] = true;
+        draftRef.current = null;
+        setDraftTone('idle');
+        setDraftStatus('Champion choice changed while RiftOps was waiting for League. This turn is paused for manual review.');
+        return;
+      }
+      setDraftTone('working');
+      setDraftStatus(`${previous.actionType === 'ban' ? 'Ban' : 'Lock'} sent. Waiting for League to confirm…`);
+      return;
     }
 
-    const timerPhase = String(session.timer?.phase || '');
+    const timerPhase = normalizeChampSelectPhase(session.timer?.phase);
     const liveAction = liveLocalChampSelectAction(session);
     const declaration = timerPhase === 'PLANNING' ? firstLocalPendingPick(session) : undefined;
     const action = liveAction || declaration;
@@ -998,13 +1014,14 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
       draft: draftRef.current,
     });
 
-    if (!action || !hasChampSelectActionID(action) || (action.type !== 'pick' && action.type !== 'ban')) {
+    const resolvedActionType = champSelectActionType(action);
+    if (!action || !hasChampSelectActionID(action) || !resolvedActionType) {
       setDraftTone('idle');
       setDraftStatus(pickOrderSwapStatus || (timerPhase === 'FINALIZATION' ? 'Draft complete — loadout can still be adjusted.' : 'Waiting for your next pick or ban turn.'));
       return;
     }
 
-    const actionType = action.type;
+    const actionType = resolvedActionType;
     const enabled = actionType === 'ban' ? config.autoBan : config.autoPick;
     const liveQueueID = Number(session.queueId || config.selectedQueue);
     const liveQueue = findQueue(liveQueueID, queuesRef.current);
@@ -1070,6 +1087,11 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     const conflicts = occupiedChampSelectChampionIDs(session, actionID);
     const candidates = [primaryChampionId, fallbackChampionId];
     const available = arenaBravery ? null : await fetchAvailableChampions(actionType);
+    if (!arenaBravery && available === null) {
+      setDraftTone('idle');
+      setDraftStatus('Waiting for League to provide the live champion availability list. No draft action was sent.');
+      return;
+    }
     const selectedChampionId = arenaBravery
       ? ARENA_BRAVERY_CHAMPION_ID
       : chooseChampSelectChampion(candidates, conflicts, available);
@@ -1250,10 +1272,17 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         console.debug('[PlayFlow] gameflow fetch failed', e);
         setConnected(false);
         setPhase('');
+        // A disconnected client invalidates every in-flight draft attempt.
+        // Do not carry a pending lock or availability cache into a later
+        // reconnect, even if League restores the same phase quickly.
+        resetCycle('disconnected');
         return;
       }
       setPhase(current);
-      if (lastPhaseRef.current !== current) lastPhaseRef.current = current;
+      if (lastPhaseRef.current !== current) {
+        lastPhaseRef.current = current;
+        resetCycle(`phase:${current}`);
+      }
       if (current === 'ChampSelect') console.debug('[PlayFlow] phase ChampSelect', { autoMode: autoRef.current, prefs: prefsRef.current });
 
       if (current === 'None' || current === 'Lobby') resetCycle('lobby');
@@ -1616,7 +1645,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
           )}
           {prefs.selectedQueue > 0 && <button type="button" disabled={!connected || acting === 'lobby'} onClick={() => {
             const q = queues.find((queue) => queue.id === prefs.selectedQueue);
-            const isCustom = isPracticeSelection || (!!q && String(q.category || '').toLowerCase() === 'custom');
+            const isCustom = isPracticeSelection || (!!q && String(q.category || '').trim().toLowerCase() === 'custom');
             const label = q?.name || `queue ${prefs.selectedQueue}`;
             const msg = isPracticeSelection ? 'Practice Tool lobby created. Use Start game when the lobby is ready.' : isCustom ? `Custom lobby created for ${label}.` : `Lobby created for ${label}.`;
             void runStep('lobby', () => createConfiguredLobby(prefs.selectedQueue, queues), msg);

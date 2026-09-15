@@ -31,6 +31,13 @@ func TestValidateChampSelectActionPayloadRejectsUnsupportedActionType(t *testing
 	}
 }
 
+func TestValidateChampSelectActionPayloadAcceptsActionTypeCasing(t *testing.T) {
+	body := []byte(`{"actions":[[{"id":4,"championId":0,"type":"CHAMPION_PICK","completed":false}]]}`)
+	if err := validateChampSelectActionPayload(body, 4, 84); err != nil {
+		t.Fatalf("case-variant pick action was rejected: %v", err)
+	}
+}
+
 func TestValidateChampSelectActionPayloadDoesNotBlockUnknownShapes(t *testing.T) {
 	if err := validateChampSelectActionPayload([]byte(`{"unexpected":true}`), 4, 84); err != nil {
 		t.Fatalf("unknown session shape should remain LCU-authoritative: %v", err)

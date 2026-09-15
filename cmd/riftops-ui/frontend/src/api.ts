@@ -265,6 +265,38 @@ export function clearRiotClientLocation(): Promise<RiotClientLocation> {
   return fetch('/api/riot-client-location', { method: 'DELETE' }).then(locationResponse);
 }
 
+export interface ProxySetupStatus {
+  configured: boolean;
+  bundled: boolean;
+  hostname?: string;
+  certificateReady: boolean;
+  loopbackReady: boolean;
+  mode: 'trusted-local-proxy' | 'loopback-self-signed' | 'native-fallback' | string;
+  expiresAt?: string;
+}
+
+export async function fetchProxySetupStatus(): Promise<ProxySetupStatus> {
+  const res = await fetch('/api/proxy/status', { cache: 'no-store' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Proxy setup status unavailable');
+  return res.json();
+}
+
+export async function setupProxyCertificate(hostname: string, token: string, email = ''): Promise<ProxySetupStatus> {
+  const res = await fetch('/api/proxy/setup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hostname, token, email }),
+  });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Trusted local chat setup failed');
+  return res.json();
+}
+
+export async function clearProxySetup(): Promise<ProxySetupStatus> {
+  const res = await fetch('/api/proxy/clear', { method: 'DELETE' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Could not clear trusted local chat setup');
+  return res.json();
+}
+
 export async function quitApp(): Promise<void> {
   await fetch('/api/quit', { method: 'POST' });
 }

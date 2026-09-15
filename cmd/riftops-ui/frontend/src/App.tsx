@@ -111,7 +111,7 @@ export default function App() {
   const [reducedMotion, setReducedMotion] = useState(() => {
     try { return localStorage.getItem('riftops.reducedMotion') === 'true'; } catch { return false; }
   });
-  const { connected: lcuConnected, performanceMode, setPerformanceMode, pageVisible } = useLCUConnection();
+  const { connected: lcuConnected, qol: lcuQol, performanceMode, setPerformanceMode, pageVisible } = useLCUConnection();
   const previousLcuConnection = useRef<boolean | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -431,8 +431,8 @@ export default function App() {
   };
 
   const handleSetStatus = async (status: string) => {
-    if (!presenceControlsAvailable) {
-      showToast('Native Riot chat active', 'Presence masking is unavailable for this run so friends and chat can stay connected.', 'info');
+    if (!presenceStatusAvailable) {
+      showToast('League unavailable', 'League availability cannot be changed until the client is connected.', 'info');
       return;
     }
     try {
@@ -509,6 +509,8 @@ export default function App() {
   const isIdle = snapshot.Phase === 'idle' || snapshot.Phase === 'error';
   const isLive = snapshot.Phase !== 'idle' && snapshot.Phase !== 'error';
   const presenceControlsAvailable = isIdle || snapshot.ChatPort > 0;
+  const presenceStatusAvailable = presenceControlsAvailable || lcuConnected;
+  const leagueAvailability = lcuQol?.availability || snapshot.Status;
   const gameInfo = GAMES.find((g) => g.value === selectedGame);
   const gameImg = GAME_IMGS[selectedGame];
 
@@ -697,16 +699,11 @@ export default function App() {
                       <label className="toggle">
                         <input
                           type="checkbox"
-                          checked={snapshot.Enabled && snapshot.Status === 'offline'}
-                          disabled={!presenceControlsAvailable}
+                          checked={leagueAvailability === 'offline'}
+                          disabled={!presenceStatusAvailable}
                           onChange={(e) => {
-                            if (e.target.checked) {
-                              handleSetStatus('offline');
-                              if (!snapshot.Enabled) handleToggleMasking(true);
-                            } else {
-                              handleSetStatus('online');
-                              if (snapshot.Enabled) handleToggleMasking(false);
-                            }
+                            void handleSetStatus(e.target.checked ? 'offline' : 'online');
+                            if (presenceControlsAvailable) void handleToggleMasking(e.target.checked);
                           }}
                         />
                         <span className="slider" />
@@ -779,8 +776,9 @@ export default function App() {
                             <span className="slider" />
                           </label>
                         </div>
-                        <StatusSelector current={snapshot.Status} onChange={handleSetStatus} disabled={!presenceControlsAvailable} />
-                        {!presenceControlsAvailable && <p className="text-[10px] leading-relaxed text-text-dim">Riot rejected the secure presence proxy. RiftOps restored native friends and chat for this run.</p>}
+                        <StatusSelector current={leagueAvailability} onChange={handleSetStatus} disabled={!presenceStatusAvailable} />
+                        {!presenceControlsAvailable && lcuConnected && <p className="text-[10px] leading-relaxed text-text-dim">Native Riot friends and chat are active. Availability is applied directly through League; secure masking is unavailable for this run.</p>}
+                        {!presenceStatusAvailable && <p className="text-[10px] leading-relaxed text-text-dim">League is not connected. Launch the client to change availability.</p>}
                       </section>
                     )}
 

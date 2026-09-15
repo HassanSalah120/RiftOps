@@ -11,6 +11,9 @@ import {
   hasChampSelectActionID,
   liveLocalChampSelectAction,
   localAssignedPosition,
+  normalizeChampSelectPhase,
+  normalizeChampSelectSession,
+  champSelectActionType,
   isManualChampSelectHover,
   occupiedChampSelectChampionIDs,
   rolePickPlanFor,
@@ -81,6 +84,32 @@ test('fallback candidate is selected when the primary is occupied or unavailable
   assert.equal(chooseChampSelectChampion([103, 84], new Set([103]), [103, 84]), 84);
   assert.equal(chooseChampSelectChampion([103, 84], new Set(), [84]), 84);
   assert.equal(chooseChampSelectChampion([103, 84], new Set([103, 84]), [103, 84]), 0);
+  assert.equal(chooseChampSelectChampion([103, 84], new Set(), []), 0);
+});
+
+test('normalizes League action and phase dialects before draft decisions', () => {
+  assert.equal(champSelectActionType({ type: 'CHAMPION_PICK' }), 'pick');
+  assert.equal(champSelectActionType({ type: 'BAN' }), 'ban');
+  assert.equal(normalizeChampSelectPhase('banpick'), 'BAN_PICK');
+  assert.equal(normalizeChampSelectPhase('planning'), 'PLANNING');
+
+  const session = normalizeChampSelectSession({
+    localPlayerCellID: '4',
+    timer: { phase: 'banpick' },
+    actions: [[{ id: '0', actorCellID: '4', type: 'CHAMPION_PICK', completed: false }]],
+  });
+  assert.equal(session.localPlayerCellId, 4);
+  assert.equal(session.timer?.phase, 'BAN_PICK');
+  assert.equal(liveLocalChampSelectAction(session)?.type, 'pick');
+  assert.equal(liveLocalChampSelectAction(session)?.actorCellId, 4);
+
+  const flattened = normalizeChampSelectSession({
+    localPlayerCellId: 4,
+    actions: [{ id: 1, actorCellId: 4, type: 'pick', completed: false }],
+  });
+  assert.equal(currentLocalChampSelectAction(flattened)?.id, 1);
+  const rawFlat = { localPlayerCellId: 4, actions: [{ id: 2, actorCellId: 4, type: 'PICK', completed: false }] } as unknown as ChampSelectSession;
+  assert.equal(currentLocalChampSelectAction(rawFlat)?.id, 2);
 });
 
 test('fallback picks can use a dedicated rune page or inherit the primary page', () => {

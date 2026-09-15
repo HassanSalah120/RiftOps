@@ -2,7 +2,7 @@
 ; Builds a lightweight, user-mode Windows Setup installer for RiftOps League Companion.
 
 #ifndef AppVersion
-  #define AppVersion "2.10.1"
+  #define AppVersion "2.10.2"
 #endif
 
 #ifndef SourceExe

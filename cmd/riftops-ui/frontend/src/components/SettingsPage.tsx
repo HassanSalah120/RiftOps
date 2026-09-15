@@ -127,7 +127,57 @@ export default function SettingsPage({
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [chatPrivacy, setChatPrivacy] = useState<api.ChatPrivacy | null>(null);
   const [chatPrivacyBusy, setChatPrivacyBusy] = useState('');
+  const [proxySetup, setProxySetup] = useState<api.ProxySetupStatus | null>(null);
+  const [proxyHostname, setProxyHostname] = useState('');
+  const [proxyToken, setProxyToken] = useState('');
+  const [proxyEmail, setProxyEmail] = useState('');
+  const [proxyBusy, setProxyBusy] = useState(false);
   const { streamerMode, setStreamerMode } = useLCUConnection();
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiActions.fetchProxySetupStatus().then((status) => {
+      if (cancelled) return;
+      setProxySetup(status);
+      setProxyHostname(status.hostname || '');
+    }).catch(() => {
+      // The normal loopback proxy remains available if setup status cannot be read.
+    });
+    return () => { cancelled = true; };
+  }, [apiActions]);
+
+  const handleProxySetup = async () => {
+    if (!proxyHostname.trim() || !proxyToken.trim()) {
+      setSettingsFeedback({ tone: 'error', message: 'Enter your DuckDNS hostname and token.' });
+      return;
+    }
+    setProxyBusy(true);
+    setSettingsFeedback({ tone: 'working', message: 'Requesting a trusted certificate. This can take a minute…' });
+    try {
+      const status = await apiActions.setupProxyCertificate(proxyHostname.trim(), proxyToken, proxyEmail.trim());
+      setProxySetup(status);
+      setProxyToken('');
+      setSettingsFeedback({ tone: 'success', message: 'Trusted chat proxy is ready. Close and restart Riot Client from RiftOps.' });
+    } catch (error: any) {
+      setSettingsFeedback({ tone: 'error', message: error?.message || 'Trusted chat setup failed.' });
+    } finally {
+      setProxyBusy(false);
+    }
+  };
+
+  const handleProxyClear = async () => {
+    setProxyBusy(true);
+    try {
+      const status = await apiActions.clearProxySetup();
+      setProxySetup(status);
+      setProxyHostname('');
+      setSettingsFeedback({ tone: 'success', message: 'Trusted hostname removed. RiftOps will use its normal local fallback.' });
+    } catch (error: any) {
+      setSettingsFeedback({ tone: 'error', message: error?.message || 'Could not clear trusted chat setup.' });
+    } finally {
+      setProxyBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!lcuConnected || (activeTab !== 'all' && activeTab !== 'league')) {
@@ -165,7 +215,7 @@ export default function SettingsPage({
       } else if (res.error) {
         showToast('Update check failed', res.error, 'error');
       } else {
-        const ver = res.currentVersion || snapshot.Version || '2.10.1';
+        const ver = res.currentVersion || snapshot.Version || '2.10.2';
         showToast('Up to date', `You are using the latest version of RiftOps (v${ver}).`, 'success');
       }
     } catch (err: any) {
@@ -703,7 +753,7 @@ export default function SettingsPage({
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] font-bold tracking-wider text-text-dim uppercase">VERSION</span>
                     <div className="flex items-center gap-2">
-                      <strong className="text-xs font-mono font-medium text-white">{snapshot.Version ? `v${snapshot.Version}` : '2.10.1'}</strong>
+                      <strong className="text-xs font-mono font-medium text-white">{snapshot.Version ? `v${snapshot.Version}` : '2.10.2'}</strong>
                       <button
                         type="button"
                         disabled={checkingUpdates}
@@ -728,6 +778,92 @@ export default function SettingsPage({
                     <span className="text-[10px] font-bold tracking-wider text-text-dim uppercase">LCU STATUS</span>
                     <strong className="text-xs font-mono font-medium text-white">{lcuConnected ? 'Connected' : 'Offline'}</strong>
                   </div>
+                </div>
+
+                {/* Trusted local chat proxy */}
+                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-amber-400/20 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <span className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-300">
+                      <ShieldCheck className="w-4 h-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <strong className="text-xs font-bold text-white">Trusted local chat proxy</strong>
+                        <StatusBadge tone={proxySetup?.certificateReady && proxySetup.loopbackReady ? 'live' : 'neutral'}>
+                          {proxySetup?.bundled
+                            ? (proxySetup.certificateReady && proxySetup.loopbackReady ? 'Built in' : 'Needs loopback DNS')
+                            : (proxySetup?.certificateReady && proxySetup.loopbackReady ? 'Ready' : 'Not configured')}
+                        </StatusBadge>
+                      </div>
+                      <p className="text-[11px] text-text-dim mt-1">
+                        {proxySetup?.bundled
+                          ? `This release includes a trusted certificate for ${proxySetup.hostname || 'the RiftOps local hostname'}. End users do not need a DuckDNS token.`
+                          : 'Optional personal-PC setup using your free DuckDNS hostname and a Let’s Encrypt certificate. The token is used once in memory and is never saved or logged.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {!proxySetup?.bundled && <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-dim">DuckDNS hostname</span>
+                      <input
+                        value={proxyHostname}
+                        onChange={(event) => setProxyHostname(event.target.value)}
+                        placeholder="riftops-hassan.duckdns.org"
+                        autoComplete="off"
+                        spellCheck={false}
+                        disabled={proxyBusy}
+                        className="w-full text-xs font-mono bg-bg-card border border-white/10 rounded-lg px-3 py-2 text-text focus:border-primary focus:outline-none"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-dim">DuckDNS token</span>
+                      <input
+                        type="password"
+                        value={proxyToken}
+                        onChange={(event) => setProxyToken(event.target.value)}
+                        placeholder="Paste locally; never send it in chat"
+                        autoComplete="new-password"
+                        disabled={proxyBusy}
+                        className="w-full text-xs font-mono bg-bg-card border border-white/10 rounded-lg px-3 py-2 text-text focus:border-primary focus:outline-none"
+                      />
+                    </label>
+                  </div>
+                  <label className="block space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-text-dim">Optional ACME email</span>
+                    <input
+                      type="email"
+                      value={proxyEmail}
+                      onChange={(event) => setProxyEmail(event.target.value)}
+                      placeholder="Used only for certificate notices"
+                      autoComplete="email"
+                      disabled={proxyBusy}
+                      className="w-full text-xs bg-bg-card border border-white/10 rounded-lg px-3 py-2 text-text focus:border-primary focus:outline-none"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" disabled={proxyBusy} onClick={() => void handleProxySetup()} className="btn-primary inline-flex items-center gap-2 px-3 py-2 text-xs">
+                      <ShieldCheck className={`w-3.5 h-3.5 ${proxyBusy ? 'animate-pulse' : ''}`} />
+                      {proxyBusy ? 'Setting up…' : 'Set up trusted chat'}
+                    </button>
+                    {proxySetup?.configured && !proxySetup?.bundled && (
+                      <button type="button" disabled={proxyBusy} onClick={() => void handleProxyClear()} className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-xs">
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Remove setup
+                      </button>
+                    )}
+                    {proxySetup?.expiresAt && <span className="text-[10px] text-text-dim">Certificate expires {new Date(proxySetup.expiresAt).toLocaleDateString()}</span>}
+                  </div>
+                  </>}
+                  {proxySetup?.bundled && !proxySetup.loopbackReady && (
+                    <p className="text-[10px] text-amber-200/80">
+                      The bundled hostname must resolve to 127.0.0.1. The installer or your local DNS/hosts policy must provide that loopback mapping.
+                    </p>
+                  )}
+                  <p className="text-[10px] text-text-dim">
+                    Riot Client must be fully closed before launching through RiftOps. RiftOps will never restart your PC or silently kill Riot.
+                  </p>
                 </div>
 
                 {/* Maintenance Actions */}

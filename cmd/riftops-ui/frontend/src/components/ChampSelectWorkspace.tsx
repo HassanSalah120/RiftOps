@@ -19,6 +19,7 @@ import {
   flattenChampSelectActions,
   hasChampSelectActionID,
   liveLocalChampSelectAction,
+  normalizeChampSelectSession,
 } from '../champSelectFlow';
 import type { ChampSelectAction as SelectAction, ChampSelectSession as BaseChampSelectSession, ChampSelectSwap } from '../champSelectFlow';
 import { ARENA_BRAVERY_CHAMPION_ID, isArenaBraveryPick, isArenaChampSelect } from '../arenaBravery';
@@ -198,7 +199,7 @@ export default function ChampSelectWorkspace({
         fetchLCUChampSelectChampionSwaps().catch(() => []),
         fetchLCUChampSelectOngoingSwaps().catch(() => ({ champion: null, pickOrder: null, position: null })),
       ]);
-      const next = rawSession as Session;
+      const next = normalizeChampSelectSession(rawSession) as Session;
       // Some client builds embed pickOrderSwaps in the session while others
       // only expose the dedicated endpoints. Prefer the live endpoint when it
       // has entries, while preserving an embedded pending request.

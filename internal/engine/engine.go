@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,13 +19,15 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/model"
 	"github.com/HassanSalah120/RiftOps/internal/platform"
 	"github.com/HassanSalah120/RiftOps/internal/presence"
+	"github.com/HassanSalah120/RiftOps/internal/proxysetup"
+	"github.com/HassanSalah120/RiftOps/internal/riotclient"
 	"github.com/HassanSalah120/RiftOps/internal/sessionvault"
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
-// Riot's client-config service is rewritten to a loopback endpoint. The chat
-// proxy uses a locally generated certificate; no public domain or downloaded
-// private key is required.
+// Riot's client-config service is rewritten to a loopback endpoint. Release
+// builds may carry a trusted certificate for one fixed DuckDNS hostname;
+// development builds can still use the per-user setup or native fallback.
 const LocalhostDomain = "127.0.0.1"
 
 type Phase string
@@ -41,6 +44,11 @@ const (
 )
 
 const chatHandshakeTimeout = 30 * time.Second
+
+// nativeAvailabilityTimeout bounds the best-effort LCU presence update used
+// when the secure chat proxy is unavailable. Native Riot chat can be kept
+// intact while the configured availability is still applied through LCU.
+const nativeAvailabilityTimeout = 20 * time.Second
 
 type Snapshot struct {
 	Phase     Phase
@@ -72,6 +80,17 @@ type ProfileSwitchResult struct {
 	RefreshedCurrent       bool
 	TargetSessionAvailable bool
 	TargetSessionExpired   bool
+}
+
+type ProxyStatus struct {
+	Configured      bool      `json:"configured"`
+	Bundled         bool      `json:"bundled"`
+	Hostname        string    `json:"hostname,omitempty"`
+	CertificatePath string    `json:"-"`
+	CertificateOK   bool      `json:"certificateReady"`
+	LoopbackReady   bool      `json:"loopbackReady"`
+	Mode            string    `json:"mode"`
+	ExpiresAt       time.Time `json:"expiresAt,omitempty"`
 }
 
 var ErrRiotAlreadyRunning = errors.New("Riot Client is already running")
@@ -118,6 +137,102 @@ func (e *Engine) Settings() settings.Settings {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.config.Clone()
+}
+
+// ProxyStatus reports the local trusted-chat setup without exposing tokens,
+// private keys, or certificate material.
+func (e *Engine) ProxyStatus(ctx context.Context) ProxyStatus {
+	e.mu.RLock()
+	configuredHostname := strings.TrimSpace(e.config.ProxyHostname)
+	e.mu.RUnlock()
+	hostname := configuredHostname
+	bundled := false
+	if hostname == "" {
+		hostname = certificate.BundledHostname()
+		bundled = hostname != ""
+	}
+	status := ProxyStatus{Hostname: hostname, Bundled: bundled, Mode: "native-fallback"}
+	if hostname == "" {
+		status.Mode = "loopback-self-signed"
+		return status
+	}
+	status.Configured = true
+	status.Mode = "trusted-local-proxy"
+	if bundled {
+		status.Mode = "trusted-bundled-proxy"
+	}
+	if err := ensureLoopbackEndpoint(ctx, hostname); err == nil {
+		status.LoopbackReady = true
+	}
+	var cert tls.Certificate
+	var err error
+	if bundled {
+		cert, err = certificate.LoadBundled(ctx, hostname)
+	} else {
+		cachePath, cacheErr := certificate.DefaultCachePath()
+		if cacheErr != nil {
+			return status
+		}
+		status.CertificatePath = cachePath
+		cert, err = (certificate.Provider{CachePath: cachePath, Hostname: hostname}).LoadCached(ctx)
+	}
+	if err != nil || cert.Leaf == nil {
+		return status
+	}
+	status.CertificateOK = true
+	status.ExpiresAt = cert.Leaf.NotAfter
+	return status
+}
+
+// ConfigureProxy provisions a trusted certificate for the caller's own
+// DuckDNS hostname. The token is used only for this request and is not stored.
+// Existing Riot sessions are intentionally left untouched; the UI must ask the
+// user to restart Riot explicitly before the proxy can take effect.
+func (e *Engine) ConfigureProxy(ctx context.Context, hostname, token, email string) (ProxyStatus, error) {
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	cachePath, err := certificate.DefaultCachePath()
+	if err != nil {
+		return ProxyStatus{}, err
+	}
+	if _, err := proxysetup.Provision(ctx, proxysetup.ProvisionOptions{
+		Hostname: hostname, Token: token, Email: email, CertPath: cachePath,
+	}); err != nil {
+		return ProxyStatus{}, err
+	}
+	if err := proxysetup.EnsureLoopbackHost(hostname); err != nil {
+		return ProxyStatus{}, err
+	}
+	e.mu.Lock()
+	updated := e.config.Clone()
+	updated.ProxyHostname = hostname
+	if err := updated.Validate(); err != nil {
+		e.mu.Unlock()
+		return ProxyStatus{}, err
+	}
+	e.config = updated
+	e.mu.Unlock()
+	if err := e.saveSettings(); err != nil {
+		return ProxyStatus{}, err
+	}
+	return e.ProxyStatus(ctx), nil
+}
+
+// ClearProxy removes RiftOps' managed local hostname entry and disables the
+// trusted-hostname mode. The certificate cache remains until the normal cache
+// cleanup flow removes it, so an interrupted setup cannot corrupt a valid cert.
+func (e *Engine) ClearProxy() error {
+	e.mu.Lock()
+	hostname := strings.TrimSpace(e.config.ProxyHostname)
+	updated := e.config.Clone()
+	updated.ProxyHostname = ""
+	e.config = updated
+	e.mu.Unlock()
+	if hostname != "" {
+		if err := proxysetup.RemoveLoopbackHost(hostname); err != nil {
+			return err
+		}
+	}
+	return e.saveSettings()
 }
 
 // ResolveRiotClientExecutable validates a configured location or falls back to
@@ -474,7 +589,15 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	}
 
 	e.emit(e.phaseSnapshot(PhasePreparingProxy, game, "Preparing secure local chat proxy"))
-	domain := LocalhostDomain
+	e.mu.RLock()
+	domain := strings.TrimSpace(e.config.ProxyHostname)
+	e.mu.RUnlock()
+	if domain == "" {
+		domain = certificate.BundledHostname()
+		if domain == "" {
+			domain = LocalhostDomain
+		}
+	}
 	if err := ensureLoopbackEndpoint(ctx, domain); err != nil {
 		slog.Warn("loopback domain resolution failed; falling back to loopback IP", "domain", domain, "error", err)
 		domain = "127.0.0.1"
@@ -482,14 +605,14 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	chatListener, err := chatproxy.Listen("127.0.0.1:0")
 	if err != nil {
 		slog.Warn("local chat listener is unavailable; using native Riot chat", "error", err)
-		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
 	}
 	chatPort := chatListener.Addr().(*net.TCPAddr).Port
 	cachePath, err := certificate.DefaultCachePath()
 	if err != nil {
 		_ = chatListener.Close()
 		slog.Warn("local certificate cache is unavailable; using native Riot chat", "error", err)
-		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
 	}
 	serverCertificate, err := (certificate.Provider{
 		CachePath: cachePath,
@@ -498,7 +621,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	if err != nil {
 		_ = chatListener.Close()
 		slog.Warn("local loopback certificate is unavailable; using native Riot chat", "error", err)
-		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
 	}
 
 	e.mu.RLock()
@@ -615,7 +738,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		e.proxy = nil
 		e.policy = nil
 		e.mu.Unlock()
-		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
 	case <-chatConnected:
 		return waitForRiotShutdown(ctx, adapter)
 	case <-handshakeTimer.C:
@@ -639,7 +762,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		e.proxy = nil
 		e.policy = nil
 		e.mu.Unlock()
-		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, options)
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
 	case err := <-processDone:
 		if err != nil {
 			slog.Debug("launched Riot process exited", "error", err)
@@ -653,6 +776,7 @@ func (e *Engine) attachExistingClient(ctx context.Context, adapter platform.Adap
 	snapshot.Status = status
 	snapshot.Enabled = false
 	e.emit(snapshot)
+	go e.syncNativeAvailability(ctx, status)
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -673,7 +797,7 @@ func (e *Engine) attachExistingClient(ctx context.Context, adapter platform.Adap
 	}
 }
 
-func (e *Engine) runWithDirectChat(ctx context.Context, cancel context.CancelFunc, adapter platform.Adapter, executable string, game model.Game, options RunOptions) error {
+func (e *Engine) runWithDirectChat(ctx context.Context, cancel context.CancelFunc, adapter platform.Adapter, executable string, game model.Game, status model.Status, options RunOptions) error {
 	e.mu.Lock()
 	e.proxy = nil
 	e.policy = nil
@@ -705,6 +829,7 @@ func (e *Engine) runWithDirectChat(ctx context.Context, cancel context.CancelFun
 	active := e.phaseSnapshot(PhaseActive, game, "Native Riot friends and chat active; presence masking unavailable")
 	active.ConfigURL, active.StartedAt, active.Enabled = configServer.URL(), launching.StartedAt, false
 	e.emit(active)
+	go e.syncNativeAvailability(ctx, status)
 
 	processDone := make(chan error, 1)
 	go func() { processDone <- process.Wait() }()
@@ -717,6 +842,62 @@ func (e *Engine) runWithDirectChat(ctx context.Context, cancel context.CancelFun
 			slog.Debug("launched Riot process exited", "error", err)
 		}
 		return waitForRiotShutdown(ctx, adapter)
+	}
+}
+
+func setNativeAvailability(ctx context.Context, status model.Status) error {
+	lockfile := riotclient.GetLCULockfile()
+	if lockfile == nil {
+		return errors.New("League LCU is not available")
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return lockfile.SetAvailability(requestCtx, string(status))
+}
+
+// syncNativeAvailability keeps the useful part of the user's presence
+// preference when RiftOps has to use native Riot chat. The secure proxy owns
+// masking when it is available, but the native-chat fallback still has a
+// supported LCU presence endpoint. Retry briefly because the League lockfile
+// may appear a moment after Riot Client starts.
+func (e *Engine) syncNativeAvailability(ctx context.Context, status model.Status) {
+	e.mu.RLock()
+	wantsPresence := e.config.Enabled
+	e.mu.RUnlock()
+	if !wantsPresence || !status.Valid() {
+		return
+	}
+
+	deadline := time.NewTimer(nativeAvailabilityTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	apply := func() bool {
+		err := setNativeAvailability(ctx, status)
+		if err != nil {
+			slog.Debug("native Riot availability update failed", "error", err)
+			return false
+		}
+		slog.Info("native Riot availability applied", "availability", status)
+		return true
+	}
+
+	if apply() {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			slog.Warn("native Riot availability could not be applied before timeout", "availability", status)
+			return
+		case <-ticker.C:
+			if apply() {
+				return
+			}
+		}
 	}
 }
 
@@ -745,11 +926,30 @@ func (e *Engine) SetStatus(ctx context.Context, status model.Status) error {
 	if !status.Valid() {
 		return fmt.Errorf("invalid status %q", status)
 	}
-	e.mu.Lock()
-	if e.running && e.proxy == nil {
+	e.mu.RLock()
+	nativeChat := e.running && e.proxy == nil
+	e.mu.RUnlock()
+	if nativeChat {
+		// Native Riot chat has no RiftOps proxy to transform presence, but the
+		// connected League LCU still owns the user's availability. Apply the
+		// requested value there so chat remains native without silently ignoring
+		// the status control.
+		if err := setNativeAvailability(ctx, status); err != nil {
+			return fmt.Errorf("set League availability in native chat mode: %w", err)
+		}
+		e.mu.Lock()
+		e.config.UpdateActiveRuntime(e.config.Enabled, status)
+		e.snapshot.Status = status
+		e.snapshot.Enabled = false
+		snapshot := e.snapshot
 		e.mu.Unlock()
-		return errors.New("presence masking is unavailable while Riot friends and chat use native compatibility mode")
+		if err := e.saveSettings(); err != nil {
+			return err
+		}
+		e.emit(snapshot)
+		return nil
 	}
+	e.mu.Lock()
 	e.config.UpdateActiveRuntime(true, status)
 	policy, proxy := e.policy, e.proxy
 	e.snapshot.Status, e.snapshot.Enabled = status, true

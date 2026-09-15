@@ -2,7 +2,10 @@ param(
     [string]$Version = "",
     [int]$Build = 1,
     [switch]$SkipTests,
-    [switch]$SkipInstaller
+    [switch]$SkipInstaller,
+    [string]$ProxyCertificatePath = "",
+    [string]$ProxyHostname = "",
+    [switch]$RequireBundledProxyCertificate
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +22,27 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
 }
 if ($Build -lt 1 -or $Build -gt 65535) {
     throw "Build must be between 1 and 65535."
+}
+
+# An install-only release carries one certificate for the fixed local
+# hostname, like Deceive. The token is never part of this build step; it is
+# used only when the certificate is provisioned locally beforehand.
+if ([string]::IsNullOrWhiteSpace($ProxyCertificatePath)) {
+    $ProxyCertificatePath = [Environment]::GetEnvironmentVariable("RIFTOPS_PROXY_CERTIFICATE")
+}
+if ([string]::IsNullOrWhiteSpace($ProxyHostname)) {
+    $ProxyHostname = [Environment]::GetEnvironmentVariable("RIFTOPS_PROXY_HOSTNAME")
+}
+$ProxyCertificatePath = if ($ProxyCertificatePath) { $ProxyCertificatePath.Trim() } else { "" }
+$ProxyHostname = if ($ProxyHostname) { $ProxyHostname.Trim().ToLowerInvariant() } else { "" }
+if ($ProxyCertificatePath -and -not (Test-Path -LiteralPath $ProxyCertificatePath -PathType Leaf)) {
+    throw "Bundled proxy certificate was not found: $ProxyCertificatePath"
+}
+if ($ProxyCertificatePath -and $ProxyHostname -notmatch '^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$') {
+    throw "ProxyHostname must be a DNS hostname when ProxyCertificatePath is supplied."
+}
+if ($RequireBundledProxyCertificate -and -not $ProxyCertificatePath) {
+    throw "An install-only build requires -ProxyCertificatePath (or RIFTOPS_PROXY_CERTIFICATE)."
 }
 $VersionParts = $Version.Split('.')
 foreach ($VersionPart in $VersionParts) {
@@ -61,7 +85,8 @@ try {
         "cmd/riftops-ui/fyne.syso",
         "cmd/riftops-ui/FyneApp.ico",
         "cmd/riftops-ui/riftops-ui.exe.manifest",
-        "cmd/riftops-ui/RiftOps.exe"
+        "cmd/riftops-ui/RiftOps.exe",
+        "internal/certificate/bundled_release.go"
     )
     foreach ($GeneratedFile in $GeneratedFiles) {
         Remove-Item -Force -LiteralPath $GeneratedFile -ErrorAction SilentlyContinue
@@ -113,8 +138,33 @@ try {
         --out "cmd/riftops-ui/rsrc"
     if ($LASTEXITCODE -ne 0) { throw "Windows resource generation failed." }
 
+    $GoBuildTags = "desktop,release"
+    if ($ProxyCertificatePath) {
+        & go run ./cmd/riftops -validate-proxy-certificate $ProxyCertificatePath -proxy-hostname $ProxyHostname
+        if ($LASTEXITCODE -ne 0) {
+            throw "Bundled proxy certificate failed validation."
+        }
+        $BundleBytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $ProxyCertificatePath))
+        if ($BundleBytes.Length -lt 1) {
+            throw "Bundled proxy certificate is empty."
+        }
+        $BundleLiteral = [string]::Join(",", ($BundleBytes | ForEach-Object { "0x{0:x2}" -f $_ }))
+        $BundleSource = @"
+//go:build riftops_bundled_cert
+
+package certificate
+
+var bundledPKCS12 = []byte{$BundleLiteral}
+const bundledHostname = "$ProxyHostname"
+"@
+        Set-Content -LiteralPath "internal/certificate/bundled_release.go" -Value $BundleSource -Encoding utf8 -NoNewline
+        $GoBuildTags = "$GoBuildTags,riftops_bundled_cert"
+        Write-Host "Bundling trusted proxy certificate for $ProxyHostname (private key is embedded in the executable)."
+    } else {
+        Write-Warning "No bundled proxy certificate supplied; this build keeps the per-user setup/native fallback path."
+    }
     $LdFlags = "-s -w -H=windowsgui -X=github.com/HassanSalah120/RiftOps/internal/buildinfo.Version=$Version"
-    go build -tags "desktop,release" -trimpath -ldflags $LdFlags -o "cmd/riftops-ui/RiftOps.exe" ./cmd/riftops-ui
+    go build -tags $GoBuildTags -trimpath -ldflags $LdFlags -o "cmd/riftops-ui/RiftOps.exe" ./cmd/riftops-ui
     if ($LASTEXITCODE -ne 0) { throw "Windows compilation failed." }
 
 	Write-Host "[7/9] Moving and validating the packaged executable..."
@@ -207,7 +257,8 @@ finally {
         "cmd/riftops-ui/fyne.syso",
         "cmd/riftops-ui/FyneApp.ico",
         "cmd/riftops-ui/riftops-ui.exe.manifest",
-        "cmd/riftops-ui/RiftOps.exe"
+        "cmd/riftops-ui/RiftOps.exe",
+        "internal/certificate/bundled_release.go"
     )) {
         Remove-Item -Force -LiteralPath $GeneratedFile -ErrorAction SilentlyContinue
     }

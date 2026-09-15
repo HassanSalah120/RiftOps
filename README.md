@@ -288,6 +288,22 @@ cd ../../..
 ./scripts/build-windows.ps1 -Build 1
 ```
 
+Maintainers can produce a Deceive-style install-only Windows release by
+provisioning a certificate locally, then passing the PFX path and fixed
+hostname to the build. The DuckDNS token is used only for certificate
+provisioning and is never embedded:
+
+```powershell
+./scripts/build-windows.ps1 -Build 1 `
+  -ProxyCertificatePath "$env:LOCALAPPDATA\RiftOps\chatCert.pfx" `
+  -ProxyHostname "riftops-hassan.duckdns.org" `
+  -RequireBundledProxyCertificate
+```
+
+The hostname must resolve to `127.0.0.1` for the bundled proxy to activate.
+End users then only install and launch RiftOps; they do not enter a DuckDNS
+token. Renew the certificate and rebuild before it expires.
+
 **macOS:**
 ```sh
 bash ./scripts/build-macos.sh

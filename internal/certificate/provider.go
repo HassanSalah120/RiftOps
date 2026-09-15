@@ -49,6 +49,13 @@ func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
 		}
 	}
 
+	// Release builds may carry a certificate for RiftOps' fixed local
+	// hostname. Validate it through the same path as a user-provisioned cache;
+	// if it is absent or does not match, keep the development fallback below.
+	if certificate, err := LoadBundled(ctx, p.Hostname); err == nil {
+		return certificate, nil
+	}
+
 	// Generate a local certificate when no valid cache exists. It never depends
 	// on an external certificate URL or a machine-wide trust-store mutation.
 	cert, err := p.generateSelfSigned()
@@ -56,6 +63,29 @@ func (p Provider) Load(ctx context.Context) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 	return cert, nil
+}
+
+// LoadCached reads only the configured certificate cache. Unlike Load it does
+// not generate a fallback certificate, which is important for setup status:
+// callers must not report a trusted public certificate when only the local
+// self-signed fallback exists.
+func (p Provider) LoadCached(ctx context.Context) (tls.Certificate, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return tls.Certificate{}, ctx.Err()
+	default:
+	}
+	if p.CachePath == "" {
+		return tls.Certificate{}, errors.New("certificate cache path is required")
+	}
+	data, err := os.ReadFile(p.CachePath)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return p.decodeAndValidate(data)
 }
 
 // generateSelfSigned creates a local CA and an ECDSA leaf
@@ -175,6 +205,45 @@ func (p Provider) decodeAndValidate(data []byte) (tls.Certificate, error) {
 		certificate.Certificate = append(certificate.Certificate, issuer.Raw)
 	}
 	return certificate, nil
+}
+
+// SavePKCS12 stores a certificate and its private key in the same protected
+// cache format used by Provider. The caller is responsible for obtaining the
+// certificate from a trusted source and for keeping the key local.
+func SavePKCS12(path string, privateKey any, leaf *x509.Certificate, chain []*x509.Certificate) error {
+	if path == "" {
+		return errors.New("certificate cache path is required")
+	}
+	if privateKey == nil || leaf == nil {
+		return errors.New("certificate private key and leaf are required")
+	}
+	if len(chain) == 0 {
+		return errors.New("certificate issuer chain is required")
+	}
+	data, err := pkcs12.Encode(rand.Reader, privateKey, leaf, chain, "")
+	if err != nil {
+		return fmt.Errorf("encode certificate cache: %w", err)
+	}
+	if err := writePrivateFile(path, data); err != nil {
+		return fmt.Errorf("write certificate cache: %w", err)
+	}
+	return nil
+}
+
+// ValidatePKCS12File validates a certificate that is about to be bundled into
+// a release. It deliberately returns no certificate material to callers.
+func ValidatePKCS12File(path, hostname string) error {
+	if path == "" {
+		return errors.New("certificate path is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read certificate: %w", err)
+	}
+	if _, err := (Provider{Hostname: hostname}).decodeAndValidate(data); err != nil {
+		return fmt.Errorf("validate certificate: %w", err)
+	}
+	return nil
 }
 
 func writePrivateFile(path string, data []byte) error {
