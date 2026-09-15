@@ -240,10 +240,39 @@ func ValidatePKCS12File(path, hostname string) error {
 	if err != nil {
 		return fmt.Errorf("read certificate: %w", err)
 	}
-	if _, err := (Provider{Hostname: hostname}).decodeAndValidate(data); err != nil {
+	certificate, err := (Provider{Hostname: hostname}).decodeAndValidate(data)
+	if err != nil {
 		return fmt.Errorf("validate certificate: %w", err)
 	}
+	if err := verifyPublicTrust(certificate, hostname); err != nil {
+		return fmt.Errorf("validate public certificate trust: %w", err)
+	}
 	return nil
+}
+
+func verifyPublicTrust(certificate tls.Certificate, hostname string) error {
+	if certificate.Leaf == nil {
+		return errors.New("certificate leaf is missing")
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return fmt.Errorf("load system certificate roots: %w", err)
+	}
+	intermediates := x509.NewCertPool()
+	for _, raw := range certificate.Certificate[1:] {
+		issuer, err := x509.ParseCertificate(raw)
+		if err != nil {
+			return fmt.Errorf("parse certificate issuer: %w", err)
+		}
+		intermediates.AddCert(issuer)
+	}
+	_, err = certificate.Leaf.Verify(x509.VerifyOptions{
+		DNSName:       hostname,
+		Roots:         roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	})
+	return err
 }
 
 func writePrivateFile(path string, data []byte) error {

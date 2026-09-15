@@ -1,8 +1,6 @@
 name: Build Windows release
 
 on:
-  release:
-    types: [published]
   push:
     tags:
       - 'v*'
@@ -63,7 +61,38 @@ jobs:
 
       - name: Build and verify Windows executable and installer
         shell: pwsh
-        run: ./scripts/build-windows.ps1 -Version "${{ steps.release.outputs.version }}" -Build ${{ github.run_number }}
+        env:
+          RIFTOPS_DUCKDNS_TOKEN: ${{ secrets.RIFTOPS_DUCKDNS_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RIFTOPS_DUCKDNS_TOKEN)) {
+            throw "RIFTOPS_DUCKDNS_TOKEN repository secret is required for a trusted Windows release."
+          }
+          $hostname = "riftops-hassan.duckdns.org"
+          $certificate = Join-Path $env:RUNNER_TEMP "riftops-chat.pfx"
+          try {
+            go run ./cmd/riftops -provision-proxy-certificate $certificate -proxy-hostname $hostname
+            $loopbackReady = $false
+            for ($attempt = 0; $attempt -lt 36; $attempt++) {
+              $addresses = @(Resolve-DnsName -Name $hostname -Type A -Server 1.1.1.1 -DnsOnly -ErrorAction SilentlyContinue | ForEach-Object IPAddress)
+              if ($addresses.Count -gt 0 -and @($addresses | Where-Object { $_ -ne '127.0.0.1' }).Count -eq 0) {
+                $loopbackReady = $true
+                break
+              }
+              Start-Sleep -Seconds 5
+            }
+            if (-not $loopbackReady) {
+              throw "$hostname did not resolve exclusively to 127.0.0.1 after provisioning."
+            }
+            ./scripts/build-windows.ps1 `
+              -Version "${{ steps.release.outputs.version }}" `
+              -Build ${{ github.run_number }} `
+              -ProxyCertificatePath $certificate `
+              -ProxyHostname $hostname `
+              -RequireBundledProxyCertificate
+          }
+          finally {
+            Remove-Item -Force -LiteralPath $certificate -ErrorAction SilentlyContinue
+          }
 
       - name: Preserve unsigned installer
         id: upload-unsigned

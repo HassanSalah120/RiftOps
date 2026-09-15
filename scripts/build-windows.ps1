@@ -160,6 +160,10 @@ const bundledHostname = "$ProxyHostname"
         Set-Content -LiteralPath "internal/certificate/bundled_release.go" -Value $BundleSource -Encoding utf8 -NoNewline
         $GoBuildTags = "$GoBuildTags,riftops_bundled_cert"
         Write-Host "Bundling trusted proxy certificate for $ProxyHostname (private key is embedded in the executable)."
+        & go test -tags $GoBuildTags ./internal/certificate -run '^TestBundledCertificateIsPubliclyTrusted$' -count=1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Embedded proxy certificate smoke test failed."
+        }
     } else {
         Write-Warning "No bundled proxy certificate supplied; this build keeps the per-user setup/native fallback path."
     }

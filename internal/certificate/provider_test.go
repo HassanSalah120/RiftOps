@@ -94,6 +94,17 @@ func TestProviderGeneratesLocalhostDNSCertificate(t *testing.T) {
 	}
 }
 
+func TestPublicTrustRejectsLocallySignedCertificate(t *testing.T) {
+	const hostname = "riftops-localhost.example.test"
+	certificate, err := (Provider{Hostname: hostname}).generateSelfSigned()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPublicTrust(certificate, hostname); err == nil {
+		t.Fatal("locally signed certificate was accepted as publicly trusted")
+	}
+}
+
 func TestProviderLoadCachedDoesNotGenerateMissingCertificate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.pfx")
 	_, err := (Provider{CachePath: path, Hostname: "example.duckdns.org"}).LoadCached(context.Background())

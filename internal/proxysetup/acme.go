@@ -25,6 +25,7 @@ import (
 const (
 	letsencryptDirectory = "https://acme-v02.api.letsencrypt.org/directory"
 	duckDNSBaseURL       = "https://www.duckdns.org/update"
+	duckDNSLoopbackIP    = "127.0.0.1"
 	maxDuckTokenLength   = 256
 )
 
@@ -134,6 +135,9 @@ func Provision(ctx context.Context, options ProvisionOptions) (time.Time, error)
 		}
 		chain = append(chain, issuer)
 	}
+	if err := updateDuckDNSAddress(ctx, hostname, options.Token, duckDNSLoopbackIP); err != nil {
+		return time.Time{}, fmt.Errorf("point proxy hostname to loopback: %w", err)
+	}
 	if err := certificate.SavePKCS12(options.CertPath, leafKey, leaf, chain); err != nil {
 		return time.Time{}, err
 	}
@@ -164,15 +168,37 @@ func validateOptions(options ProvisionOptions) (string, error) {
 }
 
 func updateDuckDNSTXT(ctx context.Context, hostname, token, value string, clear bool) error {
+	return updateDuckDNS(ctx, duckDNSTXTQuery(hostname, token, value, clear))
+}
+
+func duckDNSTXTQuery(hostname, token, value string, clear bool) url.Values {
 	label := strings.TrimSuffix(hostname, ".duckdns.org")
 	query := url.Values{}
 	query.Set("domains", label)
 	query.Set("token", token)
+	// Keep the TXT parameter present during cleanup. Without it DuckDNS can
+	// interpret clear=true as an address-record clear instead of TXT cleanup.
+	query.Set("txt", value)
 	if clear {
 		query.Set("clear", "true")
-	} else {
-		query.Set("txt", value)
 	}
+	return query
+}
+
+func updateDuckDNSAddress(ctx context.Context, hostname, token, address string) error {
+	return updateDuckDNS(ctx, duckDNSAddressQuery(hostname, token, address))
+}
+
+func duckDNSAddressQuery(hostname, token, address string) url.Values {
+	label := strings.TrimSuffix(hostname, ".duckdns.org")
+	query := url.Values{}
+	query.Set("domains", label)
+	query.Set("token", token)
+	query.Set("ip", address)
+	return query
+}
+
+func updateDuckDNS(ctx context.Context, query url.Values) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, duckDNSBaseURL+"?"+query.Encode(), nil)
 	if err != nil {
 		return err

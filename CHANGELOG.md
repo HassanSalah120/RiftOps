@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.10.3 — 2026-09-15
+
+- Fixed Windows release packaging so presence masking ships with a publicly trusted DuckDNS certificate instead of silently falling back to an untrusted local certificate.
+- Windows release builds now fail unless the certificate is trusted, matches the RiftOps proxy hostname, is embedded successfully, and the hostname resolves to loopback.
+- Certificate provisioning now keeps DuckDNS TXT cleanup separate from address updates and points the dedicated proxy hostname to `127.0.0.1`.
+
 ## v2.10.2 — 2026-09-15
 
 ### Install-only trusted chat release path

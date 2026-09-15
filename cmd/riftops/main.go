@@ -8,13 +8,16 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/HassanSalah120/RiftOps/internal/buildinfo"
 	"github.com/HassanSalah120/RiftOps/internal/certificate"
 	"github.com/HassanSalah120/RiftOps/internal/diagnostics"
 	"github.com/HassanSalah120/RiftOps/internal/engine"
 	"github.com/HassanSalah120/RiftOps/internal/model"
+	"github.com/HassanSalah120/RiftOps/internal/proxysetup"
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
@@ -38,6 +41,7 @@ func run() error {
 	stopExisting := flag.Bool("stop-existing", false, "stop existing Riot processes before launch")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	validateProxyCertificate := flag.String("validate-proxy-certificate", "", "validate a PKCS#12 proxy certificate and exit")
+	provisionProxyCertificate := flag.String("provision-proxy-certificate", "", "provision a trusted DuckDNS PKCS#12 proxy certificate and exit")
 	proxyHostname := flag.String("proxy-hostname", "", "hostname expected by -validate-proxy-certificate")
 	flag.Var(&riotArgs, "riot-arg", "extra Riot Client argument; repeatable")
 	flag.Var(&gameArgs, "game-arg", "extra game argument; repeatable")
@@ -47,6 +51,23 @@ func run() error {
 			return fmt.Errorf("-proxy-hostname is required with -validate-proxy-certificate")
 		}
 		return certificate.ValidatePKCS12File(*validateProxyCertificate, *proxyHostname)
+	}
+	if *provisionProxyCertificate != "" {
+		if strings.TrimSpace(*proxyHostname) == "" {
+			return fmt.Errorf("-proxy-hostname is required with -provision-proxy-certificate")
+		}
+		token := os.Getenv("RIFTOPS_DUCKDNS_TOKEN")
+		if token == "" {
+			return fmt.Errorf("RIFTOPS_DUCKDNS_TOKEN is required to provision a proxy certificate")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		_, err := proxysetup.Provision(ctx, proxysetup.ProvisionOptions{
+			Hostname: *proxyHostname,
+			Token:    token,
+			CertPath: *provisionProxyCertificate,
+		})
+		return err
 	}
 	if *showVersion {
 		fmt.Println("RiftOps", buildinfo.Version)
