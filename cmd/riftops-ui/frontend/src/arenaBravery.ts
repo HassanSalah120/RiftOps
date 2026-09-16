@@ -13,13 +13,14 @@ export type ArenaQueueLike = {
 } | number | null | undefined;
 
 export function isArenaQueue(queue: ArenaQueueLike): boolean {
-  if (typeof queue === 'number') return queue === 1700 || queue === 1710;
+  if (typeof queue === 'number') return queue === 1700 || queue === 1710 || queue === 1750;
   if (!queue) return false;
   const mode = String(queue.gameMode || '').trim().toUpperCase();
   const name = String(queue.name || '').trim().toUpperCase();
   const description = String(queue.description || '').trim().toUpperCase();
   return Number(queue.id) === 1700
     || Number(queue.id) === 1710
+    || Number(queue.id) === 1750
     || mode === 'ARENA'
     || mode === 'CHERRY'
     || /\bARENA\b/.test(name)

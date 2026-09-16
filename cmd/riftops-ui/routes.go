@@ -197,6 +197,9 @@ func dashboardRoutes() []dashboardRoute {
 		{Pattern: "/api/qol/queue-presets", Handler: qolQueuePresetsHandler, API: true},
 		{Pattern: "/api/qol/preferences", Handler: qolPreferencesHandler, API: true},
 		{Pattern: "/api/qol/state", Handler: qolStateHandler, API: true},
+		{Pattern: "/api/play-flow/runtime", Handler: playFlowRuntimeStatusHandler, API: true},
+		{Pattern: "/api/play-flow/runtime/start", Handler: playFlowRuntimeStartHandler, API: true},
+		{Pattern: "/api/play-flow/runtime/stop", Handler: playFlowRuntimeStopHandler, API: true},
 		{Pattern: "/api/diagnostics/reports", Handler: diagnosticsReportsHandler, API: true},
 		{Pattern: "/lol-game-data/", Handler: lcuAssetProxyHandler},
 	}

@@ -615,6 +615,38 @@ func TestChampSelectCatalogueAndRuneRoutes(t *testing.T) {
 	}
 }
 
+func TestPlayFlowReadRoutesUseFocusedLCUEndpoints(t *testing.T) {
+	seen := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.Method+" "+r.URL.Path] = true
+		switch r.URL.Path {
+		case "/lol-gameflow/v1/session":
+			_, _ = w.Write([]byte(`{"gameData":{"queue":{"id":420}}}`))
+		case "/lol-lobby-team-builder/champ-select/v1/subset-champion-list":
+			_, _ = w.Write([]byte(`[22,103]`))
+		default:
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	lockfile := testLockfile(server.URL)
+	if _, err := lockfile.FetchGameflowSession(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockfile.FetchChampSelectSubset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{"GET /lol-gameflow/v1/session", "GET /lol-lobby-team-builder/champ-select/v1/subset-champion-list"} {
+		if !seen[route] {
+			t.Fatalf("route %q was not called", route)
+		}
+	}
+}
+
 func TestRunePageMutationsUseCurrentLCURoutes(t *testing.T) {
 	seen := make(map[string]map[string]any)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

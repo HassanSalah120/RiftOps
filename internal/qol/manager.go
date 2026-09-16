@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/HassanSalah120/RiftOps/internal/atomicfile"
@@ -32,6 +33,14 @@ type RolePickPlan struct {
 	FallbackPickChampionID int `json:"fallbackPickChampionId"`
 	PickRunePageID         int `json:"pickRunePageId"`
 	FallbackPickRunePageID int `json:"fallbackPickRunePageId"`
+}
+
+// ArenaPriorityItem describes one ordered Arena pick strategy. Bravery is the
+// League-owned -3 selection, champion entries use normal champion IDs, and
+// firstAvailable is the explicit fail-safe for subset/card drafts.
+type ArenaPriorityItem struct {
+	Type       string `json:"type"`
+	ChampionID int    `json:"championId,omitempty"`
 }
 
 // PlayFlowPreferences is the validated policy used by Play & Queue. The
@@ -66,6 +75,8 @@ type PlayFlowPreferences struct {
 	InstantLock            bool                    `json:"instantLock"`
 	AutoRoleQuestLoadout   bool                    `json:"autoRoleQuestLoadout"`
 	ArenaBraveryPick       bool                    `json:"arenaBraveryPick"`
+	ArenaPickPriority      []ArenaPriorityItem     `json:"arenaPickPriority,omitempty"`
+	ARAMChampionPriority   []int                   `json:"aramChampionPriority,omitempty"`
 }
 
 const MaxPlayFlowTimingSeconds = 60
@@ -146,15 +157,72 @@ func NormalizePlayFlowPreferences(preferences PlayFlowPreferences) (PlayFlowPref
 			}
 		}
 	}
-	if preferences.PickTimingSeconds < 0 {
+	if preferences.PickTimingMode == "last-second" && preferences.PickTimingSeconds < 1 {
+		preferences.PickTimingSeconds = 1
+	} else if preferences.PickTimingSeconds < 0 {
 		preferences.PickTimingSeconds = 0
 	} else if preferences.PickTimingSeconds > MaxPlayFlowTimingSeconds {
 		preferences.PickTimingSeconds = MaxPlayFlowTimingSeconds
 	}
-	if preferences.BanTimingSeconds < 0 {
+	if preferences.BanTimingMode == "last-second" && preferences.BanTimingSeconds < 1 {
+		preferences.BanTimingSeconds = 1
+	} else if preferences.BanTimingSeconds < 0 {
 		preferences.BanTimingSeconds = 0
 	} else if preferences.BanTimingSeconds > MaxPlayFlowTimingSeconds {
 		preferences.BanTimingSeconds = MaxPlayFlowTimingSeconds
+	}
+	if len(preferences.ArenaPickPriority) == 0 {
+		if preferences.ArenaBraveryPick {
+			preferences.ArenaPickPriority = append(preferences.ArenaPickPriority, ArenaPriorityItem{Type: "bravery"})
+		}
+		for _, championID := range []int{preferences.PickChampionID, preferences.FallbackPickChampionID} {
+			if championID > 0 {
+				preferences.ArenaPickPriority = append(preferences.ArenaPickPriority, ArenaPriorityItem{Type: "champion", ChampionID: championID})
+			}
+		}
+		preferences.ArenaPickPriority = append(preferences.ArenaPickPriority, ArenaPriorityItem{Type: "firstAvailable"})
+	}
+	if len(preferences.ArenaPickPriority) > 12 {
+		return preferences, fmt.Errorf("arena pick priority must contain at most 12 entries")
+	}
+	seenArenaKinds := map[string]bool{}
+	seenArenaChampions := map[int]bool{}
+	for index := range preferences.ArenaPickPriority {
+		item := &preferences.ArenaPickPriority[index]
+		item.Type = strings.TrimSpace(item.Type)
+		switch item.Type {
+		case "bravery", "firstAvailable":
+			if item.ChampionID != 0 {
+				return preferences, fmt.Errorf("arena %s priority must not include a champion id", item.Type)
+			}
+			if seenArenaKinds[item.Type] {
+				return preferences, fmt.Errorf("arena pick priority entries must be unique")
+			}
+			seenArenaKinds[item.Type] = true
+		case "champion":
+			if item.ChampionID <= 0 {
+				return preferences, fmt.Errorf("arena champion priority id must be positive")
+			}
+			if seenArenaChampions[item.ChampionID] {
+				return preferences, fmt.Errorf("arena champion priority entries must be unique")
+			}
+			seenArenaChampions[item.ChampionID] = true
+		default:
+			return preferences, fmt.Errorf("arena pick priority type must be bravery, champion, or firstAvailable")
+		}
+	}
+	if len(preferences.ARAMChampionPriority) > 12 {
+		return preferences, fmt.Errorf("ARAM champion priority must contain at most 12 entries")
+	}
+	seenARAMChampions := map[int]bool{}
+	for _, championID := range preferences.ARAMChampionPriority {
+		if championID <= 0 {
+			return preferences, fmt.Errorf("ARAM champion priority ids must be positive")
+		}
+		if seenARAMChampions[championID] {
+			return preferences, fmt.Errorf("ARAM champion priority entries must be unique")
+		}
+		seenARAMChampions[championID] = true
 	}
 	if preferences.AutoAcceptDelaySeconds < 0 {
 		preferences.AutoAcceptDelaySeconds = 0
@@ -211,9 +279,19 @@ func normalizePreferences(preferences Preferences) Preferences {
 }
 
 type Manager struct {
-	mu          sync.RWMutex
-	path        string
-	preferences Preferences
+	mu                    sync.RWMutex
+	path                  string
+	preferences           Preferences
+	playFlowRuntimeActive atomic.Bool
+}
+
+// SetPlayFlowRuntimeActive prevents the generic post-game controller from
+// racing the explicit Full Auto repeat runtime. Ready Check remains owned by
+// this manager; only Play Again changes ownership while a run is active.
+func (m *Manager) SetPlayFlowRuntimeActive(active bool) {
+	if m != nil {
+		m.playFlowRuntimeActive.Store(active)
+	}
 }
 
 func NewManager(path string) (*Manager, error) {
@@ -253,6 +331,8 @@ func clonePreferences(preferences Preferences) Preferences {
 			}
 			flow.RolePickPlans = plans
 		}
+		flow.ArenaPickPriority = append([]ArenaPriorityItem(nil), flow.ArenaPickPriority...)
+		flow.ARAMChampionPriority = append([]int(nil), flow.ARAMChampionPriority...)
 		preferences.PlayFlow = &flow
 	}
 	return preferences
@@ -392,7 +472,7 @@ func (m *Manager) Run(ctx context.Context) {
 			}
 
 			// ── Auto-play-again ──
-			if (prefs.AutoPlayAgain || grind) && phase == "EndOfGame" && !handled["playagain"] {
+			if (prefs.AutoPlayAgain || grind) && !m.playFlowRuntimeActive.Load() && phase == "EndOfGame" && !handled["playagain"] {
 				// Short cooldown: don't fire instantly, wait for post-game screen
 				if _, ok := cooldowns["playagain"]; !ok {
 					cooldowns["playagain"] = time.Now().Add(3 * time.Second)

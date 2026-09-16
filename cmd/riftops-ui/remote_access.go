@@ -417,8 +417,9 @@ var remoteCapabilities = []remoteCapability{
 		"/api/snapshot": {http.MethodGet}, "/api/events": {http.MethodGet}, "/api/remote/status": {http.MethodGet},
 		"/api/ddragon/version": {http.MethodGet}, "/api/ddragon/champions": {http.MethodGet}, "/api/ddragon/profile-icons": {http.MethodGet},
 		"/api/lcu/status": {http.MethodGet}, "/api/lcu/overview": {http.MethodGet}, "/api/lcu/profile": {http.MethodGet},
-		"/api/lcu/active-game": {http.MethodGet},
-		"/api/lcu/friends":     {http.MethodGet}, "/api/lcu/social": {http.MethodGet}, "/api/lcu/health": {http.MethodGet}, "/api/lcu/server-status": {http.MethodGet},
+		"/api/lcu/active-game":   {http.MethodGet},
+		"/api/play-flow/runtime": {http.MethodGet},
+		"/api/lcu/friends":       {http.MethodGet}, "/api/lcu/social": {http.MethodGet}, "/api/lcu/health": {http.MethodGet}, "/api/lcu/server-status": {http.MethodGet},
 	}},
 	{ID: "social_control", Routes: map[string][]string{
 		"/api/lcu/friend-request-action": {http.MethodPost}, "/api/lcu/social-invite": {http.MethodPost},

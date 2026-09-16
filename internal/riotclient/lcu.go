@@ -1520,6 +1520,12 @@ func (lf *Lockfile) GetGameflowPhase(ctx context.Context) (string, error) {
 	return phase, nil
 }
 
+// FetchGameflowSession returns the current gameflow metadata used to identify
+// the live queue when lobby state is no longer available.
+func (lf *Lockfile) FetchGameflowSession(ctx context.Context) ([]byte, error) {
+	return lf.DoRequest(ctx, "GET", "/lol-gameflow/v1/session")
+}
+
 // DoDodge asks the current gameflow session to dodge champion select.
 func (lf *Lockfile) DoDodge(ctx context.Context) error {
 	_, err := lf.DoRequest(ctx, "POST", "/lol-gameflow/v1/session/dodge")
@@ -1916,6 +1922,26 @@ func (lf *Lockfile) FetchChampSelectPickable(ctx context.Context) ([]byte, error
 // active champion-select session.
 func (lf *Lockfile) FetchChampSelectBannable(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/bannable-champion-ids")
+}
+
+// FetchChampSelectSubset returns the live card/subset pool used by Arena and
+// rotating ARAM variants. It is intentionally read-only and capability-safe.
+func (lf *Lockfile) FetchChampSelectSubset(ctx context.Context) ([]byte, error) {
+	var lastErr error
+	for _, path := range []string{
+		"/lol-lobby-team-builder/champ-select/v1/subset-champion-list",
+		"/lol-champ-select/v1/subset-champion-list",
+	} {
+		body, err := lf.DoRequest(ctx, http.MethodGet, path)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		if !isRetryableLCURouteError(err) {
+			break
+		}
+	}
+	return nil, lastErr
 }
 
 // FetchChampSelectPickOrderSwaps returns the pick-order swap offers and

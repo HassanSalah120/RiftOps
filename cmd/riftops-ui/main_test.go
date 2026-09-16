@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/HassanSalah120/RiftOps/internal/model"
+	"github.com/HassanSalah120/RiftOps/internal/playflow"
 	"github.com/HassanSalah120/RiftOps/internal/qol"
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
@@ -125,6 +127,59 @@ func TestMergeQoLPreferencesPlayFlowRolePlanPatchPreservesOtherRoles(t *testing.
 	}
 	if merged.PlayFlow.RolePickPlans["TOP"].PickChampionID != 86 || merged.PlayFlow.RolePickPlans["JUNGLE"].FallbackPickChampionID != 32 {
 		t.Fatalf("role plans were not merged safely: %#v", merged.PlayFlow.RolePickPlans)
+	}
+}
+
+func TestMergeQoLPreferencesPreservesModePrioritiesOnPartialPatch(t *testing.T) {
+	flow := qol.DefaultPlayFlowPreferences()
+	flow.ArenaPickPriority = []qol.ArenaPriorityItem{{Type: "bravery"}, {Type: "champion", ChampionID: 103}, {Type: "firstAvailable"}}
+	flow.ARAMChampionPriority = []int{22, 103}
+	current := qol.Preferences{PlayFlow: &flow}
+	merged, err := mergeQoLPreferences(current, map[string]json.RawMessage{
+		"playFlow": json.RawMessage(`{"autoPick":false}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.PlayFlow == nil || !reflect.DeepEqual(merged.PlayFlow.ArenaPickPriority, flow.ArenaPickPriority) || !reflect.DeepEqual(merged.PlayFlow.ARAMChampionPriority, flow.ARAMChampionPriority) {
+		t.Fatalf("partial patch reset mode priorities: %#v", merged.PlayFlow)
+	}
+}
+
+func TestPlayFlowRuntimeHandlersValidateMethodAndCycleMode(t *testing.T) {
+	previous := playFlowRuntime
+	t.Cleanup(func() {
+		if playFlowRuntime != nil {
+			playFlowRuntime.Stop()
+		}
+		playFlowRuntime = previous
+	})
+	playFlowRuntime = playflow.New(func() playflow.Client { return nil }, qol.DefaultPlayFlowPreferences)
+
+	statusRecorder := httptest.NewRecorder()
+	playFlowRuntimeStatusHandler(statusRecorder, httptest.NewRequest(http.MethodGet, "/api/play-flow/runtime", nil))
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("runtime status returned %d: %s", statusRecorder.Code, statusRecorder.Body.String())
+	}
+
+	startRecorder := httptest.NewRecorder()
+	playFlowRuntimeStartHandler(startRecorder, httptest.NewRequest(http.MethodPost, "/api/play-flow/runtime/start", bytes.NewBufferString(`{"cycleMode":"forever"}`)))
+	if startRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid runtime start returned %d, want %d", startRecorder.Code, http.StatusBadRequest)
+	}
+
+	stopRecorder := httptest.NewRecorder()
+	playFlowRuntimeStopHandler(stopRecorder, httptest.NewRequest(http.MethodGet, "/api/play-flow/runtime/stop", nil))
+	if stopRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET runtime stop returned %d, want %d", stopRecorder.Code, http.StatusMethodNotAllowed)
+	}
+
+	remoteRecorder := httptest.NewRecorder()
+	remoteRequest := httptest.NewRequest(http.MethodPost, "/api/play-flow/runtime/start", bytes.NewBufferString(`{"cycleMode":"single"}`))
+	remoteRequest = remoteRequest.WithContext(context.WithValue(remoteRequest.Context(), remoteRequestKey{}, true))
+	playFlowRuntimeStartHandler(remoteRecorder, remoteRequest)
+	if remoteRecorder.Code != http.StatusForbidden {
+		t.Fatalf("remote runtime start returned %d, want %d", remoteRecorder.Code, http.StatusForbidden)
 	}
 }
 

@@ -144,11 +144,53 @@ func TestNormalizePlayFlowPreferencesBoundsTimingAndCanonicalizesRoles(t *testin
 	if normalized.PrimaryRole != "MIDDLE" || normalized.SecondaryRole != "TOP" {
 		t.Fatalf("roles = %q/%q", normalized.PrimaryRole, normalized.SecondaryRole)
 	}
-	if normalized.PickTimingSeconds != MaxPlayFlowTimingSeconds || normalized.BanTimingSeconds != 0 || normalized.AutoAcceptDelaySeconds != MaxAutoAcceptDelaySeconds {
+	if normalized.PickTimingSeconds != MaxPlayFlowTimingSeconds || normalized.BanTimingSeconds != 1 || normalized.AutoAcceptDelaySeconds != MaxAutoAcceptDelaySeconds {
 		t.Fatalf("timings = pick %d, ban %d, accept %d", normalized.PickTimingSeconds, normalized.BanTimingSeconds, normalized.AutoAcceptDelaySeconds)
 	}
 	if normalized.AutoPickOrderTarget != "latest" {
 		t.Fatalf("default pick-order target = %q, want latest", normalized.AutoPickOrderTarget)
+	}
+}
+
+func TestNormalizePlayFlowPreferencesValidatesModePriorities(t *testing.T) {
+	preferences := DefaultPlayFlowPreferences()
+	preferences.ArenaPickPriority = []ArenaPriorityItem{
+		{Type: "bravery"},
+		{Type: "champion", ChampionID: 103},
+		{Type: "firstAvailable"},
+	}
+	preferences.ARAMChampionPriority = []int{22, 103}
+
+	normalized, err := NormalizePlayFlowPreferences(preferences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(normalized.ArenaPickPriority) != 3 || normalized.ArenaPickPriority[1].ChampionID != 103 {
+		t.Fatalf("arena priority = %#v", normalized.ArenaPickPriority)
+	}
+	if !reflect.DeepEqual(normalized.ARAMChampionPriority, []int{22, 103}) {
+		t.Fatalf("ARAM priority = %#v", normalized.ARAMChampionPriority)
+	}
+}
+
+func TestNormalizePlayFlowPreferencesMigratesLegacyArenaBravery(t *testing.T) {
+	preferences := DefaultPlayFlowPreferences()
+	preferences.ArenaBraveryPick = true
+	preferences.PickChampionID = 103
+	preferences.FallbackPickChampionID = 22
+
+	normalized, err := NormalizePlayFlowPreferences(preferences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ArenaPriorityItem{
+		{Type: "bravery"},
+		{Type: "champion", ChampionID: 103},
+		{Type: "champion", ChampionID: 22},
+		{Type: "firstAvailable"},
+	}
+	if !reflect.DeepEqual(normalized.ArenaPickPriority, want) {
+		t.Fatalf("arena migration = %#v, want %#v", normalized.ArenaPickPriority, want)
 	}
 }
 

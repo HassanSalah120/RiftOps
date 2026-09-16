@@ -810,6 +810,56 @@ export interface PlayFlowPreferences {
   instantLock: boolean;
   autoRoleQuestLoadout: boolean;
   arenaBraveryPick: boolean;
+  arenaPickPriority: ArenaPriorityItem[];
+  aramChampionPriority: number[];
+}
+
+export type ArenaPriorityItem =
+  | { type: 'bravery' }
+  | { type: 'champion'; championId: number }
+  | { type: 'firstAvailable' };
+
+export type PlayFlowCycleMode = 'single' | 'repeat';
+export type PlayFlowRuntimeStage = 'idle' | 'preflight' | 'lobby' | 'matchmaking' | 'ready-check' | 'champ-select' | 'in-game' | 'post-game' | 'blocked' | 'stopped';
+export type PlayFlowQueueKind = 'role-based' | 'roleless' | 'arena' | 'aram' | 'practice' | 'custom';
+
+export interface PlayFlowRuntimeStatus {
+  active: boolean;
+  runId?: string;
+  cycleMode: PlayFlowCycleMode;
+  stage: PlayFlowRuntimeStage;
+  queueId?: number;
+  queueKind?: PlayFlowQueueKind;
+  message: string;
+  countdownMs?: number;
+  startedAt?: string;
+  updatedAt: string;
+  stopReason?: string;
+}
+
+export function fetchPlayFlowRuntime(): Promise<PlayFlowRuntimeStatus> {
+  return fetch('/api/play-flow/runtime', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Full Auto status is unavailable');
+    return response.json() as Promise<PlayFlowRuntimeStatus>;
+  });
+}
+
+export function startPlayFlowRuntime(cycleMode: PlayFlowCycleMode): Promise<PlayFlowRuntimeStatus> {
+  return fetch('/api/play-flow/runtime/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cycleMode }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Full Auto could not start');
+    return response.json() as Promise<PlayFlowRuntimeStatus>;
+  });
+}
+
+export function stopPlayFlowRuntime(): Promise<PlayFlowRuntimeStatus> {
+  return fetch('/api/play-flow/runtime/stop', { method: 'POST' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Full Auto could not stop');
+    return response.json() as Promise<PlayFlowRuntimeStatus>;
+  });
 }
 
 export interface RolePreset {

@@ -11,11 +11,13 @@ import {
 test('Arena queues are detected by current queue ids and metadata', () => {
   assert.equal(isArenaQueue(1700), true);
   assert.equal(isArenaQueue({ id: 1710, name: 'Arena' }), true);
+  assert.equal(isArenaQueue({ id: 1750, name: 'Arena 3x6', gameMode: 'CHERRY' }), true);
   assert.equal(isArenaQueue({ id: 440, name: 'Ranked Flex', gameMode: 'CLASSIC' }), false);
 });
 
 test('Arena champ-select sessions are detected without trusting normal queues', () => {
   assert.equal(isArenaChampSelect({ queueId: 1700 }), true);
+  assert.equal(isArenaChampSelect({ queueId: 1750 }), true);
   assert.equal(isArenaChampSelect({ gameMode: 'ARENA' }), true);
   assert.equal(isArenaChampSelect({ mapId: 30 }), true);
   assert.equal(isArenaChampSelect({ queueId: 440, gameMode: 'CLASSIC' }), false);

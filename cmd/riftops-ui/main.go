@@ -375,6 +375,7 @@ func main() {
 	if err != nil {
 		slog.Warn("Could not load QoL preferences; using safe defaults", "error", err)
 	}
+	initPlayFlowRuntime()
 	go qolManager.Run(context.Background())
 	featureData, err = featurestore.New(filepath.Join(path, "features.json"))
 	if err != nil {
@@ -2747,7 +2748,7 @@ func validateChampSelectActionPayload(payload []byte, actionID, championID int) 
 	}
 	found := false
 	hasArenaMetadata := session.QueueID != 0 || session.MapID != 0 || strings.TrimSpace(session.GameMode) != "" || strings.TrimSpace(session.GameType) != ""
-	isArena := session.QueueID == 1700 || session.QueueID == 1710 || session.MapID == 30 ||
+	isArena := session.QueueID == 1700 || session.QueueID == 1710 || session.QueueID == 1750 || session.MapID == 30 ||
 		strings.EqualFold(strings.TrimSpace(session.GameMode), "ARENA") || strings.EqualFold(strings.TrimSpace(session.GameMode), "CHERRY") ||
 		strings.EqualFold(strings.TrimSpace(session.GameType), "ARENA") || strings.EqualFold(strings.TrimSpace(session.GameType), "CHERRY")
 	for _, turn := range session.Actions {
@@ -3235,6 +3236,7 @@ func mergePlayFlowPreferences(current *qol.Preferences, raw json.RawMessage) err
 		"autoAccept": true, "autoAcceptDelaySeconds": true,
 		"autoAcceptRandomDelay": true, "autoBan": true, "autoPick": true, "roleAwarePicks": true, "rolePickPlans": true, "autoPickOrderToLast": true, "autoPickOrderTarget": true,
 		"instantLock": true, "autoRoleQuestLoadout": true, "arenaBraveryPick": true,
+		"arenaPickPriority": true, "aramChampionPriority": true,
 	}
 	for key := range patch {
 		if !known[key] {
@@ -3266,10 +3268,19 @@ func mergePlayFlowPreferences(current *qol.Preferences, raw json.RawMessage) err
 		{"autoAccept", &flow.AutoAccept}, {"autoAcceptDelaySeconds", &flow.AutoAcceptDelaySeconds},
 		{"autoAcceptRandomDelay", &flow.AutoAcceptRandomDelay}, {"autoBan", &flow.AutoBan}, {"autoPick", &flow.AutoPick}, {"roleAwarePicks", &flow.RoleAwarePicks}, {"autoPickOrderToLast", &flow.AutoPickOrderToLast}, {"autoPickOrderTarget", &flow.AutoPickOrderTarget},
 		{"instantLock", &flow.InstantLock}, {"autoRoleQuestLoadout", &flow.AutoRoleQuestLoadout}, {"arenaBraveryPick", &flow.ArenaBraveryPick},
+		{"arenaPickPriority", &flow.ArenaPickPriority}, {"aramChampionPriority", &flow.ARAMChampionPriority},
 	}
 	for _, field := range fields {
 		if err := decode(field.key, field.target); err != nil {
 			return fmt.Errorf("invalid playFlow preference %q: %w", field.key, err)
+		}
+	}
+	// Old clients only know the ArenaBraveryPick switch. Rebuild the ordered
+	// priority only when that legacy field is explicitly patched and the new
+	// editor was not supplied in the same request.
+	if _, legacyPatched := patch["arenaBraveryPick"]; legacyPatched {
+		if _, orderedPatched := patch["arenaPickPriority"]; !orderedPatched {
+			flow.ArenaPickPriority = nil
 		}
 	}
 	if encodedPlans, ok := patch["rolePickPlans"]; ok {

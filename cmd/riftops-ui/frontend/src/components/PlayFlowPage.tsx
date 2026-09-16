@@ -1,40 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Ban, BookOpen, CheckCircle2, ChevronDown, ChevronRight, CircleStop, Clock3, GitBranch, Loader2, Play,
-  Pencil, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, Square, Swords, Users, WifiOff, X, Zap,
+  Pencil, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, Square, Swords, WifiOff, X, Zap,
 } from 'lucide-react';
 import {
   ddChampionIcon, createLCULobby, createPracticeToolLobby,
   fetchDDragonVersion, fetchGameflowPhase, fetchLCUAvailableQueues,
-  fetchLCULobby, fetchLCUChampSelect, fetchLCUChampSelectBannable,
-  fetchLCUChampSelectPickable, fetchLCURunePages, launchGame, launchLCULeague,
+  fetchLCULobby, fetchLCUChampSelect, fetchLCURunePages, launchGame, launchLCULeague,
   fetchQoLPreferences, lcuAutoAccept, lcuAutoRequeue, lcuAutoRoles, lcuCustomStart, lcuStopQueue,
-  fetchLCUChampSelectPickOrderSwaps, mutateLCUChampSelectSwap, saveQoLPreferences, selectLCURunePage,
-  submitLCUChampSelectAction, updateLCUChampSelectSelection, fetchLCUMatchmakingDiagnostics, fetchLCULeaverRestrictions,
+  saveQoLPreferences, updateLCUChampSelectSelection, fetchLCUMatchmakingDiagnostics, fetchLCULeaverRestrictions,
   fetchLCUCustomGames, refreshLCUCustomGames, actOnLCULobbyInvitation, previewExpandedReviewedOperation, executeReviewedOperation, fetchReviewedOperation,
+  fetchPlayFlowRuntime, startPlayFlowRuntime, stopPlayFlowRuntime,
 } from '../api';
-import type { DDChampion, LCUAvailableQueue, LCULobby, LCURunePage, MatchmakingDiagnostics, LeaverRestrictionStatus, PlayFlowPreferences, CustomGamesDirectory } from '../api';
+import type { ArenaPriorityItem, DDChampion, LCUAvailableQueue, LCULobby, LCURunePage, MatchmakingDiagnostics, LeaverRestrictionStatus, PlayFlowCycleMode, PlayFlowPreferences, PlayFlowRuntimeStatus, CustomGamesDirectory } from '../api';
 import { loadChampionCatalog } from '../leagueCatalog';
-import {
-  champSelectActionType,
-  champSelectSessionKey,
-  chooseChampSelectChampion,
-  draftTimingRemainingMs,
-  firstLocalPendingPick,
-  flattenChampSelectActions,
-  hasChampSelectActionID,
-  liveLocalChampSelectAction,
-  localAssignedPosition,
-  normalizeChampSelectPhase,
-  normalizeChampSelectSession,
-  isManualChampSelectHover,
-  choosePickOrderSwap,
-  occupiedChampSelectChampionIDs,
-  rolePickPlanFor,
-  resolveDraftContext,
-  runePageForPick,
-} from '../champSelectFlow';
-import type { ChampSelectSession, ChampSelectSwap, DraftTimingMode, PickOrderSwapTarget, PickRole, RolePickPlan } from '../champSelectFlow';
+import { localAssignedPosition, normalizeChampSelectSession, rolePickPlanFor } from '../champSelectFlow';
+import type { DraftTimingMode, PickOrderSwapTarget, PickRole, RolePickPlan } from '../champSelectFlow';
 import PageHeader from './PageHeader';
 import RunePageEditor from './RunePageEditor';
 import BuildPlanner from './BuildPlanner';
@@ -43,30 +24,12 @@ import { ActionFeedback, type FeedbackState } from './DesignPrimitives';
 import ReviewOperationModal, { type ReviewOperationData } from './ReviewOperationModal';
 import { PRACTICE_TOOL_QUEUE_ID, queueStartMode } from '../playFlowQueue';
 import { recommendedRoleQuestSpells, roleQuestPlan } from '../roleQuest';
-import { ARENA_BRAVERY_CHAMPION_ID, shouldUseArenaBravery } from '../arenaBravery';
+import { shouldUseArenaBravery } from '../arenaBravery';
 import { arenaEventKey, arenaEventLabel } from '../arenaTelemetry';
 import type { BuildPlan } from '../buildPlanner';
 
 type ToastFn = (message: string, type?: 'info' | 'success' | 'error') => void;
 
-type DraftStage = 'idle' | 'hovering' | 'hovered' | 'locking';
-type DraftAttempt = {
-  key: string;
-  actionId: number;
-  actionType: 'pick' | 'ban';
-  championId: number;
-  stage: DraftStage;
-  attempts: number;
-  lastAttemptAt: number;
-  firstSeenAt: number;
-  confirmedAt: number;
-  runePageId: number;
-  runeAttempts: number;
-  runeFailed: boolean;
-  mutationBlocked: boolean;
-};
-type DraftRetryRecord = { id: number; action: string; message: string; at: number };
-type DraftTone = 'idle' | 'working' | 'confirmed' | 'blocked';
 type TimingMode = DraftTimingMode;
 type PrefsSaveState = 'saved' | 'saving' | 'local';
 
@@ -129,6 +92,8 @@ type FlowPrefs = {
   instantLock: boolean;
   autoRoleQuestLoadout: boolean;
   arenaBraveryPick: boolean;
+  arenaPickPriority: ArenaPriorityItem[];
+  aramChampionPriority: number[];
 };
 
 function loadPrefs(): FlowPrefs {
@@ -140,6 +105,7 @@ function loadPrefs(): FlowPrefs {
     selectedQueue: 0,
     autoRoles: true, autoQueue: true, autoAccept: true, autoAcceptDelaySeconds: 0, autoAcceptRandomDelay: false, autoBan: true, autoPick: true, roleAwarePicks: false, rolePickPlans: {}, autoPickOrderToLast: false, autoPickOrderTarget: 'latest', instantLock: false,
     autoRoleQuestLoadout: false, arenaBraveryPick: false,
+    arenaPickPriority: [{ type: 'firstAvailable' }], aramChampionPriority: [],
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -152,6 +118,10 @@ function loadPrefs(): FlowPrefs {
         rolePickPlans: normalizeRolePickPlans(stored.rolePickPlans),
         autoPickOrderTarget: PICK_ORDER_TARGETS.includes(stored.autoPickOrderTarget as PickOrderSwapTarget) ? stored.autoPickOrderTarget as PickOrderSwapTarget : defaults.autoPickOrderTarget,
         autoAcceptDelaySeconds: Math.max(0, Math.min(MAX_AUTO_ACCEPT_DELAY_SECONDS, Number(stored.autoAcceptDelaySeconds) || 0)),
+        pickTimingSeconds: (stored.pickTimingMode || defaults.pickTimingMode) === 'last-second' ? Math.max(1, Math.min(60, Number(stored.pickTimingSeconds ?? defaults.pickTimingSeconds) || 1)) : Math.max(0, Math.min(60, Number(stored.pickTimingSeconds ?? defaults.pickTimingSeconds) || 0)),
+        banTimingSeconds: (stored.banTimingMode || defaults.banTimingMode) === 'last-second' ? Math.max(1, Math.min(60, Number(stored.banTimingSeconds ?? defaults.banTimingSeconds) || 1)) : Math.max(0, Math.min(60, Number(stored.banTimingSeconds ?? defaults.banTimingSeconds) || 0)),
+        arenaPickPriority: Array.isArray(stored.arenaPickPriority) ? stored.arenaPickPriority.slice(0, 12) : defaults.arenaPickPriority,
+        aramChampionPriority: Array.isArray(stored.aramChampionPriority) ? stored.aramChampionPriority.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0).slice(0, 12) : [],
       };
     }
   } catch { /* Defaults are fine when storage is unavailable. */ }
@@ -166,6 +136,14 @@ function isRolelessQueue(queueId: number): boolean {
 
 function isPracticeQueue(queueId: number): boolean {
   return queueId === PRACTICE_TOOL_QUEUE_ID;
+}
+
+function isARAMQueue(queue: LCUAvailableQueue | number | null | undefined): boolean {
+  if (typeof queue === 'number') return queue === 450 || queue === 2400;
+  if (!queue) return false;
+  const mode = String(queue.gameMode || '').trim().toUpperCase();
+  const name = String(queue.name || '').trim().toUpperCase();
+  return Number(queue.id) === 450 || Number(queue.id) === 2400 || Number(queue.mapId) === 12 || mode === 'ARAM' || mode === 'KIWI' || /\bARAM\b/.test(name);
 }
 
 function findQueue(queueId: number, queues: LCUAvailableQueue[]): LCUAvailableQueue | undefined {
@@ -271,10 +249,11 @@ function groupedQueues(queues: LCUAvailableQueue[]): Array<{ key: QueueGroupKey;
     .map((key) => ({ key, queues: groups.get(key) || [] }));
 }
 
-function QueuePicker({ value, queues, onChange }: {
+function QueuePicker({ value, queues, onChange, disabled = false }: {
   value: number;
   queues: LCUAvailableQueue[];
   onChange: (queueId: number) => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [activeId, setActiveId] = useState('current');
@@ -359,6 +338,7 @@ function QueuePicker({ value, queues, onChange }: {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls="play-flow-queue-options"
+        disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         onKeyDown={handleTriggerKeyDown}
       >
@@ -425,12 +405,6 @@ function QueuePicker({ value, queues, onChange }: {
       )}
     </div>
   );
-}
-
-function timingLabel(mode: TimingMode, seconds: number): string {
-  if (mode === 'last-second') return `in the last ${Math.max(0, seconds)}s`;
-  if (mode === 'after') return `${Math.max(0, seconds)}s after your turn opens`;
-  return 'as soon as your turn opens';
 }
 
 function ChampionPicker({ value, query, onQuery, onSelect, label, version, champions }: {
@@ -500,17 +474,112 @@ function TimingControl({ label, mode, seconds, onMode, onSeconds }: {
       <div className="flex items-center gap-2">
         <select value={mode} onChange={(event) => onMode(event.target.value as TimingMode)} aria-label={`${label} timing`} className="px-2 py-1 rounded-lg bg-dark-card border border-white/10 text-white text-xs focus:border-primary/50 focus:outline-none">
           <option value="immediate">Immediately</option>
-          <option value="last-second">Last second</option>
+          <option value="last-second">With time remaining</option>
           <option value="after">After delay</option>
         </select>
         {mode !== 'immediate' && (
           <label className="play-flow__timing-seconds flex items-center gap-1 text-xs text-text-dim">
-            <input type="number" min="0" max="60" value={seconds} onChange={(event) => onSeconds(Math.max(0, Math.min(60, Number(event.target.value) || 0)))} aria-label={`${label} seconds`} className="play-flow__timing-input rounded-lg bg-dark-card border border-white/10 text-white text-center focus:border-primary/50 focus:outline-none" />
+            <input type="number" min={mode === 'last-second' ? 1 : 0} max="60" value={seconds} onChange={(event) => onSeconds(Math.max(mode === 'last-second' ? 1 : 0, Math.min(60, Number(event.target.value) || (mode === 'last-second' ? 1 : 0))))} aria-label={`${label} seconds`} className="play-flow__timing-input rounded-lg bg-dark-card border border-white/10 text-white text-center focus:border-primary/50 focus:outline-none" />
             <span>s</span>
           </label>
         )}
       </div>
     </div>
+  );
+}
+
+function ChampionPrioritySearch({ champions, version, excluded, onAdd }: {
+  champions: Record<number, DDChampion>;
+  version: string;
+  excluded: Set<number>;
+  onAdd: (championId: number) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const term = query.trim().toLowerCase();
+  const matches = term ? Object.values(champions)
+    .filter((champion) => !excluded.has(Number(champion.key)) && champion.name.toLowerCase().includes(term))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 6) : [];
+  return (
+    <div className="play-flow__priority-search">
+      <label><Search className="h-3.5 w-3.5" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Add a champion…" aria-label="Add champion to priority" /></label>
+      {term && <div className="play-flow__priority-search-results">
+        {matches.map((champion) => <button type="button" key={champion.key} onClick={() => { onAdd(Number(champion.key)); setQuery(''); }}><img src={ddChampionIcon(version, champion.id)} alt="" /><span>{champion.name}</span></button>)}
+        {!matches.length && <small>No available champions match.</small>}
+      </div>}
+    </div>
+  );
+}
+
+function ArenaPriorityEditor({ items, champions, version, onChange }: {
+  items: ArenaPriorityItem[];
+  champions: Record<number, DDChampion>;
+  version: string;
+  onChange: (items: ArenaPriorityItem[]) => void;
+}) {
+  const championIDs = new Set(items.filter((item): item is Extract<ArenaPriorityItem, { type: 'champion' }> => item.type === 'champion').map((item) => item.championId));
+  const move = (index: number, offset: number) => {
+    const target = index + offset;
+    if (target < 0 || target >= items.length) return;
+    const next = [...items];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  };
+  const add = (item: ArenaPriorityItem) => {
+    if (items.length >= 12) return;
+    onChange([...items, item]);
+  };
+  return (
+    <section className="play-flow__priority-editor" aria-labelledby="arena-priority-title">
+      <div><strong id="arena-priority-title">Arena pick priority</strong><p>RiftOps tries each choice in order. Bravery falls through if League rejects it.</p></div>
+      <ol>
+        {items.map((item, index) => {
+          const champion = item.type === 'champion' ? champions[item.championId] : null;
+          const label = item.type === 'bravery' ? 'Bravery' : item.type === 'firstAvailable' ? 'First available champion' : champion?.name || `Champion ${item.championId}`;
+          return <li key={item.type === 'champion' ? `champion-${item.championId}` : item.type}>
+            <span className="play-flow__priority-rank">{index + 1}</span>
+            {item.type === 'champion' ? <img src={ddChampionIcon(version, champion?.id || String(item.championId))} alt="" /> : <Sparkles className="h-4 w-4" />}
+            <span><strong>{label}</strong><small>{item.type === 'bravery' ? 'League random choice (-3)' : item.type === 'firstAvailable' ? 'Prevents a missed Arena selection' : 'Specific champion when available'}</small></span>
+            <span className="play-flow__priority-actions"><button type="button" onClick={() => move(index, -1)} disabled={index === 0} aria-label={`Move ${label} up`}>↑</button><button type="button" onClick={() => move(index, 1)} disabled={index === items.length - 1} aria-label={`Move ${label} down`}>↓</button><button type="button" onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove ${label}`}>×</button></span>
+          </li>;
+        })}
+      </ol>
+      <div className="play-flow__priority-add">
+        {!items.some((item) => item.type === 'bravery') && <button type="button" className="btn-secondary" onClick={() => add({ type: 'bravery' })}>+ Bravery</button>}
+        {!items.some((item) => item.type === 'firstAvailable') && <button type="button" className="btn-secondary" onClick={() => add({ type: 'firstAvailable' })}>+ First available</button>}
+      </div>
+      <ChampionPrioritySearch champions={champions} version={version} excluded={championIDs} onAdd={(championId) => add({ type: 'champion', championId })} />
+      <small>{items.length}/12 priorities</small>
+    </section>
+  );
+}
+
+function ARAMPriorityEditor({ championIDs, champions, version, onChange }: {
+  championIDs: number[];
+  champions: Record<number, DDChampion>;
+  version: string;
+  onChange: (championIDs: number[]) => void;
+}) {
+  const move = (index: number, offset: number) => {
+    const target = index + offset;
+    if (target < 0 || target >= championIDs.length) return;
+    const next = [...championIDs];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  };
+  return (
+    <section className="play-flow__priority-editor" aria-labelledby="aram-priority-title">
+      <div><strong id="aram-priority-title">ARAM favorites</strong><p>RiftOps uses a higher favorite from cards or the bench. Rerolls always stay manual.</p></div>
+      <ol>
+        {championIDs.map((championID, index) => {
+          const champion = champions[championID];
+          const label = champion?.name || `Champion ${championID}`;
+          return <li key={championID}><span className="play-flow__priority-rank">{index + 1}</span><img src={ddChampionIcon(version, champion?.id || String(championID))} alt="" /><span><strong>{label}</strong><small>Use when available</small></span><span className="play-flow__priority-actions"><button type="button" onClick={() => move(index, -1)} disabled={index === 0} aria-label={`Move ${label} up`}>↑</button><button type="button" onClick={() => move(index, 1)} disabled={index === championIDs.length - 1} aria-label={`Move ${label} down`}>↓</button><button type="button" onClick={() => onChange(championIDs.filter((id) => id !== championID))} aria-label={`Remove ${label}`}>×</button></span></li>;
+        })}
+      </ol>
+      <ChampionPrioritySearch champions={champions} version={version} excluded={new Set(championIDs)} onAdd={(championID) => { if (championIDs.length < 12) onChange([...championIDs, championID]); }} />
+      <small>{championIDs.length}/12 favorites · no automatic rerolls</small>
+    </section>
   );
 }
 
@@ -541,6 +610,15 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const [phase, setPhase] = useState('');
   const [connected, setConnected] = useState(false);
   const [autoMode, setAutoMode] = useState(false);
+  const [flowMode, setFlowMode] = useState<'manual' | 'full-auto'>('manual');
+  const [cycleMode, setCycleMode] = useState<PlayFlowCycleMode>('single');
+  const [runtimeStatus, setRuntimeStatus] = useState<PlayFlowRuntimeStatus>({
+    active: false,
+    cycleMode: 'single',
+    stage: 'idle',
+    message: 'Choose how you want to start.',
+    updatedAt: new Date(0).toISOString(),
+  });
   const [launching, setLaunching] = useState(false);
   const [acting, setActing] = useState('');
   const [version, setVersion] = useState('15.1.1');
@@ -553,14 +631,11 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const [lobby, setLobby] = useState<LCULobby | null>(null);
   const [runePages, setRunePages] = useState<LCURunePage[]>([]);
   const [runeEditorOpen, setRuneEditorOpen] = useState(false);
-  const [draftStatus, setDraftStatus] = useState('Waiting for Champion Select.');
-  const [draftTone, setDraftTone] = useState<DraftTone>('idle');
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [configureOpen, setConfigureOpen] = useState(false);
   const [rolePlanEditorRole, setRolePlanEditorRole] = useState<PickRole>('TOP');
   const [prefsSaveState, setPrefsSaveState] = useState<PrefsSaveState>('saved');
   const [detectedRole, setDetectedRole] = useState<string | null>(null);
-  const [retryHistory, setRetryHistory] = useState<DraftRetryRecord[]>([]);
   const [savedBuildPlan, setSavedBuildPlan] = useState<BuildPlan | null>(null);
   const [matchmaking, setMatchmaking] = useState<MatchmakingDiagnostics | null>(null);
   const [restrictions, setRestrictions] = useState<LeaverRestrictionStatus | null>(null);
@@ -581,31 +656,39 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const isPracticeSelection = prefs.selectedQueue === PRACTICE_TOOL_QUEUE_ID;
 
   // General phase guards are separate from the server-confirmed draft state.
-  const cycleRef = useRef('');
-  const lastPhaseRef = useRef('');
-  const doneRef = useRef<Record<string, boolean>>({});
-  const actionSeenRef = useRef<Record<string, number>>({});
-  const draftRef = useRef<DraftAttempt | null>(null);
-  const draftAssignmentRef = useRef('');
-  const draftContextRef = useRef('');
-  const manualOverrideRef = useRef<Record<string, boolean>>({});
-  const availabilityRef = useRef<Record<'pick' | 'ban', { ids: number[]; at: number } | undefined>>({ pick: undefined, ban: undefined });
-  const draftNoticeRef = useRef<{ key: string; at: number }>({ key: '', at: 0 });
   const roleLoadoutRef = useRef('');
   const detectedRoleRef = useRef<string | null>(null);
-  const pickOrderSwapRef = useRef<{ key: string; at: number; swaps: ChampSelectSwap[] }>({ key: '', at: 0, swaps: [] });
-  const autoPickOrderRef = useRef<{ key: string; targetCellId?: number; lastAttemptAt: number; requested: boolean }>({ key: '', lastAttemptAt: 0, requested: false });
-  const tickingRef = useRef(false);
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
-  const autoRef = useRef(autoMode);
-  autoRef.current = autoMode;
   const queuesRef = useRef(queues);
   queuesRef.current = queues;
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs)); } catch { /* Optional preference. */ }
   }, [prefs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshRuntime = () => {
+      void fetchPlayFlowRuntime().then((status) => {
+        if (cancelled) return;
+        setRuntimeStatus(status);
+        setAutoMode(status.active);
+        if (status.active) {
+          setFlowMode('full-auto');
+          setCycleMode(status.cycleMode);
+        }
+      }).catch(() => {
+        if (!cancelled) setAutoMode(false);
+      });
+    };
+    refreshRuntime();
+    const interval = window.setInterval(refreshRuntime, 750);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   // Match-flow switches are shared with the background QoL manager. Hydrate
   // only those shared fields from its durable store; the rest of the drawer
@@ -760,10 +843,6 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     prefsTouchedRef.current = true;
     setPrefsSaveState('saving');
     setPrefs((current) => ({ ...current, [key]: value }));
-    doneRef.current = {};
-    actionSeenRef.current = {};
-    draftRef.current = null;
-    if (key === 'autoPickOrderToLast' || key === 'autoPickOrderTarget') autoPickOrderRef.current = { key: '', lastAttemptAt: 0, requested: false };
     const sharedPatch = key === 'autoAccept'
       ? { autoAccept: value as boolean }
       : key === 'autoQueue'
@@ -794,23 +873,6 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     });
   };
 
-  const resetCycle = useCallback((key: string) => {
-    if (cycleRef.current !== key) {
-      cycleRef.current = key;
-      doneRef.current = {};
-      actionSeenRef.current = {};
-      draftRef.current = null;
-      draftAssignmentRef.current = '';
-      draftContextRef.current = '';
-      manualOverrideRef.current = {};
-      setRetryHistory([]);
-      availabilityRef.current = { pick: undefined, ban: undefined };
-      roleLoadoutRef.current = '';
-      pickOrderSwapRef.current = { key, at: 0, swaps: [] };
-      autoPickOrderRef.current = { key, lastAttemptAt: 0, requested: false };
-    }
-  }, []);
-
   const runStep = useCallback(async (key: string, action: () => Promise<unknown>, success: string) => {
     setActing(key);
     try {
@@ -824,88 +886,6 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
       setActing('');
     }
   }, [showToast]);
-
-  const fetchAvailableChampions = useCallback(async (kind: 'pick' | 'ban'): Promise<number[] | null> => {
-    const cached = availabilityRef.current[kind];
-    if (cached && Date.now() - cached.at < 4000) return cached.ids;
-    try {
-      const ids = (kind === 'pick' ? await fetchLCUChampSelectPickable() : await fetchLCUChampSelectBannable()).map(Number).filter((id) => id > 0);
-      availabilityRef.current[kind] = { ids, at: Date.now() };
-      // An empty catalogue is authoritative for this poll: no configured
-      // champion may be sent until League exposes a live candidate list.
-      return ids;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const runDraftMutation = useCallback(async (key: string, action: () => Promise<unknown>) => {
-    setActing(key);
-    try {
-      await action();
-      return true;
-    } catch (reason: any) {
-      const message = reason?.message || 'League rejected the champion-select action.';
-      setDraftTone('blocked');
-      setDraftStatus(message);
-      setRetryHistory((current) => [{ id: Date.now(), action: draftActionLabel(key), message, at: Date.now() }, ...current].slice(0, 6));
-      const now = Date.now();
-      if (draftNoticeRef.current.key !== key || now - draftNoticeRef.current.at > 10000) {
-        draftNoticeRef.current = { key, at: now };
-        showToast(message, 'error');
-      }
-      return false;
-    } finally {
-      setActing('');
-    }
-  }, [showToast]);
-
-  const maybeAutoPickOrderSwap = useCallback(async (session: ChampSelectSession, sessionKey: string, now: number): Promise<string | null> => {
-    if (!prefsRef.current.autoPickOrderToLast || String(session.timer?.phase || '') !== 'PLANNING') return null;
-
-    let swaps = session.pickOrderSwaps || [];
-    if (!swaps.length) {
-      const cached = pickOrderSwapRef.current;
-      if (cached.key === sessionKey && now - cached.at < 1500) {
-        swaps = cached.swaps;
-      } else {
-        try {
-          swaps = await fetchLCUChampSelectPickOrderSwaps() as ChampSelectSwap[];
-          pickOrderSwapRef.current = { key: sessionKey, at: now, swaps };
-        } catch {
-          return null;
-        }
-      }
-    } else {
-      pickOrderSwapRef.current = { key: sessionKey, at: now, swaps };
-    }
-
-    const previous = autoPickOrderRef.current;
-    const pendingSwap = swaps.some((swap) => {
-      const state = String(swap.state || swap.status || '').toUpperCase();
-      return state.includes('PENDING') || state.includes('REQUEST') || state.includes('OFFER');
-    });
-    if (pendingSwap) {
-      return previous.requested ? 'Pick-order swap requested — waiting for a teammate to accept.' : null;
-    }
-
-    const choice = choosePickOrderSwap(session, swaps, prefsRef.current.autoPickOrderTarget || 'latest');
-    if (!choice) return previous.requested ? 'Pick-order swap requested — waiting for League to confirm.' : null;
-    if (previous.requested && previous.targetCellId === choice.targetCellId) {
-      return 'Pick-order swap requested — waiting for a teammate to accept.';
-    }
-    if (now - previous.lastAttemptAt < 5000) return null;
-
-    autoPickOrderRef.current = { key: sessionKey, targetCellId: choice.targetCellId, lastAttemptAt: now, requested: false };
-    const accepted = await runDraftMutation('draft-pick-order-swap', () => mutateLCUChampSelectSwap('pick-order', choice.id, 'request'));
-    if (!accepted) return null;
-    autoPickOrderRef.current = { key: sessionKey, targetCellId: choice.targetCellId, lastAttemptAt: now, requested: true };
-    const target = prefsRef.current.autoPickOrderTarget || 'latest';
-    const targetLabel = target === 'latest' ? (choice.targetPickTurn > 0 ? `pick ${choice.targetPickTurn}` : 'the latest pick') : target.replace('pick-', 'pick ');
-    const message = `Requested a pick-order swap to ${targetLabel}. Your teammate must accept it.`;
-    showToast(message, 'info');
-    return message;
-  }, [runDraftMutation, showToast]);
 
   const applyRoleQuestLoadout = useCallback(async (notify = true, roleOverride?: string | null): Promise<boolean> => {
     const role = roleOverride || detectedRoleRef.current || prefsRef.current.primaryRole;
@@ -927,442 +907,39 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     }
   }, [showToast]);
 
-  const handleChampSelectTick = useCallback(async () => {
-    const config = prefsRef.current;
-    let session: ChampSelectSession;
-    try {
-      session = normalizeChampSelectSession(await fetchLCUChampSelect());
-    } catch (e) {
-      console.debug('[PlayFlow] champ-select fetch failed', e);
-      draftRef.current = null;
-      draftAssignmentRef.current = '';
-      draftContextRef.current = '';
-      actionSeenRef.current = {};
-      setDraftTone('blocked');
-      setDraftStatus('Waiting for League to publish the Champion Select session.');
-      return;
-    }
-
-    const sessionKey = champSelectSessionKey(session);
-    resetCycle(sessionKey);
-    const now = Date.now();
-    const assignedRole = localAssignedPosition(session);
-    const assignmentKey = `${sessionKey}:${session.localPlayerCellId ?? 'unknown'}:${assignedRole || 'unassigned'}`;
-    if (draftAssignmentRef.current && draftAssignmentRef.current !== assignmentKey) {
-      draftRef.current = null;
-      draftContextRef.current = '';
-      actionSeenRef.current = {};
-      availabilityRef.current = { pick: undefined, ban: undefined };
-    }
-    draftAssignmentRef.current = assignmentKey;
-    detectedRoleRef.current = assignedRole;
-    setDetectedRole((previous) => previous === assignedRole ? previous : assignedRole);
-    const questSpells = recommendedRoleQuestSpells(assignedRole);
-    const questLoadoutKey = `${sessionKey}:${String(assignedRole || '').toUpperCase()}`;
-    if (config.autoRoleQuestLoadout && assignedRole === 'TOP' && questSpells && roleLoadoutRef.current !== questLoadoutKey && roleLoadoutRef.current !== `${questLoadoutKey}:failed`) {
-      setDraftTone('working');
-      setDraftStatus(`Preparing ${questSpells.spell1Name} + ${questSpells.spell2Name} for the Top role quest…`);
-      const applied = await applyRoleQuestLoadout(false, assignedRole);
-      roleLoadoutRef.current = applied ? questLoadoutKey : `${questLoadoutKey}:failed`;
-      if (applied) showToast('Top role quest loadout applied. League will grant the Teleport reward after quest completion.', 'success');
-      else setDraftStatus('Could not prepare the Top role quest loadout. Use the manual button below and continue drafting.');
-    }
-    const allActions = flattenChampSelectActions(session);
-    const pickOrderSwapStatus = await maybeAutoPickOrderSwap(session, sessionKey, now);
-
-    // A mutation is successful only after the next LCU session confirms it.
-    // Missing actions are also confirmation: League removes completed turns in
-    // some queue types instead of retaining them with completed=true.
-    const previous = draftRef.current;
-    if (previous?.stage === 'locking') {
-      const observed = allActions.find((action) => hasChampSelectActionID(action) && Number(action.id) === previous.actionId);
-      if (!observed || observed.completed) {
-        const name = champions[previous.championId]?.name || `Champion ${previous.championId}`;
-        const message = previous.actionType === 'ban' ? `${name} ban confirmed.` : `${name} locked in.`;
-        draftRef.current = null;
-        setDraftTone('confirmed');
-        setDraftStatus(message);
-        showToast(message, 'success');
-        return;
-      }
-      const observedChampionId = Number(observed.championId || 0);
-      if (observedChampionId > 0 && observedChampionId !== previous.championId) {
-        // League (or the player) changed the action while a lock response was
-        // still ambiguous. Never overwrite that newer choice on a later poll.
-        manualOverrideRef.current[`${sessionKey}:${previous.actionId}`] = true;
-        draftRef.current = null;
-        setDraftTone('idle');
-        setDraftStatus('Champion choice changed while RiftOps was waiting for League. This turn is paused for manual review.');
-        return;
-      }
-      setDraftTone('working');
-      setDraftStatus(`${previous.actionType === 'ban' ? 'Ban' : 'Lock'} sent. Waiting for League to confirm…`);
-      return;
-    }
-
-    const timerPhase = normalizeChampSelectPhase(session.timer?.phase);
-    const liveAction = liveLocalChampSelectAction(session);
-    const declaration = timerPhase === 'PLANNING' ? firstLocalPendingPick(session) : undefined;
-    const action = liveAction || declaration;
-    const isLiveTurn = action === liveAction && !!liveAction;
-
-    console.debug('[PlayFlow] champ-select state', {
-      timerPhase,
-      localCell: session.localPlayerCellId,
-      currentAction: liveAction,
-      declaration,
-      draft: draftRef.current,
-    });
-
-    const resolvedActionType = champSelectActionType(action);
-    if (!action || !hasChampSelectActionID(action) || !resolvedActionType) {
-      setDraftTone('idle');
-      setDraftStatus(pickOrderSwapStatus || (timerPhase === 'FINALIZATION' ? 'Draft complete — loadout can still be adjusted.' : 'Waiting for your next pick or ban turn.'));
-      return;
-    }
-
-    const actionType = resolvedActionType;
-    const enabled = actionType === 'ban' ? config.autoBan : config.autoPick;
-    const liveQueueID = Number(session.queueId || config.selectedQueue);
-    const liveQueue = findQueue(liveQueueID, queuesRef.current);
-    const arenaSession = shouldUseArenaBravery(true, liveQueue, session);
-    const arenaBravery = actionType === 'pick' && shouldUseArenaBravery(config.arenaBraveryPick, liveQueue, session);
-    const sessionMode = String(session.gameMode || session.gameType || '').toUpperCase();
-    const customSession = queueStartMode(liveQueueID, queuesRef.current) === 'custom' || /CUSTOM|PRACTICETOOL/.test(sessionMode);
-    const queueKind = arenaSession
-      ? 'arena'
-      : isPracticeQueue(liveQueueID)
-        ? 'practice'
-        : customSession
-          ? 'custom'
-          : isRolelessQueue(liveQueueID)
-            ? 'roleless'
-            : 'role-based';
-    if (!enabled) {
-      setDraftTone('idle');
-      setDraftStatus(`Auto-${actionType} is off. Use League or Live Client Control for this turn.`);
-      return;
-    }
-
-    const legacyPickPlan: RolePickPlan = {
-      pickChampionId: config.pickChampionId,
-      fallbackPickChampionId: config.fallbackPickChampionId,
-      pickRunePageId: config.pickRunePageId,
-      fallbackPickRunePageId: config.fallbackPickRunePageId,
-    };
-    const draftContext = resolveDraftContext(session, {
-      roleAwarePicks: config.roleAwarePicks,
-      rolePickPlans: config.rolePickPlans,
-      legacyPickPlan,
-      queueKind,
-    });
-    const contextKey = `${sessionKey}:${draftContext.localCellId ?? 'unknown'}:${draftContext.assignedRole || 'unassigned'}:${queueKind}:${timerPhase}:${action.id}:${actionType}`;
-    if (draftContextRef.current && draftContextRef.current !== contextKey) {
-      draftRef.current = null;
-      actionSeenRef.current = {};
-      availabilityRef.current = { pick: undefined, ban: undefined };
-    }
-    draftContextRef.current = contextKey;
-    if (actionType === 'pick' && !arenaBravery && draftContext.state !== 'ready') {
-      setDraftTone(draftContext.state === 'waiting-for-role' ? 'idle' : 'blocked');
-      setDraftStatus(draftContext.reason || 'Auto-pick is waiting for a safe draft plan.');
-      return;
-    }
-    const activePickPlan = draftContext.pickPlan || legacyPickPlan;
-    const primaryChampionId = actionType === 'ban' ? config.banChampionId : activePickPlan.pickChampionId;
-    const fallbackChampionId = actionType === 'ban' ? config.fallbackBanChampionId : activePickPlan.fallbackPickChampionId;
-    if (!arenaBravery && !primaryChampionId && !fallbackChampionId) {
-      setDraftTone('blocked');
-      setDraftStatus(`Choose a champion to ${actionType} in Auto mode setup.`);
-      return;
-    }
-
-    const actionID = Number(action.id);
-    const timingMode = actionType === 'ban' ? config.banTimingMode : config.pickTimingMode;
-    const timingSeconds = actionType === 'ban' ? config.banTimingSeconds : config.pickTimingSeconds;
-    const timingKey = `${actionType}:${actionID}`;
-    const firstSeenAt = actionSeenRef.current[timingKey] || now;
-    actionSeenRef.current[timingKey] = firstSeenAt;
-
-    const conflicts = occupiedChampSelectChampionIDs(session, actionID);
-    const candidates = [primaryChampionId, fallbackChampionId];
-    const available = arenaBravery ? null : await fetchAvailableChampions(actionType);
-    if (!arenaBravery && available === null) {
-      setDraftTone('idle');
-      setDraftStatus('Waiting for League to provide the live champion availability list. No draft action was sent.');
-      return;
-    }
-    const selectedChampionId = arenaBravery
-      ? ARENA_BRAVERY_CHAMPION_ID
-      : chooseChampSelectChampion(candidates, conflicts, available);
-    if (!selectedChampionId && !arenaBravery) {
-      const primaryBlocked = primaryChampionId > 0 && conflicts.has(primaryChampionId);
-      setDraftTone('blocked');
-      setDraftStatus(primaryBlocked
-        ? `${champions[primaryChampionId]?.name || `Champion ${primaryChampionId}`} is already banned, picked, or hovered. Set a fallback ${actionType}.`
-        : `Neither the selected ${actionType} nor its fallback is available in this draft.`);
-      return;
-    }
-
-    const manualOverrideKey = `${sessionKey}:${actionID}`;
-    const currentHoverId = Number(action.championId || 0);
-    const attemptPendingOwnHover = draftRef.current?.actionId === actionID
-      && draftRef.current.championId === selectedChampionId
-      && draftRef.current.stage === 'hovering'
-      && now - draftRef.current.lastAttemptAt < 5000;
-    if (actionType === 'pick' && !arenaBravery) {
-      if (manualOverrideRef.current[manualOverrideKey]) {
-        setDraftTone('idle');
-        setDraftStatus('Manual champion choice detected. RiftOps paused for this turn.');
-        return;
-      }
-      if (isManualChampSelectHover(currentHoverId, selectedChampionId, attemptPendingOwnHover)) {
-        manualOverrideRef.current[manualOverrideKey] = true;
-        setDraftTone('idle');
-        setDraftStatus('Manual champion choice detected. RiftOps paused for this turn.');
-        return;
-      }
-    }
-
-    const fallbackUsed = !arenaBravery && fallbackChampionId > 0 && selectedChampionId === fallbackChampionId && selectedChampionId !== primaryChampionId;
-    const championName = arenaBravery ? 'Bravery (Arena)' : champions[selectedChampionId]?.name || `Champion ${selectedChampionId}`;
-    const rolePrefix = draftContext.planSource === 'role' && draftContext.assignedRole ? `${roleLabel(draftContext.assignedRole)} plan · ` : '';
-    const fallbackPrefix = `${rolePrefix}${fallbackUsed && primaryChampionId > 0 ? `Primary unavailable — using fallback ${championName}. ` : ''}`;
-    const attemptKey = `${actionType}:${actionID}:${selectedChampionId}`;
-    let attempt = draftRef.current;
-    if (!attempt || attempt.key !== attemptKey) {
-      attempt = {
-        key: attemptKey,
-        actionId: actionID,
-        actionType,
-        championId: selectedChampionId,
-        stage: 'idle',
-        attempts: 0,
-        lastAttemptAt: 0,
-        firstSeenAt,
-        confirmedAt: 0,
-        runePageId: 0,
-        runeAttempts: 0,
-        runeFailed: false,
-        mutationBlocked: false,
-      };
-      draftRef.current = attempt;
-    }
-
-    if (attempt.mutationBlocked) {
-      setDraftTone('blocked');
-      setDraftStatus(`${rolePrefix}League did not confirm the last ${actionType}. Review this turn manually before continuing.`);
-      return;
-    }
-
-    const selectedRunePageID = actionType === 'pick'
-      ? runePageForPick(activePickPlan.pickRunePageId, activePickPlan.fallbackPickRunePageId, fallbackUsed)
-      : 0;
-    if (actionType === 'pick' && selectedRunePageID > 0 && attempt.runePageId !== selectedRunePageID && !attempt.runeFailed) {
-      const rune = runePages.find((page) => page.id === selectedRunePageID);
-      if (attempt.runeAttempts >= 1) {
-        attempt.runeFailed = true;
-        setDraftTone('blocked');
-        setDraftStatus(`${fallbackPrefix}${rune?.name || 'Configured rune page'} could not be applied. Continuing with the current League page.`);
-      } else {
-        attempt.runeAttempts += 1;
-        setDraftTone('working');
-        setDraftStatus(`${fallbackPrefix}Applying ${rune?.name || 'selected rune page'} before the pick…`);
-        const runeApplied = await runDraftMutation(`draft-rune:${attemptKey}:${selectedRunePageID}`, () => selectLCURunePage(selectedRunePageID));
-        if (runeApplied) {
-          attempt.runePageId = selectedRunePageID;
-          setDraftTone('confirmed');
-          setDraftStatus(`${fallbackPrefix}${rune?.name || 'Rune page'} selected. Preparing ${championName}…`);
-        } else {
-          attempt.runeFailed = true;
-          setDraftTone('blocked');
-          setDraftStatus(`${fallbackPrefix}${rune?.name || 'Configured rune page'} could not be applied. Continuing with the current League page.`);
-        }
-      }
-      if (!attempt.runeFailed) return;
-    }
-
-    // Loadouts are safe to apply before the configured pick delay. Doing this
-    // early leaves the final seconds exclusively for League's hover/lock calls.
-    const timingWait = draftTimingRemainingMs(timingMode, timingSeconds, session.timer, firstSeenAt, now);
-    if (timingWait > 0) {
-      setDraftTone('idle');
-      const waitSeconds = Math.max(1, Math.ceil(timingWait / 1000));
-      setDraftStatus(`${fallbackPrefix}${championName} is ready. Waiting to ${actionType} ${timingLabel(timingMode, timingSeconds)} · ${waitSeconds}s remaining.`);
-      return;
-    }
-
-    if (actionType === 'ban') {
-      if (attempt.stage === 'locking' && now - attempt.lastAttemptAt < 2200) {
-        setDraftTone('working');
-        setDraftStatus(`${fallbackPrefix}Ban sent for ${championName}. Waiting for League to confirm…`);
-        return;
-      }
-      if (now - attempt.lastAttemptAt < 1200) return;
-      attempt.stage = 'locking';
-      attempt.lastAttemptAt = now;
-      attempt.attempts += 1;
-      setDraftTone('working');
-      setDraftStatus(`${fallbackPrefix}Submitting ${championName} as your ban…`);
-      const banSent = await runDraftMutation(`draft-ban:${attemptKey}`, () => submitLCUChampSelectAction(actionID, selectedChampionId, true));
-      if (!banSent) attempt.mutationBlocked = true;
-      return;
-    }
-
-    const hoverConfirmed = Number(action.championId || 0) === selectedChampionId;
-    if (hoverConfirmed) {
-      const firstConfirmation = attempt.confirmedAt === 0;
-      if (firstConfirmation) attempt.confirmedAt = now;
-      if (attempt.stage !== 'locking') attempt.stage = 'hovered';
-      if (firstConfirmation && attempt.attempts > 0) showToast(`${fallbackPrefix}${championName} hover confirmed.`, 'success');
-
-      if (!isLiveTurn) {
-        setDraftTone('confirmed');
-        setDraftStatus(`${fallbackPrefix}${championName} is declared. RiftOps will lock it when your turn starts.`);
-        return;
-      }
-
-      const lockDelay = config.instantLock ? 0 : 2500;
-      const remaining = Math.max(0, lockDelay - (now - attempt.confirmedAt));
-      if (remaining > 0) {
-        setDraftTone('confirmed');
-        setDraftStatus(`${fallbackPrefix}${championName} hover confirmed. Locking in ${(remaining / 1000).toFixed(1)}s…`);
-        return;
-      }
-      if (attempt.stage === 'locking' && now - attempt.lastAttemptAt < 2200) {
-        setDraftTone('working');
-        setDraftStatus(`${fallbackPrefix}Lock sent for ${championName}. Waiting for League to confirm…`);
-        return;
-      }
-      attempt.stage = 'locking';
-      attempt.lastAttemptAt = now;
-      attempt.attempts += 1;
-      setDraftTone('working');
-      setDraftStatus(`${fallbackPrefix}Locking in ${championName}…`);
-      const lockSent = await runDraftMutation(`draft-lock:${attemptKey}`, () => submitLCUChampSelectAction(actionID, selectedChampionId, true));
-      if (!lockSent) attempt.mutationBlocked = true;
-      return;
-    }
-
-    // PATCH acceptance is not confirmation. Re-send a missing hover with a
-    // bounded interval until the session echoes the configured champion.
-    if (now - attempt.lastAttemptAt < 1200) {
-      setDraftTone('working');
-      setDraftStatus(`${fallbackPrefix}Hover sent for ${championName}. Waiting for League to confirm…`);
-      return;
-    }
-    attempt.stage = 'hovering';
-    attempt.confirmedAt = 0;
-    attempt.lastAttemptAt = now;
-    attempt.attempts += 1;
-    setDraftTone('working');
-    setDraftStatus(`${fallbackPrefix}Sending ${championName} hover to League…`);
-    await runDraftMutation(`draft-hover:${attemptKey}`, () => submitLCUChampSelectAction(actionID, selectedChampionId, false));
-  }, [applyRoleQuestLoadout, fetchAvailableChampions, champions, maybeAutoPickOrderSwap, resetCycle, runePages, runDraftMutation, showToast]);
-
-  const tick = useCallback(async () => {
-    if (tickingRef.current) return;
-    tickingRef.current = true;
-    try {
-      let current: string;
+  useEffect(() => {
+    let cancelled = false;
+    const refreshPhase = async () => {
       try {
-        current = await fetchGameflowPhase();
+        const current = await fetchGameflowPhase();
+        if (cancelled) return;
         setConnected(true);
-      } catch (e) {
-        console.debug('[PlayFlow] gameflow fetch failed', e);
+        setPhase(current);
+        if (current !== 'ChampSelect') {
+          detectedRoleRef.current = null;
+          setDetectedRole(null);
+          return;
+        }
+        const session = normalizeChampSelectSession(await fetchLCUChampSelect());
+        if (cancelled) return;
+        const assignedRole = localAssignedPosition(session);
+        detectedRoleRef.current = assignedRole;
+        setDetectedRole(assignedRole);
+      } catch {
+        if (cancelled) return;
         setConnected(false);
         setPhase('');
-        // A disconnected client invalidates every in-flight draft attempt.
-        // Do not carry a pending lock or availability cache into a later
-        // reconnect, even if League restores the same phase quickly.
-        resetCycle('disconnected');
-        return;
+        detectedRoleRef.current = null;
+        setDetectedRole(null);
       }
-      setPhase(current);
-      if (lastPhaseRef.current !== current) {
-        lastPhaseRef.current = current;
-        resetCycle(`phase:${current}`);
-      }
-      if (current === 'ChampSelect') console.debug('[PlayFlow] phase ChampSelect', { autoMode: autoRef.current, prefs: prefsRef.current });
-
-      if (current === 'None' || current === 'Lobby') resetCycle('lobby');
-      else if (current === 'Matchmaking' || current === 'ReadyCheck') resetCycle('queue');
-      else if (current === 'EndOfGame' || current === 'WaitingForStats') resetCycle('endgame');
-
-      if (!autoRef.current) {
-        if (current === 'ChampSelect') {
-          setDraftTone('idle');
-          setDraftStatus('Auto mode is paused. Live Client Control remains available for manual picks and bans.');
-        }
-        return;
-      }
-      const config = prefsRef.current;
-      try {
-        if (current === 'None') {
-          // Nothing is open yet — create the configured lobby automatically
-          // so the rest of the flow can proceed hands-free.
-          if (!doneRef.current.created && config.selectedQueue > 0) {
-            await createConfiguredLobby(config.selectedQueue, queuesRef.current);
-            doneRef.current.created = true;
-            return;
-          }
-        } else if (current === 'Lobby') {
-          // Custom and Practice Tool lobbies skip lane preferences and use
-          // League's dedicated start-game route instead of matchmaking.
-          const custom = queueStartMode(config.selectedQueue, queuesRef.current) === 'custom';
-          if (!doneRef.current.created && config.selectedQueue > 0) {
-            const currentLobby = await fetchLCULobby().catch(() => null);
-            const currentQueue = Number(currentLobby?.gameConfig?.queueId || 0);
-            const currentIsCustom = lobbyIsCustom(currentLobby);
-            const wrongKind = custom !== currentIsCustom;
-            const wrongQueue = currentQueue > 0 && currentQueue !== config.selectedQueue;
-            if (wrongKind || wrongQueue) {
-              await createConfiguredLobby(config.selectedQueue, queuesRef.current);
-              doneRef.current.created = true;
-              return; // Let the fresh lobby settle before applying roles.
-            }
-            doneRef.current.created = true;
-          }
-          const isRoleless = isRolelessQueue(config.selectedQueue) || custom;
-          if (config.autoRoles && !doneRef.current.roles && !isRoleless) {
-            try {
-              await lcuAutoRoles(config.primaryRole, config.secondaryRole);
-              doneRef.current.roles = true;
-            } catch (e: any) {
-              const message = e?.message || 'Failed to set lane preferences.';
-              showToast(`Full auto stopped: ${message}`, 'error');
-              setAutoMode(false);
-              return;
-            }
-          }
-          if (config.autoQueue && !doneRef.current.queued) {
-            if (custom) await lcuCustomStart();
-            else await lcuAutoRequeue();
-            doneRef.current.queued = true;
-          }
-        } else if (current === 'ReadyCheck') {
-          // Ready-check acceptance is owned by the background QoL manager so
-          // one saved delay cannot race a second page-local accept request.
-        } else if (current === 'ChampSelect') {
-          await handleChampSelectTick();
-        }
-      } catch (reason: any) {
-        showToast(`Full auto stopped: ${reason?.message || 'automation step failed.'}`, 'error');
-        setAutoMode(false);
-      }
-    } finally {
-      tickingRef.current = false;
-    }
-  }, [handleChampSelectTick, resetCycle, showToast]);
-
-  useEffect(() => {
-    void tick();
-    // A sub-second poll keeps last-second policies reliable while every
-    // mutation remains guarded by its own backoff and server confirmation.
-    const interval = window.setInterval(() => void tick(), 750);
-    return () => window.clearInterval(interval);
-  }, [tick]);
-
+    };
+    void refreshPhase();
+    const interval = window.setInterval(() => void refreshPhase(), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
   const launchLeague = async () => {
     setLaunching(true);
     try {
@@ -1377,6 +954,13 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   };
 
   const selectedQueue = findQueue(prefs.selectedQueue, queues);
+  const selectedQueueID = prefs.selectedQueue || Number(lobby?.gameConfig?.queueId || 0);
+  const effectiveQueue = selectedQueue || (selectedQueueID > 0 ? {
+    id: selectedQueueID,
+    name: '',
+    gameMode: lobby?.gameConfig?.gameMode,
+    mapId: lobby?.gameConfig?.mapId,
+  } : undefined);
   const selectedStartMode = queueStartMode(prefs.selectedQueue, queues);
   const isCustomSelection = selectedStartMode === 'custom';
 
@@ -1396,24 +980,11 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     return () => { cancelled = true; window.clearInterval(interval); };
   }, [connected, isCustomSelection, remoteClient]);
 
-  const isCustomLobby = lobbyIsCustom(lobby);
-  const mayStartCustom = phase === 'Lobby' && isCustomLobby
-    && lobby?.localMember?.isLeader !== false
-    && lobby?.localMember?.allowedStartActivity !== false
-    && lobby?.canStartActivity !== false;
-  const customStartHint = phase !== 'Lobby'
-    ? 'Wait until League is in a custom lobby.'
-    : !isCustomLobby
-      ? 'Create the selected custom lobby first.'
-      : lobby?.localMember?.isLeader === false || lobby?.localMember?.allowedStartActivity === false
-        ? 'Only the custom lobby leader can start.'
-        : lobby?.canStartActivity === false
-          ? 'League says this lobby is not ready yet.'
-          : 'Custom lobby ready.';
-  const isArenaSelection = shouldUseArenaBravery(true, selectedQueue);
-  const selectedArenaEvent = isArenaSelection ? arenaEventLabel(arenaEventKey(selectedQueue || prefs.selectedQueue)) : '';
+  const isArenaSelection = shouldUseArenaBravery(true, effectiveQueue || selectedQueueID);
+  const isARAMSelection = isARAMQueue(effectiveQueue || selectedQueueID);
+  const selectedArenaEvent = isArenaSelection ? arenaEventLabel(arenaEventKey(effectiveQueue || selectedQueueID)) : '';
   const champSelectLive = connected && phase === 'ChampSelect';
-  const roleQuestUnavailable = champSelectLive && (isCustomSelection || isPracticeSelection || isRolelessQueue(prefs.selectedQueue) || isArenaSelection);
+  const roleQuestUnavailable = champSelectLive && (isCustomSelection || isPracticeSelection || isRolelessQueue(selectedQueueID) || isArenaSelection || isARAMSelection);
   const roleQuestWaitingForAssignment = champSelectLive && !roleQuestUnavailable && !detectedRole;
   const selectedRoleQuest = roleQuestWaitingForAssignment || roleQuestUnavailable ? null : roleQuestPlan(detectedRole || prefs.primaryRole);
   const selectedRoleQuestSpells = roleQuestWaitingForAssignment || roleQuestUnavailable ? null : recommendedRoleQuestSpells(detectedRole || prefs.primaryRole);
@@ -1440,22 +1011,11 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     ? configuredRolePlans > 0
     : Boolean(prefs.pickChampionId || prefs.fallbackPickChampionId);
   const hasBanPlan = Boolean(prefs.banChampionId || prefs.fallbackBanChampionId);
-  const queueRuleSummary = prefs.autoRoles && prefs.autoQueue && prefs.autoAccept
-    ? 'Hands-free queue'
-    : prefs.autoRoles || prefs.autoQueue || prefs.autoAccept
-      ? 'Partly automated'
-      : 'Manual queue';
+  const queueRuleSummary = prefs.autoAccept
+    ? `Ready checks · ${prefs.autoAcceptDelaySeconds > 0 ? `${prefs.autoAcceptDelaySeconds}s delay` : 'immediate'}`
+    : 'Ready checks stay manual';
   const draftRuleSummary = [
-    prefs.autoPick && prefs.autoBan ? 'Pick + ban enabled' : prefs.autoPick ? 'Pick enabled' : prefs.autoBan ? 'Ban enabled' : prefs.instantLock ? 'Lock timing enabled' : 'Manual draft',
-    prefs.autoPickOrderToLast ? `swap to ${prefs.autoPickOrderTarget === 'latest' ? 'latest pick' : prefs.autoPickOrderTarget.replace('pick-', 'pick ')}` : '',
-  ].filter(Boolean).join(' · ');
-  const automationSummary = [
-    isCustomSelection ? 'Custom lobby' : `${roleLabel(prefs.primaryRole)} + ${roleLabel(prefs.secondaryRole)}`,
-    prefs.autoRoles ? 'auto roles' : 'manual roles',
-    prefs.autoAccept ? `auto-accept ${prefs.autoAcceptDelaySeconds > 0 ? `after ${prefs.autoAcceptDelaySeconds}s` : 'immediately'}` : 'manual ready checks',
-    prefs.autoPick || prefs.autoBan
-      ? (hasPickPlan || hasBanPlan ? (prefs.roleAwarePicks ? `role picks ${configuredRolePlans}/5 · ban configured` : 'pick/ban configured') : 'pick/ban needs setup')
-      : 'manual draft',
+    isArenaSelection ? `${prefs.arenaPickPriority.length} Arena priorities` : isARAMSelection ? `${prefs.aramChampionPriority.length} ARAM favorites` : prefs.autoPick && prefs.autoBan ? 'Pick + ban enabled' : prefs.autoPick ? 'Pick enabled' : prefs.autoBan ? 'Ban enabled' : prefs.instantLock ? 'Lock timing enabled' : 'Manual draft',
     prefs.autoPickOrderToLast ? `swap to ${prefs.autoPickOrderTarget === 'latest' ? 'latest pick' : prefs.autoPickOrderTarget.replace('pick-', 'pick ')}` : '',
   ].filter(Boolean).join(' · ');
   const activeLockout = Boolean(restrictions?.notifications.some((item) => item.lockoutRemainingMs > 0 || /lockout/i.test(item.type)));
@@ -1463,28 +1023,85 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   const rankedRestriction = Boolean(restrictions?.ranked && restrictions.ranked.punishedGamesRemaining > 0 && /ranked/i.test(selectedQueue ? queueLabel(selectedQueue) : ''));
   const matchmakingFailure = Boolean(matchmaking && (/^(error|serviceerror|serviceshutdown)$/i.test(matchmaking.state) || matchmaking.errors.length > 0));
   const queueStartBlocked = activeLockout || activePenalty || rankedRestriction;
-  useEffect(() => {
-    if (!autoMode || (!matchmakingFailure && !activePenalty && !activeLockout && !rankedRestriction)) return;
-    const reason = activeLockout
-      ? 'League reports an active queue lockout.'
-      : activePenalty
-        ? 'League reports a low-priority queue penalty.'
-        : rankedRestriction
-          ? 'League reports a ranked restriction for this queue.'
-          : `League matchmaking reported ${matchmaking?.state || 'an error'}.`;
-    setAutoMode(false);
-    showToast(`Full auto stopped: ${reason}`, 'error');
-  }, [activeLockout, activePenalty, autoMode, matchmaking?.state, matchmakingFailure, rankedRestriction, showToast]);
-  const toggleAutoMode = () => {
-    if (!autoMode && !connected) {
-      showToast('Connect League before running Full auto.', 'error');
+  const selectedNeedsRoles = selectedQueueID <= 0 || (!isRolelessQueue(selectedQueueID) && !isPracticeQueue(selectedQueueID) && !isCustomSelection);
+
+  const flushPlayFlowPreferences = async () => {
+    const saved = await saveQoLPreferences({ playFlow: prefsRef.current });
+    if (saved.playFlow) {
+      setPrefs((current) => ({ ...current, ...saved.playFlow }));
+      prefsRef.current = { ...prefsRef.current, ...saved.playFlow };
+    }
+    setPrefsSaveState('saved');
+  };
+
+  const waitForSelectedLobby = async (queueID: number) => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const current = await fetchLCULobby().catch(() => null);
+      if (current && Number(current.gameConfig?.queueId || 0) === queueID) return current;
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    }
+    throw new Error('League did not confirm the selected lobby. Queue start was not sent.');
+  };
+
+  const startManualFlow = async () => {
+    await flushPlayFlowPreferences();
+    let currentLobby = await fetchLCULobby().catch(() => null);
+    if (prefsRef.current.selectedQueue > 0 && Number(currentLobby?.gameConfig?.queueId || 0) !== prefsRef.current.selectedQueue) {
+      await createConfiguredLobby(prefsRef.current.selectedQueue, queuesRef.current);
+      currentLobby = await waitForSelectedLobby(prefsRef.current.selectedQueue);
+    }
+    if (!currentLobby) throw new Error('Create or select a League lobby before starting.');
+    const queueID = Number(currentLobby.gameConfig?.queueId || prefsRef.current.selectedQueue || 0);
+    if (queueID <= 0) throw new Error('League did not report a valid lobby queue.');
+    const custom = lobbyIsCustom(currentLobby) || queueStartMode(queueID, queuesRef.current) === 'custom';
+    const roleBased = !custom && !isPracticeQueue(queueID) && !isRolelessQueue(queueID);
+    if (roleBased) await lcuAutoRoles(prefsRef.current.primaryRole, prefsRef.current.secondaryRole);
+    if (custom) await lcuCustomStart();
+    else await lcuAutoRequeue();
+  };
+
+  const handlePrimaryAction = async () => {
+    if (autoMode) {
+      setActing('runtime-stop');
+      try {
+        const status = await stopPlayFlowRuntime();
+        setRuntimeStatus(status);
+        setAutoMode(false);
+      } catch (reason: any) {
+        showToast(reason?.message || 'Full Auto could not stop.', 'error');
+      } finally {
+        setActing('');
+      }
       return;
     }
-    if (!autoMode && queueStartBlocked) {
-      showToast(activeLockout ? 'Full auto is blocked while League reports an active queue lockout.' : activePenalty ? 'Full auto is blocked while League reports a low-priority queue penalty.' : 'Full auto is blocked while League reports a ranked restriction.', 'error');
+    if (!connected) {
+      showToast('Connect League before starting.', 'error');
       return;
     }
-    setAutoMode((value) => !value);
+    if (queueStartBlocked) {
+      showToast(activeLockout ? 'Queue start is blocked by an active League lockout.' : activePenalty ? 'Queue start is blocked by a low-priority penalty.' : 'Ranked is currently restricted for this account.', 'error');
+      return;
+    }
+    setActing('primary-start');
+    setFeedback(null);
+    try {
+      if (flowMode === 'full-auto') {
+        await flushPlayFlowPreferences();
+        const status = await startPlayFlowRuntime(cycleMode);
+        setRuntimeStatus(status);
+        setAutoMode(true);
+      } else {
+        await startManualFlow();
+        setRuntimeStatus((status) => ({ ...status, active: false, stage: 'matchmaking', message: 'Queue started manually. Draft automation is off.', updatedAt: new Date().toISOString() }));
+        onOpenLive?.();
+      }
+    } catch (reason: any) {
+      const message = reason?.message || 'League rejected the start request.';
+      setRuntimeStatus((status) => ({ ...status, active: false, stage: 'blocked', message, updatedAt: new Date().toISOString() }));
+      showToast(message, 'error');
+    } finally {
+      setActing('');
+    }
   };
 
   const reviewCustomJoin = async (game: CustomGamesDirectory['games'][number], asSpectator: boolean) => {
@@ -1539,29 +1156,6 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
 
       {matchmaking && (matchmaking.inQueue || matchmaking.state) && <div className="play-flow__matchmaking-status"><span className="play-flow__matchmaking-dot" /><strong>{matchmaking.state || 'Idle'}</strong><span>{matchmaking.inQueue ? `${Math.floor(matchmaking.elapsedSeconds)}s in queue` : 'Not searching'}</span>{matchmaking.estimatedSeconds > 0 && <span>Estimate {Math.round(matchmaking.estimatedSeconds)}s</span>}</div>}
 
-      {!remoteClient && (
-        <section className={`play-flow__automation-summary ${autoMode ? 'is-running' : ''}`} aria-labelledby="automation-summary-title">
-          <div className="play-flow__automation-summary-copy">
-            <div className="play-flow__automation-summary-heading">
-              <span className="play-flow__automation-status-dot" aria-hidden="true" />
-              <h2 id="automation-summary-title">{autoMode ? 'Full auto is running' : 'Automation is paused'}</h2>
-            </div>
-            <p>{automationSummary}</p>
-          </div>
-          <button
-            type="button"
-            onClick={toggleAutoMode}
-            disabled={!connected && !autoMode}
-            className={`${autoMode ? 'btn-danger' : 'btn-secondary'} play-flow__automation-summary-action flex items-center justify-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40`}
-            aria-pressed={autoMode}
-            title={!connected && !autoMode ? 'Connect League before running Full auto.' : undefined}
-          >
-            {autoMode ? <Square className="h-3.5 w-3.5 fill-current" /> : <Play className="h-3.5 w-3.5 fill-current" />}
-            {autoMode ? 'Stop full auto' : 'Run full auto'}
-          </button>
-        </section>
-      )}
-
       {!connected && (
         <div className="flex items-center gap-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
           <WifiOff className="h-4 w-4 shrink-0 text-amber-400" />
@@ -1603,47 +1197,62 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
               <QueuePicker
                 value={prefs.selectedQueue}
                 queues={queues}
-                onChange={(queueId) => {
-                  setPrefs((current) => ({ ...current, selectedQueue: queueId }));
-                  doneRef.current = {};
-                  actionSeenRef.current = {};
-                  draftRef.current = null;
-                }}
+                disabled={autoMode}
+                onChange={(queueId) => update('selectedQueue', queueId)}
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2.5 items-end">
+            {selectedNeedsRoles && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
               <label className="flex flex-col gap-1.5 text-xs text-text-muted">
                 <span className="font-semibold text-white">Primary lane</span>
-                <select value={prefs.primaryRole} onChange={(event) => update('primaryRole', event.target.value)} className="w-full px-3 py-2 rounded-xl bg-dark-card border border-white/10 text-white text-xs focus:outline-none" aria-label="Primary role" disabled={isCustomSelection}>
+                <select value={prefs.primaryRole} onChange={(event) => update('primaryRole', event.target.value)} className="w-full px-3 py-2 rounded-xl bg-dark-card border border-white/10 text-white text-xs focus:outline-none" aria-label="Primary role" disabled={autoMode}>
                   {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value} className="bg-dark-card">{label}</option>)}
                 </select>
               </label>
               <label className="flex flex-col gap-1.5 text-xs text-text-muted">
                 <span className="font-semibold text-white">Secondary lane</span>
-                <select value={prefs.secondaryRole} onChange={(event) => update('secondaryRole', event.target.value)} className="w-full px-3 py-2 rounded-xl bg-dark-card border border-white/10 text-white text-xs focus:outline-none" aria-label="Secondary role" disabled={isCustomSelection}>
+                <select value={prefs.secondaryRole} onChange={(event) => update('secondaryRole', event.target.value)} className="w-full px-3 py-2 rounded-xl bg-dark-card border border-white/10 text-white text-xs focus:outline-none" aria-label="Secondary role" disabled={autoMode}>
                   {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value} className="bg-dark-card">{label}</option>)}
                 </select>
               </label>
-              <button type="button" disabled={!connected || isCustomSelection || acting === 'roles'} onClick={() => void runStep('roles', () => lcuAutoRoles(prefs.primaryRole, prefs.secondaryRole), 'Position preferences saved.')} className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40">
-                <RefreshCw className={`h-3.5 w-3.5 ${acting === 'roles' ? 'animate-spin' : ''}`} /> Apply
-              </button>
-            </div>
-            {isCustomSelection && <p className="text-[11px] text-text-dim">Custom games do not use lane preferences.</p>}
+            </div>}
+            {!selectedNeedsRoles && <p className="text-[11px] text-text-dim">This mode does not use lane preferences.</p>}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          {isCustomSelection ? (
-            <button type="button" disabled={!connected || !mayStartCustom || acting === 'custom-start'} onClick={() => void (async () => { if (await runStep('custom-start', lcuCustomStart, `${selectedQueue?.name || 'Custom game'} is starting. Opening Live Session…`)) onOpenLive?.(); })()} className="btn-primary flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs disabled:opacity-40" title={customStartHint}>
-              {acting === 'custom-start' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />} Start game
+        {!remoteClient && <div className="play-flow__launch-options" aria-label="Play mode">
+          <div className="play-flow__segmented" role="group" aria-label="Queue control mode">
+            <button type="button" className={flowMode === 'manual' && !autoMode ? 'is-selected' : ''} aria-pressed={flowMode === 'manual' && !autoMode} disabled={autoMode} onClick={() => setFlowMode('manual')}>
+              <strong>Manual</strong><small>Start once; handle the draft yourself</small>
             </button>
-          ) : (
-              <button type="button" disabled={!connected || queueStartBlocked || acting === 'queue'} onClick={() => void (async () => { if (await runStep('queue', () => lcuAutoRequeue(), 'Matchmaking started. Opening Live Session…')) onOpenLive?.(); })()} className="btn-primary flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs disabled:opacity-40" title={queueStartBlocked ? 'Queue start is blocked by the current League restriction or penalty.' : undefined}>
-              <Users className="h-3.5 w-3.5" /> Start queue
+            <button type="button" className={flowMode === 'full-auto' || autoMode ? 'is-selected' : ''} aria-pressed={flowMode === 'full-auto' || autoMode} disabled={autoMode} onClick={() => setFlowMode('full-auto')}>
+              <strong>Full Auto</strong><small>Queue, ready check, pick, and ban</small>
             </button>
-          )}
-          {prefs.selectedQueue > 0 && <button type="button" disabled={!connected || acting === 'lobby'} onClick={() => {
+          </div>
+          {(flowMode === 'full-auto' || autoMode) && <div className="play-flow__segmented play-flow__segmented--cycle" role="group" aria-label="Full Auto run length">
+            <button type="button" className={cycleMode === 'single' ? 'is-selected' : ''} aria-pressed={cycleMode === 'single'} disabled={autoMode} onClick={() => setCycleMode('single')}><strong>One match</strong><small>Stop when the game launches</small></button>
+            <button type="button" className={cycleMode === 'repeat' ? 'is-selected' : ''} aria-pressed={cycleMode === 'repeat'} disabled={autoMode} onClick={() => setCycleMode('repeat')}><strong>Repeat</strong><small>Continue until you stop it</small></button>
+          </div>}
+        </div>}
+
+        <div className="play-flow__primary-row">
+          <button
+            type="button"
+            disabled={acting !== '' || (!connected && !autoMode) || (!autoMode && queueStartBlocked)}
+            onClick={() => void handlePrimaryAction()}
+            className={`${autoMode ? 'btn-danger' : 'btn-primary'} play-flow__primary-action flex items-center justify-center gap-2 px-4 py-3 text-sm disabled:opacity-40`}
+          >
+            {acting === 'primary-start' || acting === 'runtime-stop' ? <Loader2 className="h-4 w-4 animate-spin" /> : autoMode ? <Square className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 fill-current" />}
+            {autoMode ? 'Stop Full Auto' : isCustomSelection ? 'Start game' : 'Start queue'}
+          </button>
+          <div className={`play-flow__runtime-status is-${runtimeStatus.stage}`} role="status" aria-live="polite">
+            <span className="play-flow__runtime-dot" aria-hidden="true" />
+            <span><strong>{autoMode ? `${runtimeStatus.stage.replaceAll('-', ' ')} · ` : ''}</strong>{runtimeStatus.message}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-1 play-flow__context-actions">
+          {!autoMode && prefs.selectedQueue > 0 && phase !== 'Matchmaking' && phase !== 'ReadyCheck' && <button type="button" disabled={!connected || acting === 'lobby'} onClick={() => {
             const q = queues.find((queue) => queue.id === prefs.selectedQueue);
             const isCustom = isPracticeSelection || (!!q && String(q.category || '').trim().toLowerCase() === 'custom');
             const label = q?.name || `queue ${prefs.selectedQueue}`;
@@ -1652,15 +1261,15 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
           }} className="btn-secondary flex items-center gap-1.5 px-3 py-2.5 text-xs disabled:opacity-40">
             <Rocket className={`h-3.5 w-3.5 ${acting === 'lobby' ? 'animate-spin' : ''}`} /> Create lobby
           </button>}
-          {phase === 'ReadyCheck' && <button type="button" disabled={!connected || acting === 'accept'} onClick={() => void runStep('accept', () => lcuAutoAccept(), 'Ready check accepted.')} className="btn-secondary flex items-center gap-1.5 px-3 py-2.5 text-xs disabled:opacity-40">
+          {!autoMode && phase === 'ReadyCheck' && <button type="button" disabled={!connected || acting === 'accept'} onClick={() => void runStep('accept', () => lcuAutoAccept(), 'Ready check accepted.')} className="btn-secondary flex items-center gap-1.5 px-3 py-2.5 text-xs disabled:opacity-40">
             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Accept now
           </button>}
-          <button type="button" disabled={!connected || acting === 'stop'} onClick={() => void runStep('stop', () => lcuStopQueue(), 'Queue stopped.')} className="btn-danger flex items-center gap-1.5 px-3 py-2.5 text-xs disabled:opacity-40" aria-label="Stop matchmaking queue">
+          {!autoMode && phase === 'Matchmaking' && <button type="button" disabled={!connected || acting === 'stop'} onClick={() => void runStep('stop', () => lcuStopQueue(), 'Queue stopped.')} className="btn-danger flex items-center gap-1.5 px-3 py-2.5 text-xs disabled:opacity-40" aria-label="Stop matchmaking queue">
             <CircleStop className={`h-3.5 w-3.5 ${acting === 'stop' ? 'animate-pulse' : ''}`} /> Stop queue
-          </button>
+          </button>}
         </div>
 
-        <p className="text-[11px] text-text-dim">{isCustomSelection ? 'Practice and custom modes skip lane matching.' : 'Your queue, lane, and automation choices are saved automatically.'}</p>
+        <p className="text-[11px] text-text-dim">{autoMode ? 'Queue and lane settings are frozen for this run. Stopping Full Auto will not cancel League matchmaking or dodge Champion Select.' : 'Queue, lane, and automation choices save automatically.'}</p>
       </section>
 
       {isCustomSelection && customDirectory && <section className="glass-card p-4 rounded-2xl play-flow__custom-directory" aria-labelledby="custom-directory-title"><div className="flex items-start justify-between gap-3"><div><span className="text-[10px] tracking-[0.14em] text-primary font-black">CUSTOM SESSIONS</span><h2 id="custom-directory-title" className="text-sm font-bold text-white mt-1">Browse custom games</h2><p className="text-xs text-text-muted mt-1">Join only after reviewing the lobby and slot count.</p></div><button type="button" className="btn-secondary text-xs" onClick={() => void refreshLCUCustomGames().then(setCustomDirectory).catch((reason: any) => showToast(reason?.message || 'Could not refresh custom games.', 'error'))}><RefreshCw className="w-3.5" /> Refresh</button></div><div className="space-y-2 mt-3">{customDirectory.invitations.map((invitation) => <div key={invitation.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs"><span><strong className="text-white">Invitation from {invitation.senderName}</strong><small className="block text-text-muted">{invitation.restrictions.length ? invitation.restrictions.join(', ') : 'Ready to review'}</small></span><span className="flex gap-2"><button type="button" className="btn-secondary text-xs" disabled={!invitation.canAccept || acting !== ''} onClick={() => void (async () => { const preview = await previewExpandedReviewedOperation({ kind: 'lobby-invitation-accept', invitation: { invitationId: invitation.id } }); setCustomReview({ previewId: preview.id, kind: preview.kind, title: 'Accept lobby invitation', description: 'Accepting may replace your current lobby.', confirmation: preview.confirmation, targetCount: 1, targetLabels: [invitation.senderName] }); })()}>Accept</button><button type="button" className="btn-danger text-xs" disabled={acting !== ''} onClick={() => void actOnLCULobbyInvitation(invitation.id, 'decline').then(() => showToast('Invitation declined.', 'success')).catch((reason: any) => showToast(reason?.message || 'Could not decline invitation.', 'error'))}>Decline</button></span></div>)}{customDirectory.games.slice(0, 8).map((game) => <div key={game.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-black/20 p-3 text-xs"><span><strong className="text-white">{game.name || 'Custom game'}</strong><small className="block text-text-muted">{game.owner} · {game.players.filled}/{game.players.maximum} players · {game.passwordRequired ? 'Password required' : 'Open'}</small></span><span className="flex gap-2"><button type="button" className="btn-secondary text-xs" onClick={() => void reviewCustomJoin(game, true)}>Spectate</button><button type="button" className="btn-primary text-xs" onClick={() => void reviewCustomJoin(game, false)}>Join</button></span></div>)}{customDirectory.games.length === 0 && customDirectory.invitations.length === 0 && <p className="text-xs text-text-muted">No custom games or invitations are available.</p>}</div></section>}
@@ -1693,8 +1302,6 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                     <span>{autoMode ? 'Full auto is running queue and draft actions. Ready checks follow the background rule.' : 'Full auto is paused. Ready checks still follow their saved background rule.'}</span>
                   </div>
                   <div className="play-flow__switch-list">
-                    <SwitchRow label="Auto roles" description="Apply your saved lanes in the lobby." checked={prefs.autoRoles} onChange={(checked) => update('autoRoles', checked)} />
-                    <SwitchRow label={isCustomSelection ? 'Auto-start game in Full auto' : 'Auto-start queue in Full auto'} description="Only applies after you explicitly run Full auto; it never starts a queue while you are in a live game." checked={prefs.autoQueue} onChange={(checked) => update('autoQueue', checked)} />
                     <div className={`play-flow__dependent-setting ${prefs.autoAccept ? 'is-enabled' : ''}`}>
                       <SwitchRow label="Auto-accept ready checks" description={prefs.autoAccept ? 'Background automation applies the saved delay.' : 'Accept ready checks manually.'} checked={prefs.autoAccept} onChange={(checked) => update('autoAccept', checked)} />
                       <div className="play-flow__dependent-controls" aria-label="Auto-accept timing">
@@ -1716,10 +1323,10 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                 <div className="play-flow__drawer-section-body">
                   <div className="play-flow__switch-list">
                     <SwitchRow label="Auto-pick" description={hasPickPlan ? 'Choose your configured champion.' : 'Choose a champion after you set a pick plan.'} checked={prefs.autoPick} onChange={(checked) => update('autoPick', checked)} />
-                    <SwitchRow label="Auto-ban" description={hasBanPlan ? 'Ban your configured target.' : 'Ban a target after you set a ban plan.'} checked={prefs.autoBan} onChange={(checked) => update('autoBan', checked)} />
-                    <SwitchRow label="Role-aware picks" description={prefs.roleAwarePicks ? `${configuredRolePlans}/5 lane plans configured. Fill waits for League to assign a lane.` : 'Use a lane-specific pick and fallback instead of one global pick plan.'} checked={prefs.roleAwarePicks} onChange={(checked) => update('roleAwarePicks', checked)} />
-                    <SwitchRow label="Auto-swap pick order" description="During Full auto, request a teammate's pick turn. They must accept." checked={prefs.autoPickOrderToLast} onChange={(checked) => update('autoPickOrderToLast', checked)} />
-                    {prefs.autoPickOrderToLast && (
+                    {!isArenaSelection && !isARAMSelection && <SwitchRow label="Auto-ban" description={hasBanPlan ? 'Ban your configured target.' : 'Ban a target after you set a ban plan.'} checked={prefs.autoBan} onChange={(checked) => update('autoBan', checked)} />}
+                    {!isArenaSelection && !isARAMSelection && selectedNeedsRoles && <SwitchRow label="Role-aware picks" description={prefs.roleAwarePicks ? `${configuredRolePlans}/5 lane plans configured. Fill waits for League to assign a lane.` : 'Use a lane-specific pick and fallback instead of one global pick plan.'} checked={prefs.roleAwarePicks} onChange={(checked) => update('roleAwarePicks', checked)} />}
+                    {!isArenaSelection && !isARAMSelection && <SwitchRow label="Auto-swap pick order" description="During Full Auto, request a teammate's pick turn. They must accept." checked={prefs.autoPickOrderToLast} onChange={(checked) => update('autoPickOrderToLast', checked)} />}
+                    {!isArenaSelection && !isARAMSelection && prefs.autoPickOrderToLast && (
                       <label className="play-flow__pick-order-target">
                         <span><strong>Target pick</strong><small>Choose the teammate turn RiftOps should request.</small></span>
                         <select value={prefs.autoPickOrderTarget} onChange={(event) => update('autoPickOrderTarget', event.target.value as PickOrderSwapTarget)} aria-label="Pick-order swap target">
@@ -1732,11 +1339,14 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                         </select>
                       </label>
                     )}
-                    <SwitchRow label="Instant lock" description="Lock the selected champion without the hover delay." checked={prefs.instantLock} onChange={(checked) => update('instantLock', checked)} />
-                    <SwitchRow label="Role Quest loadout" description={!selectedRoleQuestSpells ? 'No recommended loadout is available for this lane.' : champSelectLive && detectedRole !== 'TOP' ? 'Waiting for League to assign the Top lane.' : 'Apply the recommended spells for your assigned role.'} checked={prefs.autoRoleQuestLoadout} onChange={(checked) => update('autoRoleQuestLoadout', checked)} disabled={!selectedRoleQuestSpells || (champSelectLive && detectedRole !== 'TOP')} />
-                    <SwitchRow label="Arena behavior" description={isArenaSelection ? selectedArenaEvent : 'Available when an Arena queue is selected.'} checked={prefs.arenaBraveryPick} onChange={(checked) => update('arenaBraveryPick', checked)} disabled={!isArenaSelection} />
+                    {!isArenaSelection && !isARAMSelection && <SwitchRow label="Instant lock" description="Lock the selected champion without the hover delay." checked={prefs.instantLock} onChange={(checked) => update('instantLock', checked)} />}
+                    {!isArenaSelection && !isARAMSelection && <SwitchRow label="Role Quest loadout" description={!selectedRoleQuestSpells ? 'No recommended loadout is available for this lane.' : champSelectLive && detectedRole !== 'TOP' ? 'Waiting for League to assign the Top lane.' : 'Apply the recommended spells for your assigned role.'} checked={prefs.autoRoleQuestLoadout} onChange={(checked) => update('autoRoleQuestLoadout', checked)} disabled={!selectedRoleQuestSpells || (champSelectLive && detectedRole !== 'TOP')} />}
                   </div>
-                <details className="play-flow__drawer-subsection">
+                  {isArenaSelection && <ArenaPriorityEditor items={prefs.arenaPickPriority} champions={champions} version={version} onChange={(items) => update('arenaPickPriority', items)} />}
+                  {isARAMSelection && <ARAMPriorityEditor championIDs={prefs.aramChampionPriority} champions={champions} version={version} onChange={(ids) => update('aramChampionPriority', ids)} />}
+                  {isArenaSelection && <p className="play-flow__mode-note"><Sparkles className="h-4 w-4" />{selectedArenaEvent}. Arena priorities execute immediately after League validates the live choice pool.</p>}
+                  {isARAMSelection && <p className="play-flow__mode-note"><ShieldCheck className="h-4 w-4" />Traditional ARAM keeps League's assigned champion. RiftOps only improves from cards or the bench and never spends rerolls.</p>}
+                {!isArenaSelection && !isARAMSelection && <details className="play-flow__drawer-subsection">
                   <summary>
                     <GitBranch className="w-4 h-4" />
                     <span><strong>Pick &amp; ban plan</strong><small>Primary and fallback champions, timing, runes, build plan, and retry status.</small></span>
@@ -1854,40 +1464,12 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
             </div>
           </div>
 
-          {/* Footer status */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-white/5 text-xs">
-            <div className="flex items-center gap-2 text-text-muted">
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Unavailable champions are automatically skipped to your fallback choice.</span>
-            </div>
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs ${
-              draftTone === 'confirmed' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' :
-              draftTone === 'working' ? 'bg-primary/10 text-primary border-primary/30' :
-              draftTone === 'blocked' ? 'bg-rose-500/10 text-rose-300 border-rose-500/30' :
-              'bg-slate-500/10 text-text-muted border-white/10'
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${
-                draftTone === 'confirmed' ? 'bg-emerald-400 animate-ping' :
-                draftTone === 'working' ? 'bg-primary animate-pulse' :
-                draftTone === 'blocked' ? 'bg-rose-400' :
-                'bg-slate-500'
-              }`} />
-              <span>{draftStatus}</span>
-            </div>
+          <div className="play-flow__mode-note" role="status" aria-live="polite">
+            <ShieldCheck className="h-4 w-4" />
+            <span>{runtimeStatus.message}</span>
           </div>
-          {retryHistory.length > 0 && (
-            <section className="mt-3 p-3 rounded-xl bg-rose-500/[0.05] border border-rose-500/20" aria-label="Champion Select retry history">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <strong className="text-[10px] uppercase tracking-wider text-rose-300">Recent LCU retries</strong>
-                <button type="button" className="text-[10px] text-text-dim hover:text-white" onClick={() => setRetryHistory([])}>Clear</button>
-              </div>
-              <div className="space-y-1.5">
-                {retryHistory.map((entry) => <div key={entry.id} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-rose-200">{entry.action}: {entry.message}</span><time className="text-text-dim shrink-0">{new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>)}
-              </div>
-            </section>
-          )}
           </div>
-        </details>
+        </details>}
                 </div>
               </details>
 
@@ -2008,12 +1590,4 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
       )}
     </div>
   );
-}
-
-function draftActionLabel(key: string): string {
-  if (key.includes('draft-hover')) return 'Champion hover';
-  if (key.includes('draft-lock')) return 'Champion lock';
-  if (key.includes('draft-ban')) return 'Champion ban';
-  if (key.includes('draft-rune')) return 'Rune page';
-  return 'Champion Select action';
 }
