@@ -617,6 +617,36 @@ func TestChampSelectCatalogueAndRuneRoutes(t *testing.T) {
 	}
 }
 
+func TestChampSelectBannableFallsBackToTeamBuilderRoute(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/lol-champ-select/v1/bannable-champion-ids":
+			http.NotFound(w, r)
+		case "/lol-lobby-team-builder/champ-select/v1/bannable-champion-ids":
+			_, _ = w.Write([]byte(`[555,101]`))
+		default:
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	body, err := testLockfile(server.URL).FetchChampSelectBannable(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `[555,101]` {
+		t.Fatalf("bannable response = %s, want team-builder response", body)
+	}
+	if len(calls) != 2 || calls[1] != "GET /lol-lobby-team-builder/champ-select/v1/bannable-champion-ids" {
+		t.Fatalf("route calls = %#v, want legacy route followed by team-builder fallback", calls)
+	}
+}
+
 func TestPlayFlowReadRoutesUseFocusedLCUEndpoints(t *testing.T) {
 	seen := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

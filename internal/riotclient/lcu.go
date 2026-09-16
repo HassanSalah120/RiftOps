@@ -1919,9 +1919,26 @@ func (lf *Lockfile) FetchChampSelectPickable(ctx context.Context) ([]byte, error
 }
 
 // FetchChampSelectBannable returns the champion ids that may be banned in the
-// active champion-select session.
+// active champion-select session. Ranked/team-builder sessions have exposed
+// this catalogue under both the champ-select and team-builder plugins across
+// client patches, so a missing legacy route is safe to resolve by route-only
+// fallback.
 func (lf *Lockfile) FetchChampSelectBannable(ctx context.Context) ([]byte, error) {
-	return lf.DoRequest(ctx, "GET", "/lol-champ-select/v1/bannable-champion-ids")
+	var lastErr error
+	for _, route := range []string{
+		"/lol-champ-select/v1/bannable-champion-ids",
+		"/lol-lobby-team-builder/champ-select/v1/bannable-champion-ids",
+	} {
+		body, err := lf.DoRequest(ctx, "GET", route)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		if !isRetryableLCURouteError(err) {
+			break
+		}
+	}
+	return nil, lastErr
 }
 
 // FetchChampSelectSubset returns the live card/subset pool used by Arena and
