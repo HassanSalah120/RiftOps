@@ -2325,8 +2325,8 @@ func lcuAppearOfflineHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lf := riotclient.GetLCULockfile()
-	if lf == nil {
-		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+	if lf == nil || lf.Source != "league" {
+		httpError(w, "League chat is not connected", http.StatusServiceUnavailable)
 		return
 	}
 	var body struct {
@@ -2350,8 +2350,8 @@ func lcuAvailabilityHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lf := riotclient.GetLCULockfile()
-	if lf == nil {
-		httpError(w, "LCU not connected", http.StatusServiceUnavailable)
+	if lf == nil || lf.Source != "league" {
+		httpError(w, "League chat is not connected", http.StatusServiceUnavailable)
 		return
 	}
 	var body struct {

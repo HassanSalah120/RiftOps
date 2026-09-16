@@ -62,15 +62,24 @@ jobs:
       - name: Build and verify Windows executable and installer
         shell: pwsh
         env:
-          RIFTOPS_DUCKDNS_TOKEN: ${{ secrets.RIFTOPS_DUCKDNS_TOKEN }}
+          RIFTOPS_PROXY_PFX_B64: ${{ secrets.RIFTOPS_PROXY_PFX_B64 }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:RIFTOPS_DUCKDNS_TOKEN)) {
-            throw "RIFTOPS_DUCKDNS_TOKEN repository secret is required for a trusted Windows release."
+          if ([string]::IsNullOrWhiteSpace($env:RIFTOPS_PROXY_PFX_B64)) {
+            throw "RIFTOPS_PROXY_PFX_B64 repository secret is required for a trusted Windows release. Run scripts/bootstrap-proxy-certificate.ps1 before releasing."
           }
-          $hostname = "riftops-hassan.duckdns.org"
+          $hostname = "riftops-local-hassan.duckdns.org"
           $certificate = Join-Path $env:RUNNER_TEMP "riftops-chat.pfx"
           try {
-            go run ./cmd/riftops -provision-proxy-certificate $certificate -proxy-hostname $hostname
+            try {
+              [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:RIFTOPS_PROXY_PFX_B64.Trim()))
+            }
+            catch {
+              throw "RIFTOPS_PROXY_PFX_B64 is not a valid base64-encoded certificate bundle."
+            }
+            go run ./cmd/riftops -validate-proxy-certificate $certificate -proxy-hostname $hostname
+            if ($LASTEXITCODE -ne 0) {
+              throw "The stored proxy certificate is invalid, untrusted, expired, or does not match $hostname."
+            }
             $loopbackReady = $false
             for ($attempt = 0; $attempt -lt 36; $attempt++) {
               $addresses = @(Resolve-DnsName -Name $hostname -Type A -Server 1.1.1.1 -DnsOnly -ErrorAction SilentlyContinue | ForEach-Object IPAddress)
@@ -91,6 +100,7 @@ jobs:
               -RequireBundledProxyCertificate
           }
           finally {
+            Remove-Item Env:RIFTOPS_PROXY_PFX_B64 -ErrorAction SilentlyContinue
             Remove-Item -Force -LiteralPath $certificate -ErrorAction SilentlyContinue
           }
 

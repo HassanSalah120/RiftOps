@@ -810,7 +810,7 @@ export default function SettingsPage({
                       <input
                         value={proxyHostname}
                         onChange={(event) => setProxyHostname(event.target.value)}
-                        placeholder="riftops-hassan.duckdns.org"
+                        placeholder="riftops-local-hassan.duckdns.org"
                         autoComplete="off"
                         spellCheck={false}
                         disabled={proxyBusy}

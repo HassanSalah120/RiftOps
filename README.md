@@ -288,21 +288,21 @@ cd ../../..
 ./scripts/build-windows.ps1 -Build 1
 ```
 
-Maintainers can produce a Deceive-style install-only Windows release by
-provisioning a certificate locally, then passing the PFX path and fixed
-hostname to the build. The DuckDNS token is used only for certificate
-provisioning and is never embedded:
+Maintainers bootstrap the shared Deceive-style loopback certificate separately
+from normal releases. The command prompts for the DuckDNS token without echoing
+it, validates the issued certificate, stores the PFX in the encrypted
+`RIFTOPS_PROXY_PFX_B64` GitHub Actions secret, and deletes the temporary file:
 
 ```powershell
-./scripts/build-windows.ps1 -Build 1 `
-  -ProxyCertificatePath "$env:LOCALAPPDATA\RiftOps\chatCert.pfx" `
-  -ProxyHostname "riftops-hassan.duckdns.org" `
-  -RequireBundledProxyCertificate
+./scripts/bootstrap-proxy-certificate.ps1
 ```
 
-The hostname must resolve to `127.0.0.1` for the bundled proxy to activate.
-End users then only install and launch RiftOps; they do not enter a DuckDNS
-token. Renew the certificate and rebuild before it expires.
+The Windows release workflow reuses that certificate and fails closed if the
+secret is absent, untrusted, mismatched, or expiring. The hostname must resolve
+to `127.0.0.1` for the bundled proxy to activate. End users only install and
+launch RiftOps; they never enter a DuckDNS token or install a certificate.
+Run the bootstrap command again and publish an update before the certificate
+expires.
 
 **macOS:**
 ```sh

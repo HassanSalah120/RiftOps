@@ -48,7 +48,7 @@ const chatHandshakeTimeout = 30 * time.Second
 // nativeAvailabilityTimeout bounds the best-effort LCU presence update used
 // when the secure chat proxy is unavailable. Native Riot chat can be kept
 // intact while the configured availability is still applied through LCU.
-const nativeAvailabilityTimeout = 20 * time.Second
+const nativeAvailabilityTimeout = 45 * time.Second
 
 type Snapshot struct {
 	Phase     Phase
@@ -846,8 +846,11 @@ func (e *Engine) runWithDirectChat(ctx context.Context, cancel context.CancelFun
 }
 
 func setNativeAvailability(ctx context.Context, status model.Status) error {
-	lockfile := riotclient.GetLCULockfile()
-	if lockfile == nil {
+	return setNativeAvailabilityWithLockfile(ctx, riotclient.GetLCULockfile(), status)
+}
+
+func setNativeAvailabilityWithLockfile(ctx context.Context, lockfile *riotclient.Lockfile, status model.Status) error {
+	if lockfile == nil || lockfile.Source != "league" {
 		return errors.New("League LCU is not available")
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)

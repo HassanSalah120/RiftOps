@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/HassanSalah120/RiftOps/internal/model"
+	"github.com/HassanSalah120/RiftOps/internal/riotclient"
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
 
@@ -92,6 +93,13 @@ func TestEnsureLoopbackEndpointAcceptsConfiguredDomain(t *testing.T) {
 func TestEnsureLoopbackEndpointRejectsNonLoopbackIP(t *testing.T) {
 	if err := ensureLoopbackEndpoint(context.Background(), "192.0.2.1"); err == nil {
 		t.Fatal("non-loopback endpoint was accepted")
+	}
+}
+
+func TestNativeAvailabilityRejectsRiotClientLockfile(t *testing.T) {
+	lockfile := &riotclient.Lockfile{Source: "riot-client"}
+	if err := setNativeAvailabilityWithLockfile(context.Background(), lockfile, model.StatusOffline); err == nil {
+		t.Fatal("Riot Client lockfile was accepted for a League chat endpoint")
 	}
 }
 
