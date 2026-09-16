@@ -2014,10 +2014,9 @@ func (lf *Lockfile) UpdateChampSelectSwap(ctx context.Context, kind, action stri
 }
 
 // UpdateChampSelectAction selects or locks a champion-select action. Current
-// League clients use PATCH for hover/selection and POST /complete for the
-// authoritative lock. Older clients accepted completed=true on PATCH, so a
-// route-only fallback keeps those patches working without retrying an
-// ambiguous mutation response.
+// League clients finalize through PATCH with completed=true. Some older
+// clients expose POST /complete instead, so a route-only fallback preserves
+// compatibility without retrying a mutation that reached a supported route.
 // Arena's Bravery choice is the one supported non-positive sentinel.
 func (lf *Lockfile) UpdateChampSelectAction(ctx context.Context, actionID, championID int, completed bool) error {
 	// Action IDs start at 0 — the very first pick of a draft is a valid,
@@ -2028,20 +2027,15 @@ func (lf *Lockfile) UpdateChampSelectAction(ctx context.Context, actionID, champ
 	if championID <= 0 && championID != ArenaBraveryChampionID {
 		return fmt.Errorf("champion ID must be positive or Arena Bravery (-3)")
 	}
-	if completed {
-		_, err := lf.DoRequest(ctx, "POST", fmt.Sprintf("/lol-champ-select/v1/session/actions/%d/complete", actionID))
-		if err == nil {
-			return nil
-		}
-		if !isRetryableLCURouteError(err) {
-			return err
-		}
-	}
 	payload := map[string]any{"championId": championID}
 	if completed {
 		payload["completed"] = true
 	}
 	_, err := lf.doJSON(ctx, "PATCH", fmt.Sprintf("/lol-champ-select/v1/session/actions/%d", actionID), payload)
+	if err == nil || !completed || !isRetryableLCURouteError(err) {
+		return err
+	}
+	_, err = lf.DoRequest(ctx, "POST", fmt.Sprintf("/lol-champ-select/v1/session/actions/%d/complete", actionID))
 	return err
 }
 

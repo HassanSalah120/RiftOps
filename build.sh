@@ -4,7 +4,16 @@ set -euo pipefail
 export PATH="$PATH:$HOME/go/bin"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="${1:-$(tr -d '\r\n' < "$ROOT/VERSION" 2>/dev/null || echo 2.7.7)}"
+CANONICAL_VERSION="$(tr -d '\r\n' < "$ROOT/VERSION" 2>/dev/null || true)"
+VERSION="${1:-$CANONICAL_VERSION}"
+if [[ -z "$CANONICAL_VERSION" ]]; then
+  echo "VERSION is empty. Edit the canonical VERSION file before building." >&2
+  exit 1
+fi
+if [[ "$VERSION" != "$CANONICAL_VERSION" ]]; then
+  echo "Build version '$VERSION' does not match canonical VERSION '$CANONICAL_VERSION'. Edit VERSION instead of passing a second release version." >&2
+  exit 1
+fi
 OUTDIR="${OUTDIR:-$ROOT/dist}"
 export OUTDIR
 BINARY="${OUTDIR}/RiftOps.exe"

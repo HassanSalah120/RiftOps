@@ -2,12 +2,17 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-version="${1:-$(tr -d '\r\n' < "$root/VERSION")}"
+canonical_version="$(tr -d '\r\n' < "$root/VERSION")"
+version="${1:-$canonical_version}"
 build="${2:-1}"
 cd "$root"
 
-if [[ -z "$version" ]]; then
-  echo "VERSION is empty. Pass a version explicitly." >&2
+if [[ -z "$canonical_version" ]]; then
+  echo "VERSION is empty. Edit the canonical VERSION file before building." >&2
+  exit 1
+fi
+if [[ "$version" != "$canonical_version" ]]; then
+  echo "Build version '$version' does not match canonical VERSION '$canonical_version'. Edit VERSION instead of passing a second release version." >&2
   exit 1
 fi
 

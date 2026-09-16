@@ -139,11 +139,12 @@ function isPracticeQueue(queueId: number): boolean {
 }
 
 function isARAMQueue(queue: LCUAvailableQueue | number | null | undefined): boolean {
-  if (typeof queue === 'number') return queue === 450 || queue === 2400;
+  const aramQueueIds = new Set([450, 2400, 3200, 3210, 3220, 3230, 3270]);
+  if (typeof queue === 'number') return aramQueueIds.has(queue);
   if (!queue) return false;
   const mode = String(queue.gameMode || '').trim().toUpperCase();
   const name = String(queue.name || '').trim().toUpperCase();
-  return Number(queue.id) === 450 || Number(queue.id) === 2400 || Number(queue.mapId) === 12 || mode === 'ARAM' || mode === 'KIWI' || /\bARAM\b/.test(name);
+  return aramQueueIds.has(Number(queue.id)) || Number(queue.mapId) === 12 || mode === 'ARAM' || mode === 'KIWI' || /\bARAM\b/.test(name);
 }
 
 function findQueue(queueId: number, queues: LCUAvailableQueue[]): LCUAvailableQueue | undefined {

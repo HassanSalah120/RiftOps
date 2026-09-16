@@ -11,8 +11,14 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $Root = Split-Path -Parent $PSScriptRoot
+$CanonicalVersion = (Get-Content -Raw -LiteralPath (Join-Path $Root "VERSION")).Trim()
+if ([string]::IsNullOrWhiteSpace($CanonicalVersion)) {
+    throw "VERSION is empty. Edit the canonical VERSION file before building."
+}
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = (Get-Content -Raw -LiteralPath (Join-Path $Root "VERSION")).Trim()
+    $Version = $CanonicalVersion
+} elseif ($Version.Trim() -ne $CanonicalVersion) {
+    throw "Build version '$Version' does not match canonical VERSION '$CanonicalVersion'. Edit VERSION instead of passing a second release version."
 }
 if ([string]::IsNullOrWhiteSpace($Version)) {
     throw "VERSION is empty. Pass -Version explicitly."

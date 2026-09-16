@@ -2,6 +2,7 @@ package riotclient
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -81,7 +82,24 @@ func (lf *Lockfile) FetchCustomBots(ctx context.Context) ([]byte, error) {
 	return lf.DoRequest(ctx, http.MethodGet, "/lol-lobby/v2/lobby/custom/available-bots")
 }
 
+func newCustomBotUUID() (string, error) {
+	var bytes [16]byte
+	if _, err := cryptorand.Read(bytes[:]); err != nil {
+		return "", fmt.Errorf("generate custom bot id: %w", err)
+	}
+	// RFC 4122 version 4 UUID. League only requires a unique botUuid, but a
+	// real UUID keeps the request compatible with current and legacy patches.
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16]), nil
+}
+
 func (lf *Lockfile) AddCustomBot(ctx context.Context, championID int, difficulty, teamID string) error {
+	return lf.AddCustomBotAtPosition(ctx, championID, difficulty, teamID, "NONE")
+}
+
+func (lf *Lockfile) AddCustomBotAtPosition(ctx context.Context, championID int, difficulty, teamID, position string) error {
 	if championID <= 0 {
 		return fmt.Errorf("champion id must be positive")
 	}
@@ -93,8 +111,18 @@ func (lf *Lockfile) AddCustomBot(ctx context.Context, championID int, difficulty
 	if teamID != "100" && teamID != "200" {
 		return fmt.Errorf("team id must be 100 or 200")
 	}
-	_, err := lf.doJSON(ctx, http.MethodPost, "/lol-lobby/v1/lobby/custom/bots", map[string]any{
+	position = strings.ToUpper(strings.TrimSpace(position))
+	allowedPositions := map[string]bool{"NONE": true, "TOP": true, "JUNGLE": true, "MIDDLE": true, "BOTTOM": true, "UTILITY": true}
+	if !allowedPositions[position] {
+		return fmt.Errorf("unsupported bot position")
+	}
+	botUUID, err := newCustomBotUUID()
+	if err != nil {
+		return err
+	}
+	_, err = lf.doJSON(ctx, http.MethodPost, "/lol-lobby/v1/lobby/custom/bots", map[string]any{
 		"botDifficulty": difficulty, "championId": championID, "teamId": teamID,
+		"position": position, "botUuid": botUUID,
 	})
 	return err
 }

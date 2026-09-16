@@ -215,8 +215,8 @@ export default function SettingsPage({
       } else if (res.error) {
         showToast('Update check failed', res.error, 'error');
       } else {
-        const ver = res.currentVersion || snapshot.Version || '2.10.6';
-        showToast('Up to date', `You are using the latest version of RiftOps (v${ver}).`, 'success');
+        const ver = res.currentVersion || snapshot.Version;
+        showToast('Up to date', ver ? `You are using the latest version of RiftOps (v${ver}).` : 'You are using the latest development build of RiftOps.', 'success');
       }
     } catch (err: any) {
       showToast('Update check failed', err?.message || 'Could not reach update service', 'error');
@@ -753,7 +753,7 @@ export default function SettingsPage({
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] font-bold tracking-wider text-text-dim uppercase">VERSION</span>
                     <div className="flex items-center gap-2">
-                      <strong className="text-xs font-mono font-medium text-white">{snapshot.Version ? `v${snapshot.Version}` : '2.10.6'}</strong>
+                      <strong className="text-xs font-mono font-medium text-white">{snapshot.Version ? `v${snapshot.Version}` : 'Development build'}</strong>
                       <button
                         type="button"
                         disabled={checkingUpdates}

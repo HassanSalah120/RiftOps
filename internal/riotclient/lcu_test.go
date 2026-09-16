@@ -489,18 +489,22 @@ func TestQuitCustomSessionUsesEarlyExitForPracticeGame(t *testing.T) {
 
 func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
 	var lockCalls int
+	var lockPayloads []map[string]any
 	var hoverPayload map[string]any
 	var selectionPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/lol-champ-select/v1/session/actions/42/complete":
+		case r.Method == http.MethodPatch && (r.URL.Path == "/lol-champ-select/v1/session/actions/42" || r.URL.Path == "/lol-champ-select/v1/session/actions/2"):
 			lockCalls++
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode lock: %v", err)
+			}
+			lockPayloads = append(lockPayloads, payload)
 		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/actions/0":
 			if err := json.NewDecoder(r.Body).Decode(&hoverPayload); err != nil {
 				t.Fatalf("decode hover: %v", err)
 			}
-		case r.Method == http.MethodPost && r.URL.Path == "/lol-champ-select/v1/session/actions/2/complete":
-			lockCalls++
 		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/my-selection":
 			if err := json.NewDecoder(r.Body).Decode(&selectionPayload); err != nil {
 				t.Fatalf("decode selection: %v", err)
@@ -535,6 +539,11 @@ func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
 	if lockCalls != 2 {
 		t.Fatalf("complete calls = %d, want 2", lockCalls)
 	}
+	for _, payload := range lockPayloads {
+		if payload["completed"] != true {
+			t.Fatalf("lock payload must complete the action: %#v", payload)
+		}
+	}
 	if err := lf.UpdateChampSelectSelection(context.Background(), 4, 14, 12345); err != nil {
 		t.Fatal(err)
 	}
@@ -543,20 +552,16 @@ func TestChampSelectActionAndLoadoutUseLCURoutes(t *testing.T) {
 	}
 }
 
-func TestChampSelectActionFallsBackToLegacyPatchLockRoute(t *testing.T) {
-	var fallbackPayload map[string]any
+func TestChampSelectActionFallsBackToCompleteRoute(t *testing.T) {
 	var completeCalls, patchCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/lol-champ-select/v1/session/actions/7/complete":
-			completeCalls++
-			http.NotFound(w, r)
-			return
 		case r.Method == http.MethodPatch && r.URL.Path == "/lol-champ-select/v1/session/actions/7":
 			patchCalls++
-			if err := json.NewDecoder(r.Body).Decode(&fallbackPayload); err != nil {
-				t.Fatalf("decode fallback action: %v", err)
-			}
+			http.NotFound(w, r)
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/lol-champ-select/v1/session/actions/7/complete":
+			completeCalls++
 		default:
 			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
 		}
@@ -572,9 +577,6 @@ func TestChampSelectActionFallsBackToLegacyPatchLockRoute(t *testing.T) {
 	}
 	if completeCalls != 1 || patchCalls != 1 {
 		t.Fatalf("fallback calls = complete:%d patch:%d, want one each", completeCalls, patchCalls)
-	}
-	if fallbackPayload["championId"] != float64(103) || fallbackPayload["completed"] != true {
-		t.Fatalf("fallback payload = %#v", fallbackPayload)
 	}
 }
 

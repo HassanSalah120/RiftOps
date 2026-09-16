@@ -2,7 +2,7 @@
 .SYNOPSIS
     RiftOps Unified Version Manager CLI wrapper.
 .DESCRIPTION
-    Wraps scripts/version-manager.go to inspect, synchronize, bump, and release versions across all repository files.
+    Wraps scripts/version-manager.go to inspect and bump the single canonical VERSION file.
 .EXAMPLE
     .\scripts\version.ps1 status
     .\scripts\version.ps1 sync

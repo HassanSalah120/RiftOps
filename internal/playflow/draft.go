@@ -13,7 +13,10 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/qol"
 )
 
-const arenaBraveryChampionID = -3
+const (
+	arenaBraveryChampionID         = -3
+	pendingLockConfirmationTimeout = 5 * time.Second
+)
 
 type champAction struct {
 	ID           *int   `json:"id"`
@@ -61,6 +64,8 @@ type champSession struct {
 
 type draftAttempt struct {
 	key             string
+	actionID        int
+	actionType      string
 	championID      int
 	firstSeen       time.Time
 	ownHoverID      int
@@ -69,6 +74,7 @@ type draftAttempt struct {
 	runeAttempted   bool
 	runeWarning     bool
 	lockSubmitted   bool
+	lockSubmittedAt time.Time
 }
 
 type draftRuntime struct {
@@ -112,10 +118,13 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 		runtime.sessionKey = key
 	}
 	kind := classifyChampSession(session, fallbackKind, fallbackQueueID)
+	if runtime.attempt.lockSubmitted {
+		return runtime.observeSubmittedLock(session, now), 0, nil
+	}
 	if prefs.AutoPickOrderToLast {
 		runtime.maybeRequestPickOrderSwap(ctx, client, session, prefs.AutoPickOrderTarget)
 	}
-	if kind == QueueARAM {
+	if kind == QueueARAM && prefs.AutoPick {
 		if message := runtime.maybeSwapARAMBench(ctx, client, session, prefs.ARAMChampionPriority); message != "" {
 			return message, 0, nil
 		}
@@ -124,7 +133,7 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	action := currentLocalAction(session)
 	if action == nil || action.ID == nil {
 		if kind == QueueARAM {
-			return "ARAM assigned a champion. RiftOps will not spend rerolls and will only use a higher-priority bench option.", 0, nil
+			return "League assigned your ARAM champion. RiftOps will not spend rerolls; preferred bench swaps remain available.", 0, nil
 		}
 		return "Waiting for your Champion Select action…", 0, nil
 	}
@@ -132,12 +141,44 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	if actionType != "pick" && actionType != "ban" {
 		return "Waiting for a supported pick or ban action…", 0, nil
 	}
+	// ARAM has no automatic ban phase. Custom ARAM queues can still expose a
+	// placeholder ban action, so leave it untouched instead of applying the
+	// global ban plan or making the runtime appear stuck.
+	if kind == QueueARAM && actionType == "ban" {
+		return "ARAM does not use automatic bans. RiftOps left League's placeholder action untouched.", 0, nil
+	}
+	// Custom Draft exposes the first ban as in-progress during PLANNING, but
+	// Riot's team-builder service rejects updates until BAN_PICK while the
+	// local LCU still reports HTTP 204. Do not create an attempt or submit a
+	// ban until League's authoritative timer reaches the actionable phase.
+	timerPhase := strings.ToUpper(strings.TrimSpace(session.Timer.Phase))
+	if actionType == "ban" && timerPhase != "BAN_PICK" {
+		return "Waiting for League's ban/pick phase before selecting a ban…", 0, nil
+	}
 	actionKey := fmt.Sprintf("%s:%d:%s", key, *action.ID, actionType)
 	role := localAssignedRole(session)
-	contextKey := actionKey + ":" + string(kind) + ":" + role
-	if runtime.attempt.key != contextKey {
-		runtime.attempt = draftAttempt{key: contextKey, firstSeen: now}
+	if kind == QueueCustom && role == "" {
+		// Custom lobbies do not assign matchmaking lanes. The role selected in
+		// Play & Queue is therefore the user's explicit draft context, unless it
+		// is Fill (which must never guess a lane/profile).
+		switch prefs.PrimaryRole {
+		case "TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY":
+			role = prefs.PrimaryRole
+		}
 	}
+	contextRole := role
+	if actionType == "ban" {
+		// Bans are global. League may publish the assigned lane after RiftOps
+		// has already hovered a ban, so lane changes must not erase ownership
+		// of that hover and misclassify it as a manual choice.
+		contextRole = ""
+	}
+	contextKey := actionKey + ":" + string(kind) + ":" + contextRole
+	if runtime.attempt.key != contextKey {
+		runtime.attempt = draftAttempt{key: contextKey, actionID: *action.ID, actionType: actionType, firstSeen: now}
+	}
+	runtime.attempt.actionID = *action.ID
+	runtime.attempt.actionType = actionType
 	if runtime.manualActions[actionKey] {
 		return "Manual champion choice detected. RiftOps is paused for this turn.", 0, nil
 	}
@@ -159,7 +200,16 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	}
 
 	available, availableErr := fetchDraftAvailability(ctx, client, kind, actionType)
-	if availableErr != nil && (kind == QueueArena || kind == QueueARAM) {
+	if availableErr != nil {
+		if kind == QueueARAM {
+			return "League has not published ARAM cards for this action. RiftOps is waiting instead of guessing.", 0, nil
+		}
+		return "League's live champion choices are unavailable. RiftOps is waiting instead of guessing.", 0, nil
+	}
+	if len(available) == 0 && kind == QueueARAM {
+		return "League has not published ARAM cards for this action. RiftOps is waiting instead of guessing.", 0, nil
+	}
+	if len(available) == 0 && kind != QueueArena {
 		return "League's live champion choices are unavailable. RiftOps is waiting instead of guessing.", 0, nil
 	}
 	occupied := occupiedChampionIDs(session, *action.ID)
@@ -177,7 +227,7 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	}
 
 	if kind == QueueArena || kind == QueueARAM {
-		return runtime.executeSpecialPick(ctx, client, session, action, actionKey, candidate, kind)
+		return runtime.executeSpecialPick(ctx, client, session, action, actionKey, candidate, kind, now)
 	}
 
 	if !runtime.attempt.hoverConfirmed {
@@ -195,6 +245,9 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 		if err != nil {
 			runtime.attempt.runeWarning = true
 		}
+	}
+	if timerPhase != "BAN_PICK" {
+		return fmt.Sprintf("%s %d is hovered. Waiting for League's ban/pick phase before locking.", titleAction(actionType), candidate), 0, nil
 	}
 
 	mode, seconds := prefs.PickTimingMode, prefs.PickTimingSeconds
@@ -218,10 +271,7 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	if action.IsInProgress == nil || !*action.IsInProgress {
 		return "Waiting for League to mark this action in progress before locking…", 0, nil
 	}
-	if runtime.attempt.lockSubmitted {
-		return "Waiting for League to confirm the lock…", 0, nil
-	}
-	message, err := runtime.lockAfterRefetch(ctx, client, session, actionKey, *action.ID, actionType, candidate)
+	message, err := runtime.lockAfterRefetch(ctx, client, session, actionKey, *action.ID, actionType, candidate, now)
 	if err != nil {
 		return "", 0, err
 	}
@@ -229,6 +279,26 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 		message += " League kept the current rune page."
 	}
 	return message, 0, nil
+}
+
+func (runtime *draftRuntime) observeSubmittedLock(session champSession, now time.Time) string {
+	action := actionByID(session, runtime.attempt.actionID)
+	if action == nil {
+		actionType := runtime.attempt.actionType
+		runtime.attempt = draftAttempt{}
+		return titleAction(actionType) + " completed. League advanced the draft."
+	}
+	if action.Completed {
+		actionType := runtime.attempt.actionType
+		runtime.attempt = draftAttempt{}
+		return titleAction(actionType) + " locked."
+	}
+	if runtime.attempt.lockSubmittedAt.IsZero() || now.Sub(runtime.attempt.lockSubmittedAt) < pendingLockConfirmationTimeout {
+		return "Lock submitted. Waiting for League confirmation…"
+	}
+	runtime.attempt.lockSubmitted = false
+	runtime.attempt.mutationBlocked = true
+	return "League did not confirm the lock before the confirmation window ended. RiftOps will not submit it twice."
 }
 
 func fetchChampSession(ctx context.Context, client Client) (champSession, error) {
@@ -264,6 +334,11 @@ func classifyChampSession(session champSession, fallback QueueKind, fallbackQueu
 		queue.GameMode = session.GameType
 	}
 	kind := classifyQueue(queue, false)
+	if fallback == QueueCustom && (kind == QueueRoleBased || kind == QueueRoleless) {
+		// Champion Select omits the lobby's custom flag. Preserve the runtime's
+		// verified custom origin while still allowing Arena/ARAM/Practice to win.
+		return QueueCustom
+	}
 	if queue.ID == 0 && queue.MapID == 0 && strings.TrimSpace(queue.GameMode) == "" {
 		return fallback
 	}
@@ -443,7 +518,7 @@ func (runtime *draftRuntime) chooseCandidate(session champSession, prefs qol.Pla
 		availableSet[id] = true
 	}
 	allowed := func(id int) bool {
-		return id > 0 && !occupied[id] && (len(availableSet) == 0 || availableSet[id])
+		return id > 0 && !occupied[id] && availableSet[id]
 	}
 	if actionType == "ban" {
 		for _, id := range []int{prefs.BanChampionID, prefs.FallbackBanChampionID} {
@@ -488,7 +563,7 @@ func (runtime *draftRuntime) chooseCandidate(session champSession, prefs qol.Pla
 		return 0, 0, "No ARAM card is currently available. RiftOps will not reroll."
 	}
 	primary, fallback, primaryRune, fallbackRune := prefs.PickChampionID, prefs.FallbackPickChampionID, prefs.PickRunePageID, prefs.FallbackPickRunePageID
-	if prefs.RoleAwarePicks && kind == QueueRoleBased {
+	if prefs.RoleAwarePicks && (kind == QueueRoleBased || kind == QueueCustom) {
 		if role == "" {
 			return 0, 0, "Waiting for League to assign a lane. RiftOps will not guess for Fill."
 		}
@@ -535,7 +610,7 @@ func (runtime *draftRuntime) hoverAndConfirm(ctx context.Context, client Client,
 	return errors.New("League accepted the hover request but did not report the selection. RiftOps will not submit it again.")
 }
 
-func (runtime *draftRuntime) lockAfterRefetch(ctx context.Context, client Client, previous champSession, actionKey string, actionID int, actionType string, championID int) (string, error) {
+func (runtime *draftRuntime) lockAfterRefetch(ctx context.Context, client Client, previous champSession, actionKey string, actionID int, actionType string, championID int, now time.Time) (string, error) {
 	latest, err := fetchChampSession(ctx, client)
 	if err != nil {
 		return "Waiting for League to confirm the current action…", nil
@@ -557,6 +632,7 @@ func (runtime *draftRuntime) lockAfterRefetch(ctx context.Context, client Client
 		return "Manual champion choice detected. RiftOps is paused for this turn.", nil
 	}
 	runtime.attempt.lockSubmitted = true
+	runtime.attempt.lockSubmittedAt = now
 	actionCtx, cancel := context.WithTimeout(ctx, 1800*time.Millisecond)
 	err = client.UpdateChampSelectAction(actionCtx, actionID, championID, true)
 	cancel()
@@ -567,13 +643,14 @@ func (runtime *draftRuntime) lockAfterRefetch(ctx context.Context, client Client
 		}
 	}
 	if err != nil {
+		runtime.attempt.lockSubmitted = false
 		runtime.attempt.mutationBlocked = true
 		return "League did not confirm the lock. RiftOps will not retry an ambiguous request.", nil
 	}
 	return "Lock submitted. Waiting for League confirmation…", nil
 }
 
-func (runtime *draftRuntime) executeSpecialPick(ctx context.Context, client Client, session champSession, action *champAction, actionKey string, championID int, kind QueueKind) (string, int64, error) {
+func (runtime *draftRuntime) executeSpecialPick(ctx context.Context, client Client, session champSession, action *champAction, actionKey string, championID int, kind QueueKind, now time.Time) (string, int64, error) {
 	if action.IsInProgress == nil || !*action.IsInProgress {
 		return "Waiting for League to activate the special-mode pick…", 0, nil
 	}
@@ -605,7 +682,7 @@ func (runtime *draftRuntime) executeSpecialPick(ctx context.Context, client Clie
 		runtime.attempt.mutationBlocked = true
 		return "League did not confirm the special-mode selection. RiftOps will not retry it.", 0, nil
 	}
-	message, lockErr := runtime.lockAfterRefetch(ctx, client, session, actionKey, *action.ID, "pick", championID)
+	message, lockErr := runtime.lockAfterRefetch(ctx, client, session, actionKey, *action.ID, "pick", championID, now)
 	return message, 0, lockErr
 }
 

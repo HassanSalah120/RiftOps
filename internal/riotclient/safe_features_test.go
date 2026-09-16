@@ -19,6 +19,19 @@ func TestSafeFeatureAdaptersUseFixedRoutesAndPayloads(t *testing.T) {
 				t.Fatalf("invite payload = %+v, err=%v", payload, err)
 			}
 		}
+		if r.URL.Path == "/lol-lobby/v1/lobby/custom/bots" {
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("bot payload decode error = %v", err)
+			}
+			if payload["position"] != "NONE" {
+				t.Fatalf("bot position = %#v, want NONE", payload["position"])
+			}
+			botUUID, ok := payload["botUuid"].(string)
+			if !ok || len(botUUID) != 36 || botUUID[8] != '-' || botUUID[13] != '-' || botUUID[18] != '-' || botUUID[23] != '-' {
+				t.Fatalf("bot uuid = %#v, want UUID", payload["botUuid"])
+			}
+		}
 		if r.URL.Path == "/lol-challenges/v1/update-player-preferences" {
 			var payload struct {
 				Title        string `json:"title"`
@@ -92,6 +105,7 @@ func TestSafeFeatureAdaptersRejectUnsafeInputs(t *testing.T) {
 		{"bot champion", func() error { return lf.AddCustomBot(ctx, 0, "easy", "100") }},
 		{"bot difficulty", func() error { return lf.AddCustomBot(ctx, 1, "instant", "100") }},
 		{"bot team", func() error { return lf.AddCustomBot(ctx, 1, "easy", "red") }},
+		{"bot position", func() error { return lf.AddCustomBotAtPosition(ctx, 1, "easy", "100", "mid") }},
 		{"replay id", func() error { return lf.DownloadReplay(ctx, "-1") }},
 		{"settings json", func() error { return lf.PatchGameSettings(ctx, []byte("not json")) }},
 		{"too many challenge tokens", func() error { return lf.UpdateChallengePreferences(ctx, "", []int{1, 2, 3, 4}, "") }},

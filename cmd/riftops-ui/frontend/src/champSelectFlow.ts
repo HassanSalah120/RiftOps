@@ -42,7 +42,7 @@ export type RolePickPlan = {
   fallbackPickRunePageId: number;
 };
 
-export type DraftQueueKind = 'role-based' | 'roleless' | 'arena' | 'practice' | 'custom';
+export type DraftQueueKind = 'role-based' | 'roleless' | 'arena' | 'aram' | 'practice' | 'custom';
 export type DraftDecisionState = 'ready' | 'waiting-for-role' | 'missing-plan' | 'manual-override' | 'blocked';
 export type DraftPickPlanSource = 'role' | 'legacy' | 'none';
 
@@ -200,6 +200,21 @@ export function resolveDraftContext(session: ChampSelectSession | null | undefin
   const assignedRole = localAssignedPosition(session) as PickRole | null;
   const queueKind = options.queueKind || 'role-based';
   const legacyPickPlan = options.legacyPickPlan || null;
+
+  // ARAM cards/bench state are authoritative. Never surface a ranked/global
+  // champion plan here: doing so can make Full Auto select an unrelated lane
+  // champion in custom Howling Abyss sessions.
+  if (queueKind === 'aram') {
+    return {
+      localCellId,
+      assignedRole,
+      queueKind,
+      pickPlan: null,
+      planSource: 'none',
+      state: 'ready',
+      reason: 'ARAM uses League’s assigned champion or live cards; ranked pick plans are ignored.',
+    };
+  }
 
   if (!options.roleAwarePicks || queueKind !== 'role-based') {
     return {

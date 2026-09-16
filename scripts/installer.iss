@@ -2,7 +2,9 @@
 ; Builds a lightweight, user-mode Windows Setup installer for RiftOps League Companion.
 
 #ifndef AppVersion
-  #define AppVersion "2.10.6"
+  ; Release builds must pass /DAppVersion from VERSION. This fallback is
+  ; intentionally non-release so an ad-hoc compile cannot publish a stale tag.
+  #define AppVersion "0.0.0-dev"
 #endif
 
 #ifndef SourceExe

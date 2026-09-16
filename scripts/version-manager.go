@@ -1,14 +1,10 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -57,13 +53,6 @@ func (s SemVer) Bump(part string) (SemVer, error) {
 	}
 }
 
-type FileSync struct {
-	Path        string
-	Description string
-	Check       func(content string, version string) (bool, string)
-	Update      func(content string, version string) string
-}
-
 func repoRoot() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -83,124 +72,6 @@ func repoRoot() (string, error) {
 	return "", errors.New("could not locate repository root (missing VERSION file)")
 }
 
-func getTargetFiles(root string) []FileSync {
-	return []FileSync{
-		{
-			Path:        filepath.Join(root, "VERSION"),
-			Description: "Canonical VERSION file",
-			Check: func(content string, version string) (bool, string) {
-				current := strings.TrimSpace(content)
-				return current == version, current
-			},
-			Update: func(_ string, version string) string {
-				return version + "\n"
-			},
-		},
-		{
-			Path:        filepath.Join(root, "internal", "buildinfo", "buildinfo.go"),
-			Description: "Go buildinfo package",
-			Check: func(content string, version string) (bool, string) {
-				re := regexp.MustCompile(`var Version = "([^"]+)"`)
-				match := re.FindStringSubmatch(content)
-				if len(match) > 1 {
-					return match[1] == version, match[1]
-				}
-				return false, "not found"
-			},
-			Update: func(content string, version string) string {
-				re := regexp.MustCompile(`var Version = "[^"]+"`)
-				return re.ReplaceAllString(content, fmt.Sprintf(`var Version = "%s"`, version))
-			},
-		},
-		{
-			Path:        filepath.Join(root, "scripts", "installer.iss"),
-			Description: "Inno Setup installer script",
-			Check: func(content string, version string) (bool, string) {
-				re := regexp.MustCompile(`#define AppVersion "([^"]+)"`)
-				match := re.FindStringSubmatch(content)
-				if len(match) > 1 {
-					return match[1] == version, match[1]
-				}
-				return false, "not found"
-			},
-			Update: func(content string, version string) string {
-				re := regexp.MustCompile(`#define AppVersion "[^"]+"`)
-				return re.ReplaceAllString(content, fmt.Sprintf(`#define AppVersion "%s"`, version))
-			},
-		},
-		{
-			Path:        filepath.Join(root, "cmd", "riftops-ui", "frontend", "package.json"),
-			Description: "Frontend package.json",
-			Check: func(content string, version string) (bool, string) {
-				var data map[string]any
-				if err := json.Unmarshal([]byte(content), &data); err == nil {
-					if v, ok := data["version"].(string); ok {
-						return v == version, v
-					}
-				}
-				return false, "not found"
-			},
-			Update: func(content string, version string) string {
-				var data map[string]any
-				if err := json.Unmarshal([]byte(content), &data); err != nil {
-					return content
-				}
-				data["version"] = version
-				buf := new(bytes.Buffer)
-				enc := json.NewEncoder(buf)
-				enc.SetEscapeHTML(false)
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(data); err == nil {
-					return buf.String()
-				}
-				return content
-			},
-		},
-		{
-			Path:        filepath.Join(root, "cmd", "riftops-ui", "frontend", "src", "components", "SettingsPage.tsx"),
-			Description: "React UI SettingsPage fallback",
-			Check: func(content string, version string) (bool, string) {
-				re := regexp.MustCompile(`snapshot\.Version \|\| '([^']+)'`)
-				match := re.FindStringSubmatch(content)
-				if len(match) > 1 {
-					return match[1] == version, match[1]
-				}
-				return false, "not found"
-			},
-			Update: func(content string, version string) string {
-				re1 := regexp.MustCompile(`(res\.currentVersion \|\| snapshot\.Version \|\| ')[^']+(')`)
-				content = re1.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}`, version))
-				re2 := regexp.MustCompile(`(snapshot\.Version \? `+"`"+`v\${snapshot\.Version}`+"`"+` : ')[^']+(')`)
-				content = re2.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}`, version))
-				return content
-			},
-		},
-		{
-			Path:        filepath.Join(root, "docs", "index.html"),
-			Description: "GitHub Pages landing site",
-			Check: func(content string, version string) (bool, string) {
-				re := regexp.MustCompile(`<span class="brand-version">v([^<]+)</span>`)
-				match := re.FindStringSubmatch(content)
-				if len(match) > 1 {
-					return match[1] == version, match[1]
-				}
-				return false, "not found"
-			},
-			Update: func(content string, version string) string {
-				re1 := regexp.MustCompile(`<span class="brand-version">v[^<]+</span>`)
-				content = re1.ReplaceAllString(content, fmt.Sprintf(`<span class="brand-version">v%s</span>`, version))
-				re2 := regexp.MustCompile(`(Download v)[0-9]+\.[0-9]+\.[0-9]+`)
-				content = re2.ReplaceAllString(content, fmt.Sprintf(`${1}%s`, version))
-				re3 := regexp.MustCompile(`(<span>v)[0-9]+\.[0-9]+\.[0-9]+(</span>)`)
-				content = re3.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}`, version))
-				re4 := regexp.MustCompile(`(<span class="dl-version-tag">v)[0-9]+\.[0-9]+\.[0-9]+(</span>)`)
-				content = re4.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}`, version))
-				return content
-			},
-		},
-	}
-}
-
 func readCanonicalVersion(root string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(root, "VERSION"))
 	if err != nil {
@@ -214,70 +85,42 @@ func cmdStatus(root string) error {
 	if err != nil {
 		return fmt.Errorf("read canonical version: %w", err)
 	}
-	fmt.Printf("Canonical Version (VERSION): v%s\n\n", version)
-	files := getTargetFiles(root)
-	allSynced := true
-	for _, f := range files {
-		rel, _ := filepath.Rel(root, f.Path)
-		data, err := os.ReadFile(f.Path)
-		if err != nil {
-			fmt.Printf("  [MISSING] %-55s (%s: %v)\n", rel, f.Description, err)
-			allSynced = false
-			continue
-		}
-		synced, current := f.Check(string(data), version)
-		if synced {
-			fmt.Printf("  [SYNCED]  %-55s (v%s)\n", rel, current)
-		} else {
-			fmt.Printf("  [OUTDATED]%-55s (found: v%s, want: v%s)\n", rel, current, version)
-			allSynced = false
-		}
+	if _, err := parseSemVer(version); err != nil {
+		return fmt.Errorf("canonical VERSION is invalid: %w", err)
 	}
-	fmt.Println()
-	if allSynced {
-		fmt.Println("All repository version files are fully synchronized.")
-	} else {
-		fmt.Println("Some files are out of sync. Run 'go run ./scripts/version-manager.go sync' to synchronize.")
-	}
+	fmt.Printf("Canonical release version: v%s\n", version)
+	fmt.Println("Build metadata, package labels, installer metadata, and site labels are derived at build/runtime; edit VERSION only.")
 	return nil
 }
 
 func cmdSync(root string, targetVersion string) error {
-	var version string
+	version, err := readCanonicalVersion(root)
+	if err != nil {
+		return fmt.Errorf("read canonical version: %w", err)
+	}
 	if targetVersion != "" {
 		sv, err := parseSemVer(targetVersion)
 		if err != nil {
 			return err
 		}
 		version = sv.String()
-	} else {
-		var err error
-		version, err = readCanonicalVersion(root)
-		if err != nil {
-			return fmt.Errorf("read canonical version: %w", err)
-		}
 	}
-
-	fmt.Printf("Synchronizing repository to v%s...\n", version)
-	files := getTargetFiles(root)
-	for _, f := range files {
-		rel, _ := filepath.Rel(root, f.Path)
-		content := ""
-		data, err := os.ReadFile(f.Path)
-		if err == nil {
-			content = string(data)
-		}
-		updated := f.Update(content, version)
-		if updated != content {
-			if err := os.WriteFile(f.Path, []byte(updated), 0644); err != nil {
-				return fmt.Errorf("write %s: %w", rel, err)
-			}
-			fmt.Printf("  Updated %s\n", rel)
-		} else {
-			fmt.Printf("  Already up-to-date: %s\n", rel)
-		}
+	if _, err := parseSemVer(version); err != nil {
+		return fmt.Errorf("canonical VERSION is invalid: %w", err)
 	}
-	fmt.Printf("\nRepository version synchronized to v%s successfully.\n", version)
+	path := filepath.Join(root, "VERSION")
+	current, err := readCanonicalVersion(root)
+	if err != nil {
+		return fmt.Errorf("read canonical version: %w", err)
+	}
+	if current == version {
+		fmt.Printf("VERSION already set to v%s.\n", version)
+		return nil
+	}
+	if err := os.WriteFile(path, []byte(version+"\n"), 0644); err != nil {
+		return fmt.Errorf("write VERSION: %w", err)
+	}
+	fmt.Printf("Updated VERSION to v%s. All other version values are derived during build or runtime.\n", version)
 	return nil
 }
 
@@ -306,71 +149,17 @@ func cmdRelease(root string, bumpType string) error {
 	if err != nil {
 		return err
 	}
-
-	fmt.Println("\nBuilding frontend assets...")
-	npmCmd := exec.Command("npm", "run", "build")
-	npmCmd.Dir = filepath.Join(root, "cmd", "riftops-ui", "frontend")
-	npmCmd.Stdout = os.Stdout
-	npmCmd.Stderr = os.Stderr
-	if err := npmCmd.Run(); err != nil {
-		return fmt.Errorf("npm run build failed: %w", err)
-	}
-
-	fmt.Println("\nRunning tests...")
-	testCmd := exec.Command("go", "test", "./...")
-	testCmd.Dir = root
-	testCmd.Stdout = os.Stdout
-	testCmd.Stderr = os.Stderr
-	if err := testCmd.Run(); err != nil {
-		return fmt.Errorf("go test failed: %w", err)
-	}
-
-	fmt.Println("\nCreating git commit and tag...")
-	gitAdd := exec.Command("git", "add", ".")
-	gitAdd.Dir = root
-	if err := gitAdd.Run(); err != nil {
-		return fmt.Errorf("git add failed: %w", err)
-	}
-
-	commitMsg := fmt.Sprintf("chore(release): bump version to %s", next)
-	gitCommit := exec.Command("git", "commit", "-m", commitMsg)
-	gitCommit.Dir = root
-	gitCommit.Stdout = os.Stdout
-	gitCommit.Stderr = os.Stderr
-	if err := gitCommit.Run(); err != nil {
-		return fmt.Errorf("git commit failed: %w", err)
-	}
-
-	tag := "v" + next
-	tagMsg := fmt.Sprintf("Release %s", tag)
-	gitTag := exec.Command("git", "tag", "-a", tag, "-m", tagMsg)
-	gitTag.Dir = root
-	gitTag.Stdout = os.Stdout
-	gitTag.Stderr = os.Stderr
-	if err := gitTag.Run(); err != nil {
-		return fmt.Errorf("git tag failed: %w", err)
-	}
-
-	fmt.Printf("\nPushing commit and tag %s to GitHub...\n", tag)
-	gitPush := exec.Command("git", "push", "origin", "main", "--tags")
-	gitPush.Dir = root
-	gitPush.Stdout = os.Stdout
-	gitPush.Stderr = os.Stderr
-	if err := gitPush.Run(); err != nil {
-		return fmt.Errorf("git push failed: %w", err)
-	}
-
-	fmt.Printf("\nSuccessfully released and pushed %s to GitHub!\n", tag)
+	fmt.Printf("VERSION prepared for v%s. Build and publish explicitly; this command does not commit, tag, push, or delete releases.\n", next)
 	return nil
 }
 
 func printHelp() {
 	fmt.Println("RiftOps Version Manager")
 	fmt.Println("Usage:")
-	fmt.Println("  go run ./scripts/version-manager.go status              Show sync status across all files")
-	fmt.Println("  go run ./scripts/version-manager.go sync [version]      Sync all files to VERSION (or given version)")
-	fmt.Println("  go run ./scripts/version-manager.go bump <patch|minor|major|version> Bump version and sync files")
-	fmt.Println("  go run ./scripts/version-manager.go release <patch|minor|major|version> Bump, build, test, commit, tag, & push")
+	fmt.Println("  go run ./scripts/version-manager.go status              Show the canonical VERSION value")
+	fmt.Println("  go run ./scripts/version-manager.go sync [version]      Set VERSION (compatibility alias; no other files are edited)")
+	fmt.Println("  go run ./scripts/version-manager.go bump <patch|minor|major|version> Bump VERSION")
+	fmt.Println("  go run ./scripts/version-manager.go release <patch|minor|major|version> Prepare VERSION only; no GitHub writes")
 }
 
 func main() {

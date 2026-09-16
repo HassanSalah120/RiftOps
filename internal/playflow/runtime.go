@@ -713,7 +713,9 @@ func classifyQueue(queue queueInfo, custom bool) QueueKind {
 	if queue.ID == 1700 || queue.ID == 1710 || queue.ID == 1750 || queue.MapID == 30 || mode == "ARENA" || mode == "CHERRY" || strings.Contains(name, "ARENA") {
 		return QueueArena
 	}
-	if queue.ID == 450 || queue.ID == 2400 || queue.MapID == 12 || mode == "ARAM" || mode == "KIWI" || strings.Contains(name, "ARAM") {
+	// Include the current/custom Howling Abyss queue IDs even when the live
+	// queue metadata omits map and game-mode fields.
+	if queue.ID == 450 || queue.ID == 2400 || queue.ID == 3200 || queue.ID == 3210 || queue.ID == 3220 || queue.ID == 3230 || queue.ID == 3270 || queue.MapID == 12 || mode == "ARAM" || mode == "KIWI" || strings.Contains(name, "ARAM") {
 		return QueueARAM
 	}
 	if custom || category == "CUSTOM" {

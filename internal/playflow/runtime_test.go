@@ -14,20 +14,22 @@ import (
 )
 
 type fakeClient struct {
-	mu              sync.Mutex
-	phase           string
-	lobby           []byte
-	queues          []byte
-	gameflowSession []byte
-	champSession    []byte
-	pickable        []byte
-	bannable        []byte
-	subset          []byte
-	requeueCalls    int
-	roleCalls       int
-	playAgainCalls  int
-	updates         []fakeUpdate
-	rejectChampion  map[int]bool
+	mu               sync.Mutex
+	phase            string
+	lobby            []byte
+	queues           []byte
+	gameflowSession  []byte
+	champSession     []byte
+	pickable         []byte
+	bannable         []byte
+	subset           []byte
+	requeueCalls     int
+	roleCalls        int
+	playAgainCalls   int
+	updates          []fakeUpdate
+	benchSwaps       []int
+	rejectChampion   map[int]bool
+	suppressComplete bool
 }
 
 type fakeUpdate struct {
@@ -129,11 +131,19 @@ func (client *fakeClient) UpdateChampSelectAction(_ context.Context, actionID, c
 			}
 		}
 	}
+	if completed && client.suppressComplete {
+		return nil
+	}
 	client.champSession, _ = json.Marshal(session)
 	return nil
 }
 func (client *fakeClient) SetCurrentRunePage(context.Context, int) error { return nil }
-func (client *fakeClient) SwapBenchChampion(context.Context, int) error  { return nil }
+func (client *fakeClient) SwapBenchChampion(_ context.Context, championID int) error {
+	client.mu.Lock()
+	client.benchSwaps = append(client.benchSwaps, championID)
+	client.mu.Unlock()
+	return nil
+}
 func (client *fakeClient) FetchChampSelectPickOrderSwaps(context.Context) ([]byte, error) {
 	return []byte(`[]`), nil
 }
@@ -271,6 +281,156 @@ func TestQueueClassificationCoversCurrentArenaAndARAMModes(t *testing.T) {
 	if got := classifyQueue(queueInfo{ID: 2400, GameMode: "KIWI", MapID: 12}, false); got != QueueARAM {
 		t.Fatalf("ARAM queue kind = %q", got)
 	}
+	for _, queueID := range []int{3200, 3210, 3220, 3230, 3270} {
+		if got := classifyQueue(queueInfo{ID: queueID}, true); got != QueueARAM {
+			t.Fatalf("custom ARAM queue %d kind = %q", queueID, got)
+		}
+	}
+}
+
+func TestARAMPlaceholderBanNeverUsesGlobalBanPlan(t *testing.T) {
+	client := &fakeClient{
+		bannable: []byte(`[-1]`),
+		champSession: []byte(`{
+			"id":"aram-placeholder-ban","queueId":3210,"localPlayerCellId":0,
+			"actions":[[{"id":1,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"ban"}]],
+			"myTeam":[{"cellId":0,"championId":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.BanChampionID = 555
+	prefs.AutoBan = true
+	var runtime draftRuntime
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3210, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(message), "aram") || !strings.Contains(strings.ToLower(message), "ban") {
+		t.Fatalf("message = %q, want explicit ARAM ban status", message)
+	}
+	if len(client.updates) != 0 {
+		t.Fatalf("ARAM placeholder ban mutated the session: %#v", client.updates)
+	}
+}
+
+func TestARAMMissingCardsDoesNotUseGlobalPickPlan(t *testing.T) {
+	client := &fakeClient{
+		pickable: []byte(`[40]`),
+		subset:   []byte(`[]`),
+		champSession: []byte(`{
+			"id":"aram-no-cards","queueId":3210,"localPlayerCellId":0,
+			"actions":[[{"id":2,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"championId":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.PickChampionID = 40
+	prefs.AutoPick = true
+	var runtime draftRuntime
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3210, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(message), "aram") || !strings.Contains(strings.ToLower(message), "card") {
+		t.Fatalf("message = %q, want ARAM card wait status", message)
+	}
+	if len(client.updates) != 0 {
+		t.Fatalf("ARAM used a non-card global plan: %#v", client.updates)
+	}
+}
+
+func TestARAMPrioritySelectsLiveCardWithoutReroll(t *testing.T) {
+	client := &fakeClient{
+		subset: []byte(`[53,40]`),
+		champSession: []byte(`{
+			"id":"aram-cards","queueId":3210,"localPlayerCellId":0,
+			"actions":[[{"id":3,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"championId":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.ARAMChampionPriority = []int{40, 53}
+	prefs.AutoPick = true
+	var runtime draftRuntime
+	if _, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3210, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.updates) != 2 || client.updates[0].champion != 40 || client.updates[0].completed || !client.updates[1].completed {
+		t.Fatalf("ARAM card updates = %#v, want one hover and one lock for priority champion 40", client.updates)
+	}
+	if len(client.benchSwaps) != 0 {
+		t.Fatalf("ARAM card selection unexpectedly used a bench swap: %#v", client.benchSwaps)
+	}
+}
+
+func TestARAMManualChampionChangeStopsBenchAutomation(t *testing.T) {
+	client := &fakeClient{
+		champSession: []byte(`{
+			"id":"aram-manual-bench","queueId":3210,"localPlayerCellId":0,
+			"actions":[],
+			"myTeam":[{"cellId":0,"championId":53}],
+			"benchChampions":[{"championId":40}]
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.ARAMChampionPriority = []int{40, 53}
+	var runtime draftRuntime
+	if message, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3210, time.Now()); err != nil || !strings.Contains(message, "Swapping") {
+		t.Fatalf("initial bench step = %q, err=%v", message, err)
+	}
+	client.mu.Lock()
+	var session map[string]any
+	if err := json.Unmarshal(client.champSession, &session); err != nil {
+		client.mu.Unlock()
+		t.Fatal(err)
+	}
+	member := session["myTeam"].([]any)[0].(map[string]any)
+	member["championId"] = 22 // player changed the assigned champion manually
+	client.champSession, _ = json.Marshal(session)
+	client.mu.Unlock()
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3210, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message, "Manual ARAM swap detected") {
+		t.Fatalf("manual bench message = %q", message)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.benchSwaps) != 1 {
+		t.Fatalf("bench automation continued after manual change: %#v", client.benchSwaps)
+	}
+}
+
+func TestARAMAutoPickOffDoesNotSwapBench(t *testing.T) {
+	client := &fakeClient{
+		champSession: []byte(`{
+			"id":"aram-autopick-off","queueId":3210,"localPlayerCellId":0,
+			"actions":[],"myTeam":[{"cellId":0,"championId":53}],
+			"benchChampions":[{"championId":40}]
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.AutoPick = false
+	prefs.ARAMChampionPriority = []int{40, 53}
+	var runtime draftRuntime
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3210, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message, "assigned") {
+		t.Fatalf("message = %q, want assigned-champion status", message)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.benchSwaps) != 0 {
+		t.Fatalf("bench swap ran with auto-pick disabled: %#v", client.benchSwaps)
+	}
 }
 
 func TestGameflowQueueMetadataUsesNestedLiveQueue(t *testing.T) {
@@ -305,6 +465,135 @@ func TestCorrectedTimerUsesLCUEpochAndFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDraftDoesNotMutateCustomBanDuringPlanning(t *testing.T) {
+	now := time.UnixMilli(100_000)
+	client := &fakeClient{
+		bannable: []byte(`[555]`),
+		champSession: []byte(`{
+			"id":"custom-draft-planning","queueId":3110,"gameMode":"CLASSIC","mapId":11,"localPlayerCellId":0,
+			"actions":[[{"id":0,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"ban"}]],
+			"myTeam":[{"cellId":0,"championId":0,"championPickIntent":0}],
+			"timer":{"phase":"PLANNING","adjustedTimeLeftInPhase":24000,"internalNowInEpochMs":100000,"totalTimeInPhase":24000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.BanChampionID = 555
+	prefs.BanTimingMode = "immediate"
+	var runtime draftRuntime
+
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3110, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message, "ban/pick phase") {
+		t.Fatalf("message = %q, want planning wait status", message)
+	}
+	if len(client.updates) != 0 {
+		t.Fatalf("custom planning sent draft mutations: %#v", client.updates)
+	}
+}
+
+func TestCustomSummonersRiftUsesSelectedRolePickPlan(t *testing.T) {
+	client := &fakeClient{
+		pickable: []byte(`[40,203]`),
+		champSession: []byte(`{
+			"id":"custom-role-plan","queueId":3110,"gameMode":"CLASSIC","mapId":11,"localPlayerCellId":0,
+			"actions":[[{"id":1,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"assignedPosition":"","championId":0,"championPickIntent":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.PickChampionID = 203
+	prefs.PrimaryRole = "UTILITY"
+	prefs.RoleAwarePicks = true
+	prefs.RolePickPlans = map[string]qol.RolePickPlan{
+		"UTILITY": {PickChampionID: 40},
+	}
+	var runtime draftRuntime
+
+	if _, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3110, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.updates) != 1 || client.updates[0].champion != 40 || client.updates[0].completed {
+		t.Fatalf("custom pick updates = %#v, want Support plan champion 40 hover", client.updates)
+	}
+}
+
+func TestCustomFillWaitsWithoutGuessingRoleProfile(t *testing.T) {
+	client := &fakeClient{
+		pickable: []byte(`[40,37,203]`),
+		champSession: []byte(`{
+			"id":"custom-fill","queueId":3110,"gameMode":"CLASSIC","mapId":11,"localPlayerCellId":0,
+			"actions":[[{"id":1,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"assignedPosition":"","championId":0,"championPickIntent":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.PrimaryRole = "FILL"
+	prefs.RoleAwarePicks = true
+	prefs.RolePickPlans = map[string]qol.RolePickPlan{"UTILITY": {PickChampionID: 40}}
+	var runtime draftRuntime
+
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3110, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message, "assign a lane") || len(client.updates) != 0 {
+		t.Fatalf("Fill result = message %q, updates %#v; want safe wait without mutation", message, client.updates)
+	}
+}
+
+func TestCustomRolePlanUsesFallbackWhenPrimaryIsOccupied(t *testing.T) {
+	client := &fakeClient{
+		pickable: []byte(`[40,37]`),
+		champSession: []byte(`{
+			"id":"custom-fallback","queueId":3110,"gameMode":"CLASSIC","mapId":11,"localPlayerCellId":0,
+			"actions":[[{"id":0,"actorCellId":2,"championId":40,"completed":true,"isInProgress":false,"type":"pick"}], [{"id":1,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"assignedPosition":"","championId":0,"championPickIntent":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.PrimaryRole = "UTILITY"
+	prefs.RoleAwarePicks = true
+	prefs.RolePickPlans = map[string]qol.RolePickPlan{"UTILITY": {PickChampionID: 40, FallbackPickChampionID: 37}}
+	var runtime draftRuntime
+
+	if _, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3110, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.updates) != 1 || client.updates[0].champion != 37 || client.updates[0].completed {
+		t.Fatalf("fallback result = %#v, want one fallback hover for champion 37", client.updates)
+	}
+}
+
+func TestDraftDoesNotGuessWhenLivePickableListIsEmpty(t *testing.T) {
+	client := &fakeClient{
+		pickable: []byte(`[]`),
+		champSession: []byte(`{
+			"id":"empty-pickable","queueId":3110,"gameMode":"CLASSIC","mapId":11,"localPlayerCellId":0,
+			"actions":[[{"id":1,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"assignedPosition":"","championId":0,"championPickIntent":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.PrimaryRole = "UTILITY"
+	prefs.RoleAwarePicks = true
+	prefs.RolePickPlans = map[string]qol.RolePickPlan{"UTILITY": {PickChampionID: 40}}
+	var runtime draftRuntime
+
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueCustom, 3110, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.updates) != 0 || !strings.Contains(message, "available") {
+		t.Fatalf("empty pickable result = message %q, updates %#v; want safe wait", message, client.updates)
+	}
+}
+
 func TestDraftLocksAtFourSecondsWithoutExtraDelay(t *testing.T) {
 	now := time.UnixMilli(100_000)
 	client := &fakeClient{
@@ -334,6 +623,49 @@ func TestDraftLocksAtFourSecondsWithoutExtraDelay(t *testing.T) {
 	}
 }
 
+func TestDraftBanKeepsItsHoverWhenLeagueAssignsRole(t *testing.T) {
+	now := time.UnixMilli(100_000)
+	client := &fakeClient{
+		bannable: []byte(`[555]`),
+		champSession: []byte(`{
+			"id":"draft-ban-role","queueId":420,"gameMode":"CLASSIC","mapId":11,"localPlayerCellId":1,
+			"actions":[[{"id":1,"actorCellId":1,"championId":0,"completed":false,"isInProgress":false,"type":"ban"}]],
+			"myTeam":[{"cellId":1,"assignedPosition":"","championId":0,"championPickIntent":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":30000,"internalNowInEpochMs":100000,"totalTimeInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.BanChampionID = 555
+	prefs.BanTimingMode = "immediate"
+	var runtime draftRuntime
+	if _, _, err := runtime.step(context.Background(), client, prefs, QueueRoleBased, 420, now); err != nil {
+		t.Fatal(err)
+	}
+
+	client.mu.Lock()
+	var session map[string]any
+	if err := json.Unmarshal(client.champSession, &session); err != nil {
+		client.mu.Unlock()
+		t.Fatal(err)
+	}
+	action := session["actions"].([]any)[0].([]any)[0].(map[string]any)
+	action["isInProgress"] = true
+	member := session["myTeam"].([]any)[0].(map[string]any)
+	member["assignedPosition"] = "utility"
+	client.champSession, _ = json.Marshal(session)
+	client.mu.Unlock()
+
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueRoleBased, 420, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.updates) != 2 || client.updates[0].completed || !client.updates[1].completed {
+		t.Fatalf("message = %q, updates = %#v; want RiftOps hover followed by ban completion", message, client.updates)
+	}
+}
+
 func TestDraftNeverOverwritesManualHover(t *testing.T) {
 	client := &fakeClient{
 		pickable: []byte(`[22,103]`),
@@ -356,6 +688,54 @@ func TestDraftNeverOverwritesManualHover(t *testing.T) {
 	}
 	if len(client.updates) != 0 {
 		t.Fatalf("manual hover was overwritten: %#v", client.updates)
+	}
+}
+
+func TestDraftObservesDelayedLockConfirmationWithoutRetry(t *testing.T) {
+	client := &fakeClient{
+		suppressComplete: true,
+		pickable:         []byte(`[103]`),
+		champSession: []byte(`{
+			"id":"draft-ambiguous","queueId":420,"gameMode":"CLASSIC","mapId":11,"localPlayerCellId":0,
+			"actions":[[{"id":8,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"assignedPosition":"MIDDLE","championId":0,"championPickIntent":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":20000,"internalNowInEpochMs":100000,"totalTimeInPhase":30000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.PickChampionID = 103
+	prefs.PickTimingMode = "immediate"
+	var runtime draftRuntime
+	now := time.UnixMilli(100_000)
+	for i := 0; i < 2; i++ {
+		_, _, err := runtime.step(context.Background(), client, prefs, QueueRoleBased, 420, now.Add(time.Duration(i)*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	client.mu.Lock()
+	var session map[string]any
+	if err := json.Unmarshal(client.champSession, &session); err != nil {
+		client.mu.Unlock()
+		t.Fatal(err)
+	}
+	actions := session["actions"].([]any)
+	action := actions[0].([]any)[0].(map[string]any)
+	action["completed"] = true
+	client.champSession, _ = json.Marshal(session)
+	client.mu.Unlock()
+
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueRoleBased, 420, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message != "Pick locked." {
+		t.Fatalf("message = %q, want delayed lock confirmation", message)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.updates) != 2 || client.updates[0].completed || !client.updates[1].completed {
+		t.Fatalf("updates = %#v, want one hover and one lock attempt", client.updates)
 	}
 }
 

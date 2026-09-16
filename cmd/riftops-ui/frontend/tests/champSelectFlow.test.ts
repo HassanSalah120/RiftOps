@@ -229,6 +229,23 @@ test('roleless queues keep the legacy pick plan even when role-aware mode is ena
   assert.equal(context.pickPlan?.pickChampionId, 103);
 });
 
+test('ARAM context never falls back to a ranked or legacy pick plan', () => {
+  const context = resolveDraftContext(
+    { localPlayerCellId: 4, myTeam: [{ cellId: 4, assignedPosition: 'FILL' }] },
+    {
+      roleAwarePicks: true,
+      rolePickPlans: { UTILITY: { pickChampionId: 40, fallbackPickChampionId: 37, pickRunePageId: 1, fallbackPickRunePageId: 0 } },
+      legacyPickPlan: { pickChampionId: 103, fallbackPickChampionId: 84, pickRunePageId: 2, fallbackPickRunePageId: 0 },
+      queueKind: 'aram',
+    },
+  );
+  assert.equal(context.queueKind, 'aram');
+  assert.equal(context.state, 'ready');
+  assert.equal(context.planSource, 'none');
+  assert.equal(context.pickPlan, null);
+  assert.match(context.reason || '', /ARAM/i);
+});
+
 test('manual champion hovers are respected unless RiftOps is still waiting for its own hover', () => {
   assert.equal(isManualChampSelectHover(84, 103, false), true);
   assert.equal(isManualChampSelectHover(84, 103, true), false);

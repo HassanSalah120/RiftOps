@@ -612,12 +612,16 @@ func lcuCustomBotsHandler(w http.ResponseWriter, r *http.Request) {
 		ChampionID int    `json:"championId"`
 		Difficulty string `json:"difficulty"`
 		TeamID     string `json:"teamId"`
+		Position   string `json:"position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid bot payload", http.StatusBadRequest)
 		return
 	}
-	if err := lf.AddCustomBot(r.Context(), body.ChampionID, body.Difficulty, body.TeamID); err != nil {
+	if strings.TrimSpace(body.Position) == "" {
+		body.Position = "NONE"
+	}
+	if err := lf.AddCustomBotAtPosition(r.Context(), body.ChampionID, body.Difficulty, body.TeamID, body.Position); err != nil {
 		httpError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
