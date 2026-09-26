@@ -26,9 +26,11 @@ const (
 )
 
 var (
-	ErrNotFound = errors.New("saved Riot login was not found")
-	ErrExpired  = errors.New("saved Riot login has expired")
-	validID     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+	ErrNotFound         = errors.New("saved Riot login was not found")
+	ErrExpired          = errors.New("saved Riot login has expired")
+	ErrUnverified       = errors.New("saved Riot login needs a one-time identity-verified re-save")
+	ErrIdentityMismatch = errors.New("saved Riot login belongs to a different Riot ID")
+	validID             = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 )
 
 type protector interface {
@@ -46,12 +48,19 @@ type Vault struct {
 type Status struct {
 	CapturedAt time.Time
 	ExpiresAt  time.Time
+	Identity   Identity `json:"-"`
+}
+
+type Identity struct {
+	PUUID  string `json:"puuid"`
+	RiotID string `json:"riotId"`
 }
 
 type payload struct {
 	Version    int       `json:"version"`
 	CapturedAt time.Time `json:"capturedAt"`
 	ExpiresAt  time.Time `json:"expiresAt"`
+	Identity   Identity  `json:"identity,omitempty"`
 	Data       []byte    `json:"data"`
 	ClientData []byte    `json:"clientData,omitempty"`
 	// Files is the current format. Data and ClientData remain for vaults
@@ -76,12 +85,22 @@ func Default(vaultDir string) (*Vault, error) {
 	return &Vault{RiotDataDir: dataDir, VaultDir: vaultDir, protector: platformProtector{}, now: time.Now}, nil
 }
 
-func (v *Vault) Capture(profileID string, lifetime time.Duration) error {
+func (v *Vault) Capture(profileID string, lifetime time.Duration, identity Identity) error {
+	return v.CaptureVerified(profileID, lifetime, identity, nil)
+}
+
+// CaptureVerified collects the remembered-login files, then rechecks the live
+// account before replacing any existing vault. A failed check leaves the old
+// encrypted save untouched.
+func (v *Vault) CaptureVerified(profileID string, lifetime time.Duration, identity Identity, verify func() error) error {
 	if err := validateProfileID(profileID); err != nil {
 		return err
 	}
 	if lifetime <= 0 || lifetime > 90*24*time.Hour {
 		return fmt.Errorf("saved login lifetime must be between 1 minute and 90 days")
+	}
+	if !validIdentity(identity) {
+		return errors.New("Riot account identity is unavailable; sign in before saving")
 	}
 
 	files, err := v.captureFiles()
@@ -89,12 +108,18 @@ func (v *Vault) Capture(profileID string, lifetime time.Duration) error {
 		return err
 	}
 	defer clearFileMap(files)
+	if verify != nil {
+		if err := verify(); err != nil {
+			return err
+		}
+	}
 
 	now := v.now().UTC()
 	encoded, err := json.Marshal(payload{
-		Version:    1,
+		Version:    2,
 		CapturedAt: now,
 		ExpiresAt:  now.Add(lifetime),
+		Identity:   identity,
 		Files:      files,
 	})
 	if err != nil {
@@ -210,27 +235,6 @@ func (v *Vault) captureDirectory(spec sessionPath, files map[string][]byte, tota
 	return nil
 }
 
-// RefreshIfEnrolled updates an existing profile session from Riot's current
-// remembered-login state. A profile must be explicitly captured once before
-// automatic refresh is allowed; this prevents an unrelated active Riot login
-// from being silently assigned to a newly-created profile.
-func (v *Vault) RefreshIfEnrolled(profileID string, lifetime time.Duration) (bool, error) {
-	value, err := v.load(profileID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	clearBytes(value.Data)
-	clearBytes(value.ClientData)
-	clearFileMap(value.Files)
-	if err := v.Capture(profileID, lifetime); err != nil {
-		return true, err
-	}
-	return true, nil
-}
-
 func readStableFile(path string) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -256,7 +260,7 @@ func readStableFile(path string) ([]byte, error) {
 	return nil, lastErr
 }
 
-func (v *Vault) Restore(profileID string) error {
+func (v *Vault) Restore(profileID, expectedRiotID string) error {
 	value, err := v.load(profileID)
 	if err != nil {
 		return err
@@ -264,6 +268,12 @@ func (v *Vault) Restore(profileID string) error {
 	defer clearBytes(value.Data)
 	defer clearBytes(value.ClientData)
 	defer clearFileMap(value.Files)
+	if value.Version < 2 {
+		return ErrUnverified
+	}
+	if !strings.EqualFold(strings.TrimSpace(value.Identity.RiotID), strings.TrimSpace(expectedRiotID)) {
+		return ErrIdentityMismatch
+	}
 	if v.now().After(value.ExpiresAt) {
 		return ErrExpired
 	}
@@ -385,10 +395,15 @@ func (v *Vault) Status(profileID string) (Status, error) {
 	}
 	defer clearBytes(value.Data)
 	defer clearBytes(value.ClientData)
-	if v.now().After(value.ExpiresAt) {
-		return Status{CapturedAt: value.CapturedAt, ExpiresAt: value.ExpiresAt}, ErrExpired
+	defer clearFileMap(value.Files)
+	status := Status{CapturedAt: value.CapturedAt, ExpiresAt: value.ExpiresAt, Identity: value.Identity}
+	if value.Version < 2 {
+		return status, ErrUnverified
 	}
-	return Status{CapturedAt: value.CapturedAt, ExpiresAt: value.ExpiresAt}, nil
+	if v.now().After(value.ExpiresAt) {
+		return status, ErrExpired
+	}
+	return status, nil
 }
 
 func (v *Vault) Delete(profileID string) error {
@@ -420,10 +435,15 @@ func (v *Vault) load(profileID string) (payload, error) {
 	}
 	defer clearBytes(decoded)
 	var value payload
-	if err := json.Unmarshal(decoded, &value); err != nil || value.Version != 1 {
+	if err := json.Unmarshal(decoded, &value); err != nil || (value.Version != 1 && value.Version != 2) || (value.Version == 2 && !validIdentity(value.Identity)) {
 		return payload{}, errors.New("saved Riot login format was invalid")
 	}
 	return value, nil
+}
+
+func validIdentity(identity Identity) bool {
+	return identity.PUUID != "" && len(identity.PUUID) <= 128 && identity.RiotID != "" && len(identity.RiotID) <= 160 &&
+		!strings.ContainsAny(identity.PUUID, "\r\n\x00") && !strings.ContainsAny(identity.RiotID, "\r\n\x00")
 }
 
 func (v *Vault) path(profileID string) string { return filepath.Join(v.VaultDir, profileID+".vault") }

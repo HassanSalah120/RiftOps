@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, CircleUserRound, Loader2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Upload, X, Zap } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { CircleUserRound, Loader2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X, Zap } from 'lucide-react';
 import {
   captureSavedLogin,
   deleteLaunchProfile,
+  fetchConnectedLeagueAccount,
   fetchLaunchProfiles,
   fetchProfileSessionStatuses,
   saveLaunchProfile,
   switchLaunchProfile,
   type LaunchProfile,
+  type ConnectedLeagueAccount,
   type ProfileSessionStatus,
 } from '../api';
 import { useLCUConnection } from './lcuConnectionContext';
@@ -15,29 +17,27 @@ import { useLCUConnection } from './lcuConnectionContext';
 type Toast = (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
 
 const REGIONS = [
-  ['EUW1', 'Europe West'],
-  ['EUN1', 'Europe Nordic & East'],
-  ['NA1', 'North America'],
-  ['KR', 'Korea'],
-  ['BR1', 'Brazil'],
-  ['LA1', 'Latin America North'],
-  ['LA2', 'Latin America South'],
-  ['OC1', 'Oceania'],
-  ['TR1', 'Türkiye'],
-  ['JP1', 'Japan'],
+  { group: 'Europe', options: [['EUW1', 'Europe West'], ['EUN1', 'Europe Nordic & East'], ['TR1', 'Türkiye'], ['RU', 'Russia']] },
+  { group: 'Americas', options: [['NA1', 'North America'], ['BR1', 'Brazil'], ['LA1', 'Latin America North'], ['LA2', 'Latin America South']] },
+  { group: 'Asia & Oceania', options: [['KR', 'Korea'], ['JP1', 'Japan'], ['OC1', 'Oceania'], ['PH2', 'Philippines'], ['SG2', 'Singapore'], ['TH2', 'Thailand'], ['TW2', 'Taiwan'], ['VN2', 'Vietnam']] },
 ] as const;
 const LOCALES = ['auto', 'en_US', 'en_GB', 'de_DE', 'fr_FR', 'es_ES', 'it_IT', 'pt_BR', 'pl_PL', 'tr_TR', 'ru_RU', 'ja_JP', 'ko_KR', 'zh_CN', 'zh_TW'] as const;
 
 function sessionLabel(status: ProfileSessionStatus | undefined): string {
   if (!status) return 'Checking saved login…';
+  if (status.needsRecapture) return 'Re-save after verifying account';
   if (status.error) return 'Saved login unavailable';
-  if (status.expired) return 'Expired · sign in again';
+  if (status.expired) return 'Local save expired · sign in again';
   if (!status.saved) return 'No saved login yet';
-  if (!status.expiresAt) return 'Saved login ready';
+  if (!status.expiresAt) return 'Identity-verified local save';
   const remaining = new Date(status.expiresAt).getTime() - Date.now();
-  if (!Number.isFinite(remaining) || remaining <= 0) return 'Expired · sign in again';
+  if (!Number.isFinite(remaining) || remaining <= 0) return 'Local save expired · sign in again';
   const days = Math.max(1, Math.ceil(remaining / 86_400_000));
-  return `Saved login · ${days}d left`;
+  return `Identity-verified save · up to ${days}d locally`;
+}
+
+function sameRiotId(left?: string, right?: string): boolean {
+  return Boolean(left && right && left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase());
 }
 
 export default function LaunchProfilesPanel({
@@ -52,15 +52,16 @@ export default function LaunchProfilesPanel({
   const { streamerMode } = useLCUConnection();
   const [profiles, setProfiles] = useState<LaunchProfile[]>([]);
   const [statuses, setStatuses] = useState<Record<string, ProfileSessionStatus>>({});
+  const [connected, setConnected] = useState<ConnectedLeagueAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ name: '', accountLabel: '', riotId: '', region: 'EUW1', leagueLocale: 'auto' });
+  const [draft, setDraft] = useState({ name: '', accountLabel: '', riotId: '', region: '', leagueLocale: 'auto' });
 
   const resetDraft = () => {
-    setDraft({ name: '', accountLabel: '', riotId: '', region: 'EUW1', leagueLocale: 'auto' });
+    setDraft({ name: '', accountLabel: '', riotId: '', region: '', leagueLocale: 'auto' });
     setEditingId(null);
     setAdding(false);
   };
@@ -69,12 +70,14 @@ export default function LaunchProfilesPanel({
     setLoading(true);
     setError('');
     try {
-      const [nextProfiles, nextStatuses] = await Promise.all([
+      const [nextProfiles, nextStatuses, nextConnected] = await Promise.all([
         fetchLaunchProfiles(),
         fetchProfileSessionStatuses(),
+        fetchConnectedLeagueAccount().catch(() => ({ available: false, reason: 'Could not check the League Client. Try Refresh.' })),
       ]);
       setProfiles(nextProfiles);
       setStatuses(nextStatuses);
+      setConnected(nextConnected);
     } catch (cause: any) {
       setError(cause?.message || 'Launch profiles could not be loaded.');
     } finally {
@@ -84,27 +87,42 @@ export default function LaunchProfilesPanel({
 
   useEffect(() => { void load(); }, [load]);
 
-  const activeProfile = useMemo(
-    () => profiles.find((profile) => profile.id === activeProfileId) || profiles[0],
-    [activeProfileId, profiles],
-  );
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0];
+  const activeRegionMismatch = Boolean(connected?.available && activeProfile && sameRiotId(activeProfile.riotId, connected.riotId) && activeProfile.region !== connected.region);
+
+  const openNewProfileEditor = () => {
+    setDraft({ name: '', accountLabel: '', riotId: connected?.riotId || '', region: connected?.region || '', leagueLocale: 'auto' });
+    setEditingId(null);
+    setAdding(true);
+  };
 
   const runSwitch = async (profile: LaunchProfile, forceLogin = false) => {
+    const profileLabel = streamerMode ? 'this profile' : profile.name;
     setBusy(`switch:${profile.id}${forceLogin ? ':force' : ''}`);
+    setError('');
     try {
       const result = await switchLaunchProfile(profile.id, forceLogin);
       await onRefreshSnapshot().catch(() => undefined);
       await load();
-      if (forceLogin) {
-        showToast('Fresh sign-in ready', `${profile.name} is launching with a clean login screen. Sign in to your account.`, 'info');
-      } else if (result.targetSessionAvailable) {
-        showToast('Account switch started', `${profile.name} is launching without a Riot password prompt.`, 'success');
+      if (result.verification === 'verified') {
+        showToast('Account verified', `${profileLabel} signed in with the saved Riot account.`, 'success');
+      } else if (result.verification === 'wrong-account') {
+        setError('Riot opened a different account. Use Re-login, sign in to the intended Riot ID, then save that login again.');
+        showToast('Wrong Riot account opened', `Riot opened a different account for ${profileLabel}. Use Re-login, sign in to the intended account, then save it again.`, 'error');
+      } else if (result.verification === 'not-verified') {
+        setError('RiftOps could not verify which Riot account opened. Check Riot Client before using this profile.');
+        showToast('Sign-in not verified', `RiftOps could not confirm ${profileLabel}'s account. Check Riot Client; use Re-login if it opened the wrong account.`, 'error');
+      } else if (forceLogin) {
+        showToast('Fresh sign-in needed', `Sign in to the intended Riot account for ${profileLabel}, then save its login.`, 'info');
+      } else if (result.targetSessionUnverified) {
+        showToast('One-time re-save needed', `The old save for ${profileLabel} has no verified identity. Sign in to the correct account, then save it again.`, 'info');
       } else if (result.targetSessionExpired) {
-        showToast('Session expired', `${profile.name} needs one fresh Riot sign-in. Capture it afterward to save it again.`, 'info');
+        showToast('Local save expired', `${profileLabel} needs a fresh Riot sign-in. Save it afterward.`, 'info');
       } else {
-        showToast('Profile selected', `${profile.name} has no saved login yet. Riot will show the sign-in screen.`, 'info');
+        showToast('Sign-in needed', `${profileLabel} has no verified saved login. Sign in to Riot, then save it.`, 'info');
       }
     } catch (cause: any) {
+      setError(cause?.message || 'RiftOps could not switch Riot profiles.');
       showToast('Account switch failed', cause?.message || 'RiftOps could not switch Riot profiles.', 'error');
     } finally {
       setBusy('');
@@ -117,8 +135,9 @@ export default function LaunchProfilesPanel({
     try {
       await captureSavedLogin();
       await load();
-      showToast('Riot session saved', `${activeProfile.name} is ready for one-click switching for 30 days.`, 'success');
+      showToast('Riot login saved', `${streamerMode ? 'This profile' : activeProfile.name} is bound to the signed-in Riot account. Riot may still require sign-in later.`, 'success');
     } catch (cause: any) {
+      setError(cause?.message || 'The current Riot login could not be saved.');
       showToast('Could not save Riot session', cause?.message || 'Keep Riot Client open and signed in, then try again.', 'error');
     } finally {
       setBusy('');
@@ -130,16 +149,35 @@ export default function LaunchProfilesPanel({
       name: profile.name,
       accountLabel: profile.accountLabel || '',
       riotId: profile.riotId || '',
-      region: profile.region || 'EUW1',
+      region: profile.region || '',
       leagueLocale: profile.leagueLocale || 'auto',
     });
     setEditingId(profile.id);
     setAdding(true);
   };
 
+  const useConnectedAccount = () => {
+    if (!connected?.available || !connected.riotId || !connected.region) return;
+    setDraft((current) => ({ ...current, riotId: connected.riotId || '', region: connected.region || '' }));
+  };
+
+  const updateDetectedServer = async (profile: LaunchProfile) => {
+    if (!connected?.available || !connected.region || !sameRiotId(profile.riotId, connected.riotId)) return;
+    setBusy(`region:${profile.id}`);
+    try {
+      await saveLaunchProfile({ ...profile, region: connected.region });
+      await load();
+      showToast('Server updated', `${streamerMode ? 'This profile' : profile.name} now uses the server reported by League.`, 'success');
+    } catch (cause: any) {
+      setError(cause?.message || 'Could not update the profile server.');
+    } finally {
+      setBusy('');
+    }
+  };
+
   const saveProfile = async () => {
     const name = draft.name.trim();
-    if (!name) return;
+    if (!name || !draft.region) return;
     const editingProfile = editingId ? profiles.find((profile) => profile.id === editingId) : undefined;
     setBusy('add');
     try {
@@ -168,8 +206,8 @@ export default function LaunchProfilesPanel({
       await load();
       await onRefreshSnapshot().catch(() => undefined);
       showToast(editingProfile ? 'Profile updated' : 'Profile added', editingProfile
-        ? `${name} was updated without changing its saved Riot session.`
-        : `${name} is now selected. Sign into that Riot account, then save the current session.`, 'success');
+        ? `${streamerMode ? 'This profile' : name} was updated. Any saved login must still match its Riot ID.`
+        : `${streamerMode ? 'The new profile' : name} is now selected. Sign into that Riot account, then save the current session.`, 'success');
     } catch (cause: any) {
       showToast(editingProfile ? 'Profile could not be updated' : 'Profile could not be added', cause?.message || 'Check the profile details and try again.', 'error');
     } finally {
@@ -178,13 +216,14 @@ export default function LaunchProfilesPanel({
   };
 
   const removeProfile = async (profile: LaunchProfile) => {
-    if (profiles.length <= 1 || !window.confirm(`Delete the ${profile.name} profile and its saved Riot session?`)) return;
+    const profileLabel = streamerMode ? 'selected' : profile.name;
+    if (profiles.length <= 1 || !window.confirm(`Delete the ${profileLabel} profile and its saved Riot session?`)) return;
     setBusy(`delete:${profile.id}`);
     try {
       await deleteLaunchProfile(profile.id);
       await load();
       await onRefreshSnapshot().catch(() => undefined);
-      showToast('Profile deleted', `${profile.name} and its saved session were removed.`, 'success');
+      showToast('Profile deleted', `${streamerMode ? 'The profile' : profile.name} and its saved session were removed.`, 'success');
     } catch (cause: any) {
       showToast('Profile could not be deleted', cause?.message || 'The profile is still in use.', 'error');
     } finally {
@@ -193,127 +232,114 @@ export default function LaunchProfilesPanel({
   };
 
   return (
-    <section className="dashboard-section dashboard-section--profiles glass-card p-4 space-y-3" aria-labelledby="launch-profiles-title">
-      <div className="dashboard-section__heading">
-        <span className="dashboard-section__icon"><CircleUserRound /></span>
-        <span><small>RIOT ACCOUNT SESSIONS</small><strong id="launch-profiles-title">One-click account switching</strong></span>
-        <button type="button" className="ml-auto text-text-dim hover:text-primary transition" onClick={() => void load()} disabled={loading || busy !== ''} aria-label="Refresh launch profiles" title="Refresh profiles">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </button>
+    <section className="dashboard-section account-switcher glass-card" aria-labelledby="launch-profiles-title">
+      <header className="account-switcher__header">
+        <div className="account-switcher__heading">
+          <CircleUserRound aria-hidden="true" />
+          <div>
+            <h2 id="launch-profiles-title">Riot accounts</h2>
+            <p>Choose an account to launch. Save its login after signing in.</p>
+          </div>
+        </div>
+        <div className="account-switcher__header-actions">
+          <button type="button" className="account-switcher__icon-button" onClick={() => void load()} disabled={loading || busy !== ''} aria-label="Refresh accounts and detect server" title="Refresh accounts and detect server">
+            <RefreshCw className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+          </button>
+          <button type="button" className="btn-secondary account-switcher__add" onClick={openNewProfileEditor} disabled={busy !== ''}>
+            <Plus aria-hidden="true" /> Add account
+          </button>
+        </div>
+      </header>
+
+      <div className="account-switcher__current" role="status" aria-live="polite">
+        <span className={`account-switcher__signal ${connected?.available ? 'is-connected' : ''}`} aria-hidden="true" />
+        <div className="account-switcher__current-copy">
+          <strong>{connected?.available ? `League connected · ${connected.region}` : loading ? 'Checking League server…' : 'Server not detected'}</strong>
+          <span>{connected?.available ? (streamerMode ? 'Current Riot identity hidden' : connected.riotId) : connected?.reason || 'Connect League to detect the signed-in account.'}</span>
+          {connected?.available && activeProfile && !sameRiotId(activeProfile.riotId, connected.riotId) && <span className="account-switcher__identity-warning">Current account differs from selected profile. Edit that profile or sign in to its Riot ID.</span>}
+        </div>
+        {activeProfile && (
+          <button type="button" className="btn-primary account-switcher__save-login" onClick={() => void saveCurrentSession()} disabled={busy !== '' || loading || activeRegionMismatch || Boolean(connected?.available && !sameRiotId(activeProfile.riotId, connected.riotId))} title={activeRegionMismatch ? 'Update this profile to the server League reports before saving its login' : undefined}>
+            {busy === 'capture' ? <Loader2 className="animate-spin" aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
+            Save current login
+          </button>
+        )}
       </div>
 
-      <p className="text-[11px] leading-relaxed text-text-muted">
-        Save each Riot login once. RiftOps closes Riot, swaps the encrypted session, and launches the selected profile. Riot asks for a password again only when that session expires.
-      </p>
+      {error && <p className="account-switcher__error" role="alert">{error}</p>}
 
-      {error && <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-[11px] text-danger">{error}</div>}
+      {adding && (
+        <form className="account-switcher__editor" onSubmit={(event) => { event.preventDefault(); void saveProfile(); }}>
+          <div className="account-switcher__editor-heading">
+            <div>
+              <h3>{editingId ? 'Edit account' : 'Add account'}</h3>
+              <p>Server detection applies only to the account currently signed in to League.</p>
+            </div>
+            <button type="button" className="account-switcher__icon-button" onClick={resetDraft} disabled={busy !== ''} aria-label="Close account editor"><X aria-hidden="true" /></button>
+          </div>
+          {connected?.available && (
+            <button type="button" className="account-switcher__detect-button" onClick={useConnectedAccount} disabled={busy !== ''}>
+              Use connected account <span>{streamerMode ? connected.region : `${connected.riotId} · ${connected.region}`}</span>
+            </button>
+          )}
+          <div className="account-switcher__fields">
+            <label>Profile name<input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Main account" maxLength={48} required autoFocus /></label>
+            <label>Riot ID<input value={draft.riotId} onChange={(event) => setDraft((current) => ({ ...current, riotId: event.target.value }))} placeholder="Name#Tag" maxLength={80} type={streamerMode ? 'password' : 'text'} autoComplete="off" /></label>
+            <label>League server<select value={draft.region} onChange={(event) => setDraft((current) => ({ ...current, region: event.target.value }))} required>
+              <option value="" disabled>Choose a server</option>
+              {draft.region && !REGIONS.some((group) => group.options.some(([value]) => value === draft.region)) && <option value={draft.region}>{draft.region} · previously saved</option>}
+              {REGIONS.map((group) => <optgroup key={group.group} label={group.group}>{group.options.map(([value, label]) => <option key={value} value={value}>{label} · {value}</option>)}</optgroup>)}
+            </select></label>
+          </div>
+          <details className="account-switcher__advanced">
+            <summary>Language and account label</summary>
+            <div className="account-switcher__fields">
+              <label>Account label<input value={draft.accountLabel} onChange={(event) => setDraft((current) => ({ ...current, accountLabel: event.target.value }))} placeholder="Optional note" maxLength={80} /></label>
+              <label>League language<select value={draft.leagueLocale} onChange={(event) => setDraft((current) => ({ ...current, leagueLocale: event.target.value }))}><option value="auto">System default</option>{LOCALES.filter((locale) => locale !== 'auto').map((locale) => <option key={locale} value={locale}>{locale}</option>)}</select></label>
+            </div>
+          </details>
+          <div className="account-switcher__editor-actions">
+            <button type="submit" className="btn-primary" disabled={busy !== '' || !draft.name.trim() || !draft.region}>{busy === 'add' && <Loader2 className="animate-spin" aria-hidden="true" />}{editingId ? 'Save changes' : 'Add account'}</button>
+            <button type="button" className="btn-secondary" onClick={resetDraft} disabled={busy !== ''}>Cancel</button>
+            {editingId && profiles.length > 1 && <button type="button" className="account-switcher__delete" onClick={() => { const profile = profiles.find((item) => item.id === editingId); if (profile) void removeProfile(profile); }} disabled={busy !== ''}><Trash2 aria-hidden="true" /> Delete account</button>}
+          </div>
+        </form>
+      )}
 
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="account-switcher__list">
         {profiles.map((profile, index) => {
           const active = profile.id === activeProfileId;
           const switching = busy === `switch:${profile.id}`;
           const forceSwitching = busy === `switch:${profile.id}:force`;
-          const profileDisplayName = streamerMode
-            ? (active ? 'Main Profile' : `Secondary Profile ${index}`)
-            : profile.name;
-          const profileDisplayRiotId = streamerMode ? undefined : profile.riotId;
+          const status = statuses[profile.id];
+          const detectedMismatch = active && connected?.available && sameRiotId(profile.riotId, connected.riotId) && profile.region !== connected.region;
+          const profileDisplayName = streamerMode ? (active ? 'Main profile' : `Profile ${index + 1}`) : profile.name;
           return (
-            <article key={profile.id} className={`rounded-xl border p-3 transition ${active ? 'border-primary/50 bg-primary/10 shadow-[0_0_18px_rgba(200,170,110,.12)]' : 'border-white/[0.08] bg-black/10 hover:border-primary/30'}`}>
-              <div className="flex items-start gap-2">
-                <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${active ? 'bg-primary/20 text-primary' : 'bg-white/[0.06] text-text-dim'}`}><ShieldCheck className="h-4 w-4" /></span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <strong className="truncate text-xs text-white">{profileDisplayName}</strong>
-                    {active && <span className="rounded-full bg-success/15 px-1.5 py-0.5 text-[9px] font-bold text-success">ACTIVE</span>}
-                  </div>
-                  <p className="mt-0.5 truncate text-[10px] text-text-muted">{profile.region || 'Region not set'}{profileDisplayRiotId ? ` · ${profileDisplayRiotId}` : ''}</p>
-                  <p className={`mt-2 text-[10px] ${statuses[profile.id]?.saved ? 'text-success' : statuses[profile.id]?.expired ? 'text-warning' : 'text-text-dim'}`}>
-                    {sessionLabel(statuses[profile.id])}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button type="button" className="text-text-dim hover:text-primary transition disabled:opacity-40" onClick={() => openProfileEditor(profile)} disabled={busy !== ''} aria-label={`Edit ${profile.name}`} title="Edit profile">
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button type="button" className="text-text-dim hover:text-danger transition disabled:opacity-40" onClick={() => void removeProfile(profile)} disabled={busy !== '' || profiles.length <= 1} aria-label={`Delete ${profile.name}`} title="Delete profile">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+            <article key={profile.id} className={`account-switcher__row ${active ? 'is-active' : ''}`}>
+              <div className="account-switcher__identity">
+                <span className="account-switcher__avatar" aria-hidden="true">{profileDisplayName.slice(0, 1).toUpperCase()}</span>
+                <div className="account-switcher__identity-copy">
+                  <div className="account-switcher__name"><strong>{profileDisplayName}</strong>{active && <span>Selected</span>}</div>
+                  <p>{streamerMode ? 'Riot ID hidden' : profile.riotId || 'Riot ID not set'} <span aria-hidden="true">·</span> {profile.region || 'Server not set'}</p>
+                  <small className={status?.saved ? 'is-ready' : status?.needsRecapture || status?.expired ? 'is-warning' : ''}>{sessionLabel(status)}</small>
+                  {detectedMismatch && <div className="account-switcher__region-note">League reports {connected.region}. <button type="button" onClick={() => void updateDetectedServer(profile)} disabled={busy !== ''}>Update server</button></div>}
                 </div>
               </div>
-              <div className="mt-3 flex items-center gap-1.5">
-                <button
-                  type="button"
-                  className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[10px] font-bold transition ${
-                    active
-                      ? 'bg-primary text-black hover:bg-primary-hover'
-                      : 'border border-primary/25 bg-primary/10 text-primary hover:bg-primary/20'
-                  }`}
-                  onClick={() => void runSwitch(profile, false)}
-                  disabled={busy !== ''}
-                >
-                  {switching ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : active ? (
-                    <Zap className="h-3.5 w-3.5" />
-                  ) : (
-                    <Upload className="h-3.5 w-3.5 rotate-90" />
-                  )}
-                  {switching
-                    ? 'Switching…'
-                    : active
-                    ? 'Launch Account'
-                    : statuses[profile.id]?.saved
-                    ? 'Switch & Auto-Login'
-                    : 'Switch & Launch'}
+              <div className="account-switcher__row-actions">
+                <button type="button" className={active ? 'btn-primary' : 'btn-secondary'} onClick={() => void runSwitch(profile)} disabled={busy !== ''}>
+                  {switching ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Zap aria-hidden="true" />}
+                  {switching ? 'Switching…' : active ? 'Launch' : status?.saved ? 'Switch' : 'Sign in'}
                 </button>
-                <button
-                  type="button"
-                  className="px-2.5 py-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-[10px] font-semibold text-text-muted hover:text-white transition whitespace-nowrap"
-                  onClick={() => void runSwitch(profile, true)}
-                  disabled={busy !== ''}
-                  title="Clear active session tokens and launch Riot with a clean sign-in prompt for this account"
-                >
-                  {forceSwitching ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Re-login'}
+                <button type="button" className="account-switcher__text-button" onClick={() => void runSwitch(profile, true)} disabled={busy !== ''} title="Clear the active Riot login and open a fresh sign-in screen">
+                  {forceSwitching ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}Fresh sign-in
                 </button>
+                <button type="button" className="account-switcher__icon-button" onClick={() => openProfileEditor(profile)} disabled={busy !== ''} aria-label={`Edit ${profileDisplayName}`} title="Edit account"><Pencil aria-hidden="true" /></button>
               </div>
             </article>
           );
         })}
       </div>
-
-      {activeProfile && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-success/20 bg-success/[0.06] px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2"><Check className="h-4 w-4 shrink-0 text-success" /><span className="truncate text-[10px] text-text-muted">Current profile: <strong className="text-white">{streamerMode ? 'Main Profile' : activeProfile.name}</strong></span></div>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-success/30 bg-success/10 px-2.5 py-1.5 text-[10px] font-bold text-success transition hover:bg-success/20 disabled:opacity-50" onClick={() => void saveCurrentSession()} disabled={busy !== '' || loading}>
-            {busy === 'capture' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-            Save current Riot login · 30 days
-          </button>
-        </div>
-      )}
-
-      {adding ? (
-        <div className="rounded-xl border border-primary/25 bg-primary/[0.05] p-3 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <strong className="text-xs text-white">{editingId ? 'Edit profile details' : 'Add Riot account profile'}</strong>
-            <button type="button" className="text-text-dim transition hover:text-white disabled:opacity-50" onClick={resetDraft} disabled={busy !== ''} aria-label="Close profile editor" title="Close"><X className="h-4 w-4" /></button>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <input className="w-full text-xs" placeholder="Profile name (EUW, EUNE…)" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} autoFocus />
-            <select className="w-full text-xs" value={draft.region} onChange={(event) => setDraft((current) => ({ ...current, region: event.target.value }))}>
-              {REGIONS.map(([value, label]) => <option key={value} value={value}>{value} · {label}</option>)}
-            </select>
-            <input className="w-full text-xs" placeholder="Riot ID (optional)" value={draft.riotId} onChange={(event) => setDraft((current) => ({ ...current, riotId: event.target.value }))} />
-            <input className="w-full text-xs" placeholder="Account label (optional)" value={draft.accountLabel} onChange={(event) => setDraft((current) => ({ ...current, accountLabel: event.target.value }))} />
-            <select className="w-full text-xs" value={draft.leagueLocale} onChange={(event) => setDraft((current) => ({ ...current, leagueLocale: event.target.value }))} aria-label="League language"><option value="auto">League language · System</option>{LOCALES.filter((locale) => locale !== 'auto').map((locale) => <option key={locale} value={locale}>{locale}</option>)}</select>
-          </div>
-          <div className="flex gap-2">
-            <button type="button" className="btn-primary inline-flex items-center gap-1.5 px-3 py-2 text-[10px]" onClick={() => void saveProfile()} disabled={busy !== '' || !draft.name.trim()}>{busy === 'add' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : editingId ? <Pencil className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}{editingId ? 'Save changes' : 'Add profile'}</button>
-            <button type="button" className="btn-secondary px-3 py-2 text-[10px]" onClick={resetDraft} disabled={busy !== ''}>Cancel</button>
-          </div>
-        </div>
-      ) : (
-        <button type="button" className="inline-flex items-center gap-1.5 text-[10px] font-bold text-primary hover:text-primary-hover transition" onClick={() => setAdding(true)} disabled={busy !== ''}><Plus className="h-3.5 w-3.5" />Add Riot account profile</button>
-      )}
+      <p className="account-switcher__footnote">Old saved logins need one verified re-save. Riot may still ask you to sign in later.</p>
     </section>
   );
 }

@@ -97,6 +97,7 @@ export interface LaunchProfile {
 export interface ProfileSessionStatus {
   saved: boolean;
   expired: boolean;
+  needsRecapture?: boolean;
   capturedAt?: string;
   expiresAt?: string;
   error?: string;
@@ -111,6 +112,19 @@ export async function fetchLaunchProfiles(): Promise<LaunchProfile[]> {
 export async function fetchProfileSessionStatuses(): Promise<Record<string, ProfileSessionStatus>> {
   const res = await fetch('/api/profiles/session-status', { cache: 'no-store' });
   if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to load saved login status');
+  return res.json();
+}
+
+export interface ConnectedLeagueAccount {
+  available: boolean;
+  riotId?: string;
+  region?: string;
+  reason?: string;
+}
+
+export async function fetchConnectedLeagueAccount(): Promise<ConnectedLeagueAccount> {
+  const res = await fetch('/api/profiles/connected-account', { cache: 'no-store' });
+  if (!res.ok) throw new Error('Could not detect the connected League account');
   return res.json();
 }
 
@@ -133,7 +147,13 @@ export async function deleteLaunchProfile(id: string): Promise<void> {
   if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to delete launch profile');
 }
 
-export async function switchLaunchProfile(id: string, forceLogin = false): Promise<{ profile: LaunchProfile; targetSessionAvailable: boolean; targetSessionExpired: boolean }> {
+export async function switchLaunchProfile(id: string, forceLogin = false): Promise<{
+  profile: LaunchProfile;
+  targetSessionAvailable: boolean;
+  targetSessionExpired: boolean;
+  targetSessionUnverified: boolean;
+  verification: 'verified' | 'login-required' | 'wrong-account' | 'not-verified';
+}> {
   const res = await fetch('/api/switch-profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

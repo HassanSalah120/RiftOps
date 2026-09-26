@@ -18,6 +18,7 @@ func dashboardRoutes() []dashboardRoute {
 		{Pattern: "/api/events", Handler: sseHandler, API: true},
 		{Pattern: "/api/profiles", Handler: getProfiles, API: true},
 		{Pattern: "/api/profiles/session-status", Handler: getProfileSessionStatuses, API: true},
+		{Pattern: "/api/profiles/connected-account", Handler: getConnectedLeagueAccount, API: true},
 		{Pattern: "/api/select-profile", Handler: selectProfile, API: true},
 		{Pattern: "/api/save-profile", Handler: saveProfile, API: true},
 		{Pattern: "/api/delete-profile", Handler: deleteProfile, API: true},

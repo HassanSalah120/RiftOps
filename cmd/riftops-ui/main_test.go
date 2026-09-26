@@ -16,8 +16,37 @@ import (
 	"github.com/HassanSalah120/RiftOps/internal/model"
 	"github.com/HassanSalah120/RiftOps/internal/playflow"
 	"github.com/HassanSalah120/RiftOps/internal/qol"
+	"github.com/HassanSalah120/RiftOps/internal/riotclient"
 	"github.com/HassanSalah120/RiftOps/internal/settings"
 )
+
+func TestProfileVerificationRequiresExpectedAuthorizedAccount(t *testing.T) {
+	for _, test := range []struct {
+		expected string
+		account  riotclient.RiotAccountSession
+		want     string
+	}{
+		{"puuid-a", riotclient.RiotAccountSession{PUUID: "puuid-a", Authorized: true}, "verified"},
+		{"puuid-a", riotclient.RiotAccountSession{PUUID: "puuid-b", Authorized: true}, "wrong-account"},
+		{"puuid-a", riotclient.RiotAccountSession{PUUID: "puuid-b"}, ""},
+		{"", riotclient.RiotAccountSession{PUUID: "puuid-b", Authorized: true}, ""},
+	} {
+		if got := profileVerification(test.expected, test.account); got != test.want {
+			t.Fatalf("profileVerification() = %q, want %q", got, test.want)
+		}
+	}
+}
+
+func TestConnectedServerOnlyMatchesSameAuthorizedRiotAccount(t *testing.T) {
+	league := riotclient.ConnectedLeagueAccount{PUUID: "account-a", Region: "EUW1"}
+	if !connectedAccountMatches(league, riotclient.RiotAccountSession{PUUID: "account-a", Authorized: true}) {
+		t.Fatal("matching connected account was rejected")
+	}
+	if connectedAccountMatches(league, riotclient.RiotAccountSession{PUUID: "account-b", Authorized: true}) ||
+		connectedAccountMatches(league, riotclient.RiotAccountSession{PUUID: "account-a"}) {
+		t.Fatal("server detection crossed an account boundary")
+	}
+}
 
 func TestMergeQoLPreferencesPreservesUnchangedFields(t *testing.T) {
 	current := qol.Preferences{

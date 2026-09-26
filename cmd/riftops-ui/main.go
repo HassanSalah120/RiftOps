@@ -600,26 +600,71 @@ func getProfileSessionStatuses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type profileSessionStatus struct {
-		Saved      bool   `json:"saved"`
-		Expired    bool   `json:"expired"`
-		CapturedAt string `json:"capturedAt,omitempty"`
-		ExpiresAt  string `json:"expiresAt,omitempty"`
-		Error      string `json:"error,omitempty"`
+		Saved          bool   `json:"saved"`
+		Expired        bool   `json:"expired"`
+		NeedsRecapture bool   `json:"needsRecapture"`
+		CapturedAt     string `json:"capturedAt,omitempty"`
+		ExpiresAt      string `json:"expiresAt,omitempty"`
+		Error          string `json:"error,omitempty"`
 	}
 	statuses := make(map[string]profileSessionStatus)
 	for _, profile := range backendEngine.LaunchProfiles() {
 		status, err := backendEngine.SavedLoginStatusForProfile(profile.ID)
-		entry := profileSessionStatus{Saved: err == nil, Expired: errors.Is(err, sessionvault.ErrExpired)}
+		entry := profileSessionStatus{
+			Saved:          err == nil,
+			Expired:        errors.Is(err, sessionvault.ErrExpired),
+			NeedsRecapture: errors.Is(err, sessionvault.ErrUnverified) || errors.Is(err, sessionvault.ErrIdentityMismatch),
+		}
 		if err == nil || errors.Is(err, sessionvault.ErrExpired) {
 			entry.CapturedAt = status.CapturedAt.Format(time.RFC3339)
 			entry.ExpiresAt = status.ExpiresAt.Format(time.RFC3339)
-		} else if !errors.Is(err, sessionvault.ErrNotFound) {
-			entry.Error = err.Error()
+		} else if err != nil && !errors.Is(err, sessionvault.ErrNotFound) && !entry.NeedsRecapture {
+			entry.Error = "Saved login could not be checked"
 		}
 		statuses[profile.ID] = entry
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(statuses)
+}
+
+func getConnectedLeagueAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	type response struct {
+		Available bool   `json:"available"`
+		RiotID    string `json:"riotId,omitempty"`
+		Region    string `json:"region,omitempty"`
+		Reason    string `json:"reason,omitempty"`
+	}
+	result := response{Reason: "Connect League and sign in to detect the current account's server."}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	lockfile, err := riotclient.ReadLockfile()
+	if err == nil && lockfile.Source == "league" {
+		league, leagueErr := lockfile.FetchConnectedLeagueAccount(ctx)
+		if leagueErr == nil {
+			riot, riotErr := riotclient.CurrentRiotAccountSession(ctx)
+			if riotErr == nil && riot.Authorized {
+				if connectedAccountMatches(league, riot) {
+					result = response{Available: true, RiotID: riot.RiotID, Region: league.Region}
+				} else {
+					result.Reason = "League and Riot Client are signed in to different accounts. Finish switching before detecting a server."
+				}
+			} else {
+				result.Reason = "League is connected, but Riot Client's signed-in account could not be verified."
+			}
+		} else {
+			result.Reason = "League is connected, but its account or server is not ready yet."
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func connectedAccountMatches(league riotclient.ConnectedLeagueAccount, riot riotclient.RiotAccountSession) bool {
+	return riot.Authorized && league.PUUID != "" && league.PUUID == riot.PUUID
 }
 
 func selectProfile(w http.ResponseWriter, r *http.Request) {
@@ -650,11 +695,15 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("switchProfile decode", "error", err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	result, err := backendEngine.SwitchLaunchProfile(ctx, body.ID, 30*24*time.Hour)
+	result, err := backendEngine.SwitchLaunchProfile(ctx, body.ID)
 	if err != nil {
-		httpError(w, "Failed to switch profile", http.StatusInternalServerError)
+		message := "Failed to switch profile"
+		if errors.Is(err, engine.ErrRiotCloseFailed) {
+			message = "Riot Client or League could not be closed. Close both apps manually, then retry the switch."
+		}
+		httpError(w, message, http.StatusConflict)
 		slog.Error("switchProfile", "error", err)
 		return
 	}
@@ -667,8 +716,9 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	freshLogin := !result.TargetSessionAvailable || body.ForceLogin
+	runResult := make(chan error, 1)
 	go func() {
-		_ = backendEngine.Run(context.Background(), engine.RunOptions{
+		runResult <- backendEngine.Run(context.Background(), engine.RunOptions{
 			Game:           game,
 			Status:         status,
 			Patchline:      profile.Patchline,
@@ -678,13 +728,68 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 			GameArgs:       launchGameArgs(profile),
 		})
 	}()
+	verification, verifyErr := waitForProfileLaunch(ctx, runResult, result.TargetPUUID, freshLogin)
+	if verifyErr != nil {
+		httpError(w, "Riot Client could not be launched for this profile. Check Riot Client and try again.", http.StatusConflict)
+		slog.Error("switchProfile launch", "error", verifyErr)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"profile":                profile,
-		"refreshedCurrent":       result.RefreshedCurrent,
-		"targetSessionAvailable": result.TargetSessionAvailable && !body.ForceLogin,
-		"targetSessionExpired":   result.TargetSessionExpired,
+		"profile":                 profile,
+		"targetSessionAvailable":  result.TargetSessionAvailable && !body.ForceLogin,
+		"targetSessionExpired":    result.TargetSessionExpired,
+		"targetSessionUnverified": result.TargetSessionUnverified,
+		"verification":            verification,
 	})
+}
+
+// A restored vault is not a successful switch until Riot authorizes the same
+// PUUID. Launching and restoring files alone never prove the account in use.
+func waitForProfileLaunch(ctx context.Context, runResult <-chan error, expectedPUUID string, freshLogin bool) (string, error) {
+	verifyCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-runResult:
+			if err == nil {
+				err = errors.New("Riot Client exited before account verification")
+			}
+			return "", err
+		default:
+		}
+		phase := backendEngine.Snapshot().Phase
+		if phase == engine.PhaseWaiting || phase == engine.PhaseActive {
+			if freshLogin {
+				return "login-required", nil
+			}
+			checkCtx, stop := context.WithTimeout(verifyCtx, 2*time.Second)
+			account, err := riotclient.CurrentRiotAccountSession(checkCtx)
+			stop()
+			if err == nil {
+				if state := profileVerification(expectedPUUID, account); state != "" {
+					return state, nil
+				}
+			}
+		}
+		select {
+		case <-verifyCtx.Done():
+			return "not-verified", nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func profileVerification(expectedPUUID string, account riotclient.RiotAccountSession) string {
+	if !account.Authorized || expectedPUUID == "" {
+		return ""
+	}
+	if account.PUUID != expectedPUUID {
+		return "wrong-account"
+	}
+	return "verified"
 }
 
 func saveProfile(w http.ResponseWriter, r *http.Request) {
@@ -1103,7 +1208,17 @@ func captureSession(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	if err := backendEngine.CaptureSavedLogin(ctx, 30*24*time.Hour); err != nil {
-		httpError(w, "Could not save this Riot session. Keep Riot Client open with Stay signed in enabled, then try again.", http.StatusInternalServerError)
+		message := "Could not save this Riot session. Keep Riot Client open with Stay signed in enabled, then try again."
+		statusCode := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, engine.ErrRiotIDRequired):
+			message, statusCode = "Enter this profile's Riot ID before saving its login.", http.StatusConflict
+		case errors.Is(err, engine.ErrRiotAccountMismatch):
+			message, statusCode = "The signed-in Riot account does not match this profile's Riot ID. Sign in to the correct account first.", http.StatusConflict
+		case errors.Is(err, engine.ErrRiotAccountUnverified):
+			message, statusCode = "Riot Client is not signed in with a verifiable account. Sign in and try again.", http.StatusConflict
+		}
+		httpError(w, message, statusCode)
 		slog.Error("captureSession", "error", err)
 		return
 	}

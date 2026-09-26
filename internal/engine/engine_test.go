@@ -25,6 +25,22 @@ func newTestEngine(t *testing.T) (*Engine, settings.Store) {
 	return backend, store
 }
 
+func TestRiotIDMatchRequiresBothNamesAndTags(t *testing.T) {
+	for _, test := range []struct {
+		a, b string
+		want bool
+	}{
+		{" Player#NA1 ", "player#na1", true},
+		{"Player#NA1", "Player#EUW", false},
+		{"Player#NA1", "Other#NA1", false},
+		{"Player#NA1", "", false},
+	} {
+		if got := sameRiotID(test.a, test.b); got != test.want {
+			t.Fatalf("sameRiotID(%q, %q) = %v, want %v", test.a, test.b, got, test.want)
+		}
+	}
+}
+
 func TestFailPreservesDisabledState(t *testing.T) {
 	backend, _ := newTestEngine(t)
 	if err := backend.SetEnabled(context.Background(), false); err != nil {

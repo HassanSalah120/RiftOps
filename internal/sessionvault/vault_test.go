@@ -12,6 +12,8 @@ import (
 
 type testProtector struct{}
 
+var testIdentity = Identity{PUUID: "puuid-account-a", RiotID: "Account A#NA1"}
+
 func (testProtector) seal(plaintext, context []byte) ([]byte, error) {
 	result := append([]byte("sealed:"), context...)
 	result = append(result, 0)
@@ -43,7 +45,7 @@ func TestCaptureStatusRestoreAndDelete(t *testing.T) {
 	}
 	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
 	vault := &Vault{RiotDataDir: dataDir, VaultDir: vaultDir, protector: testProtector{}, now: func() time.Time { return now }}
-	if err := vault.Capture("profile-test", 30*24*time.Hour); err != nil {
+	if err := vault.Capture("profile-test", 30*24*time.Hour, testIdentity); err != nil {
 		t.Fatal(err)
 	}
 	status, err := vault.Status("profile-test")
@@ -53,7 +55,7 @@ func TestCaptureStatusRestoreAndDelete(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, privateSettingsFile), []byte("other-account"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := vault.Restore("profile-test"); err != nil {
+	if err := vault.Restore("profile-test", testIdentity.RiotID); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(dataDir, privateSettingsFile))
@@ -76,11 +78,11 @@ func TestExpiredLoginIsNotRestored(t *testing.T) {
 	}
 	now := time.Now()
 	vault.now = func() time.Time { return now }
-	if err := vault.Capture("profile-test", time.Hour); err != nil {
+	if err := vault.Capture("profile-test", time.Hour, testIdentity); err != nil {
 		t.Fatal(err)
 	}
 	vault.now = func() time.Time { return now.Add(2 * time.Hour) }
-	if err := vault.Restore("profile-test"); !errors.Is(err, ErrExpired) {
+	if err := vault.Restore("profile-test", testIdentity.RiotID); !errors.Is(err, ErrExpired) {
 		t.Fatalf("restore error = %v", err)
 	}
 }
@@ -103,61 +105,50 @@ func TestClearActiveSession(t *testing.T) {
 	}
 }
 
-func TestRefreshIfEnrolledKeepsProfilesIsolatedAndRenewsExpiry(t *testing.T) {
+func TestRestoreRejectsDifferentProfileIdentityWithoutChangingActiveSession(t *testing.T) {
 	dataDir := t.TempDir()
-	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}}
-	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	vault.now = func() time.Time { return now }
-
-	writeSession := func(value string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(dataDir, privateSettingsFile), []byte(value), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	writeSession("euw-session-v1")
-	if err := vault.Capture("euw", 30*24*time.Hour); err != nil {
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}, now: time.Now}
+	path := filepath.Join(dataDir, privateSettingsFile)
+	if err := os.WriteFile(path, []byte("account-A-session"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writeSession("eune-session-v1")
-	if err := vault.Capture("eune", 30*24*time.Hour); err != nil {
+	if err := vault.Capture("profile-A", 30*24*time.Hour, testIdentity); err != nil {
 		t.Fatal(err)
 	}
-
-	now = now.Add(10 * 24 * time.Hour)
-	writeSession("euw-session-v2")
-	refreshed, err := vault.RefreshIfEnrolled("euw", 30*24*time.Hour)
-	if err != nil || !refreshed {
-		t.Fatalf("refresh EUW = %t, %v", refreshed, err)
-	}
-	status, err := vault.Status("euw")
-	if err != nil || !status.ExpiresAt.Equal(now.Add(30*24*time.Hour)) {
-		t.Fatalf("refreshed EUW status = %+v, %v", status, err)
-	}
-
-	if err := vault.Restore("eune"); err != nil {
+	if err := os.WriteFile(path, []byte("account-B-session"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(filepath.Join(dataDir, privateSettingsFile))
-	if err != nil || string(got) != "eune-session-v1" {
-		t.Fatalf("EUNE restore = %q, %v", got, err)
+	if err := vault.Restore("profile-A", "Account B#NA1"); !errors.Is(err, ErrIdentityMismatch) {
+		t.Fatalf("restore with wrong identity error = %v", err)
 	}
-	if err := vault.Restore("euw"); err != nil {
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "account-B-session" {
+		t.Fatalf("active session changed after refused restore: %q, %v", got, err)
+	}
+}
+
+func TestFailedCaptureVerificationPreservesExistingVault(t *testing.T) {
+	dataDir := t.TempDir()
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}, now: time.Now}
+	path := filepath.Join(dataDir, privateSettingsFile)
+	if err := os.WriteFile(path, []byte("original-account"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err = os.ReadFile(filepath.Join(dataDir, privateSettingsFile))
-	if err != nil || string(got) != "euw-session-v2" {
-		t.Fatalf("EUW restore = %q, %v", got, err)
+	if err := vault.Capture("profile-A", time.Hour, testIdentity); err != nil {
+		t.Fatal(err)
 	}
-
-	writeSession("unknown-session")
-	refreshed, err = vault.RefreshIfEnrolled("new-profile", 30*24*time.Hour)
-	if err != nil || refreshed {
-		t.Fatalf("unenrolled refresh = %t, %v", refreshed, err)
+	if err := os.WriteFile(path, []byte("other-account"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := vault.Status("new-profile"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unenrolled profile unexpectedly captured: %v", err)
+	if err := vault.CaptureVerified("profile-A", time.Hour, testIdentity, func() error { return ErrIdentityMismatch }); !errors.Is(err, ErrIdentityMismatch) {
+		t.Fatalf("capture verification error = %v", err)
+	}
+	if err := vault.Restore("profile-A", testIdentity.RiotID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "original-account" {
+		t.Fatalf("original vault was replaced: %v", err)
 	}
 }
 
@@ -175,7 +166,7 @@ func TestCaptureAndRestoreBothSettingsFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := vault.Capture("profile-dual", 30*24*time.Hour); err != nil {
+	if err := vault.Capture("profile-dual", 30*24*time.Hour, testIdentity); err != nil {
 		t.Fatal(err)
 	}
 
@@ -187,7 +178,7 @@ func TestCaptureAndRestoreBothSettingsFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := vault.Restore("profile-dual"); err != nil {
+	if err := vault.Restore("profile-dual", testIdentity.RiotID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -236,7 +227,7 @@ func TestCaptureAndRestoreCompleteRiotRememberedLoginState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := vault.Capture("complete", 30*24*time.Hour); err != nil {
+	if err := vault.Capture("complete", 30*24*time.Hour, testIdentity); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,7 +239,7 @@ func TestCaptureAndRestoreCompleteRiotRememberedLoginState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, privateSettingsFile), []byte("other"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := vault.Restore("complete"); err != nil {
+	if err := vault.Restore("complete", testIdentity.RiotID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -293,7 +284,7 @@ func TestClearActiveSessionRemovesCompleteRememberedLoginState(t *testing.T) {
 	}
 }
 
-func TestRestoreMigratesLegacyTwoFileVault(t *testing.T) {
+func TestRestoreRefusesUnverifiedLegacyVaultWithoutChangingActiveSession(t *testing.T) {
 	dataDir := t.TempDir()
 	vaultDir := t.TempDir()
 	vault := &Vault{RiotDataDir: dataDir, VaultDir: vaultDir, protector: testProtector{}, now: time.Now}
@@ -315,16 +306,18 @@ func TestRestoreMigratesLegacyTwoFileVault(t *testing.T) {
 	if err := os.WriteFile(vault.path("legacy"), sealed, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := vault.Restore("legacy"); err != nil {
+	activePath := filepath.Join(dataDir, privateSettingsFile)
+	if err := os.WriteFile(activePath, []byte("active-other-account"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for path, want := range map[string]string{
-		filepath.Join(dataDir, privateSettingsFile):       "legacy-games",
-		filepath.Join(dataDir, clientPrivateSettingsFile): "legacy-client",
-	} {
-		got, err := os.ReadFile(path)
-		if err != nil || string(got) != want {
-			t.Fatalf("legacy restore %s = %q, %v; want %q", path, got, err, want)
-		}
+	if err := vault.Restore("legacy", testIdentity.RiotID); !errors.Is(err, ErrUnverified) {
+		t.Fatalf("unverified legacy session restore error = %v", err)
+	}
+	if _, err := os.Stat(vault.path("legacy")); err != nil {
+		t.Fatalf("legacy vault was removed: %v", err)
+	}
+	got, err := os.ReadFile(activePath)
+	if err != nil || string(got) != "active-other-account" {
+		t.Fatalf("active session changed after refused restore: %q, %v", got, err)
 	}
 }
