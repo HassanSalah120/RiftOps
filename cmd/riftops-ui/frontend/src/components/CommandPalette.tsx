@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Bell, BookOpen, Check, CheckCircle2, CircleStop, Command, Gem, History, Play, Radar, RadioTower, RefreshCw, RotateCcw, Search, Settings, Shield, Sparkles, Swords, Wand2, X, type LucideIcon } from 'lucide-react';
+import { Activity, Bell, BookOpen, Check, CheckCircle2, CircleStop, Command, Gem, History, Play, Radar, RadioTower, RefreshCw, RotateCcw, Search, Settings, Shield, Sparkles, Swords, Users, Wand2, X, type LucideIcon } from 'lucide-react';
 import type { Tab } from '../types';
 import { commandAvailable } from '../clientCapabilities';
 import { useDialogFocus } from './useDialogFocus';
@@ -14,15 +14,16 @@ type PaletteCommand = {
 };
 
 const COMMANDS: PaletteCommand[] = [
-  { id: 'dashboard', label: 'Open Command Center', description: 'Launch games and manage presence', icon: Radar, tab: 'dashboard' },
+  { id: 'dashboard', label: 'Open Home', description: 'Launch games and manage presence', icon: Radar, tab: 'dashboard' },
   { id: 'play-flow', label: 'Open Play & Queue', description: 'Choose a queue and automate champion select', icon: Swords, tab: 'play' },
-  { id: 'live-session', label: 'Open Live Session', description: 'Follow queue, ready check, champion select, and the current match', icon: Activity, tab: 'live' },
-  { id: 'qol', label: 'Open League QoL', description: 'Queue, automation, champion select, and post-game controls', icon: Wand2, tab: 'qol' },
+  { id: 'live-session', label: 'Open Live Game', description: 'Follow queue, ready check, champion select, and the current match', icon: Activity, tab: 'live' },
+  { id: 'social', label: 'Open Friends', description: 'Friends, party invites, and chat settings', icon: Users, tab: 'social' },
+  { id: 'qol', label: 'Open Automations', description: 'Queue, automation, champion select, and post-game controls', icon: Wand2, tab: 'qol' },
   { id: 'history', label: 'Open Match History', description: 'Review recent games and performance', icon: History, tab: 'history' },
-  { id: 'skins', label: 'Open Collection', description: 'Browse skins and customize your profile', icon: Sparkles, tab: 'skins' },
+  { id: 'skins', label: 'Open Skins & Splash', description: 'Browse skins and customize your profile', icon: Sparkles, tab: 'skins' },
   { id: 'progress', label: 'Open Progress', description: 'Review missions, mastery, and rewards', icon: BookOpen, tab: 'progress' },
-  { id: 'loot', label: 'Open Loot Workshop', description: 'Review shards, essence, and crafting', icon: Gem, tab: 'loot' },
-  { id: 'remote', label: 'Open Remote Access', description: 'Pair and manage phone sessions', icon: RadioTower, tab: 'remote' },
+  { id: 'loot', label: 'Open Hextech Loot', description: 'Review shards, essence, and crafting', icon: Gem, tab: 'loot' },
+  { id: 'remote', label: 'Open Phone Companion', description: 'Pair and manage phone sessions', icon: RadioTower, tab: 'remote' },
   { id: 'settings', label: 'Open Settings', description: 'App preferences and Riot Client location', icon: Settings, tab: 'settings' },
   { id: 'launch', label: 'Launch selected game', description: 'Run the preflight launch flow', icon: Check, action: 'launch' },
   { id: 'stop', label: 'Stop RiftOps', description: 'Stop the engine and presence bridge', icon: CircleStop, action: 'stop' },

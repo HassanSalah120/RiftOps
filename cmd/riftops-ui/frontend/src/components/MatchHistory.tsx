@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog, fetchLCUProfile, fetchRiotMatchIDs, fetchRiotMatch, fetchReplayStatus, replayAction, type ReplayStatus } from '../api';
-import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download, Coins, Copy, Crosshair, Target, Trophy, Users } from 'lucide-react';
+import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download, Coins, Copy, Crosshair, Target, Trophy, Users, Search, LayoutList, LayoutGrid, X } from 'lucide-react';
 import PageHeader from './PageHeader';
 import { RiotAssetImage } from '../riotAssets';
 import { normalizeArenaMatch } from '../arenaTelemetry';
@@ -256,6 +256,13 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
   });
   const [periodFilter, setPeriodFilter] = useState<string>(() => localStorage.getItem('riftops.history.period') || 'all');
   const [gameCount, setGameCount] = useState<number>(() => Number(localStorage.getItem('riftops.history.count') || 50));
+  const [resultFilter, setResultFilter] = useState<'all' | 'win' | 'loss'>(() => {
+    return (localStorage.getItem('riftops.history.result') as 'all' | 'win' | 'loss') || 'all';
+  });
+  const [champSearch, setChampSearch] = useState<string>('');
+  const [density, setDensity] = useState<'comfortable' | 'compact'>(() => {
+    return (localStorage.getItem('riftops.history.density') as 'comfortable' | 'compact') || 'comfortable';
+  });
   const [championNames, setChampionNames] = useState<Record<number, string>>({});
   const [assets, setAssets] = useState<MatchAssets>(EMPTY_ASSETS);
   const [hasMore, setHasMore] = useState(true);
@@ -342,8 +349,10 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
       localStorage.setItem('riftops.history.queue', JSON.stringify(queueFilter));
       localStorage.setItem('riftops.history.period', periodFilter);
       localStorage.setItem('riftops.history.count', String(gameCount));
+      localStorage.setItem('riftops.history.result', resultFilter);
+      localStorage.setItem('riftops.history.density', density);
     } catch { /* Optional preference. */ }
-  }, [queueFilter, periodFilter, gameCount]);
+  }, [queueFilter, periodFilter, gameCount, resultFilter, density]);
 
   const handleExpand = useCallback(async (gameId: number) => {
     if (expandedId === gameId) {
@@ -420,8 +429,9 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
     return Number.isNaN(parsed) ? 0 : parsed;
   };
 
-  // Filter matches by queue and period FIRST, then limit by gameCount
+  // Filter matches by queue, period, result, and champion search FIRST, then limit by gameCount
   const now = Date.now();
+  const searchLower = champSearch.trim().toLowerCase();
   const filteredMatches = matches
     .filter((g) => {
       if (queueFilter !== 'all' && g.queueId !== queueFilter) return false;
@@ -429,6 +439,16 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
         const period = PERIODS[periodFilter];
         const matchTime = getMatchTimestamp(g);
         if (period.ms && matchTime && matchTime < now - period.ms) return false;
+      }
+      const participant = g.participants?.[0] || g.participantIdentities?.[0] || {};
+      const stats = participant.stats || g.stats || {};
+      const isWin = Boolean(stats.win || stats.winner);
+      if (resultFilter === 'win' && !isWin) return false;
+      if (resultFilter === 'loss' && isWin) return false;
+      if (searchLower) {
+        const champId = participant.championId || g.championId || 0;
+        const champName = participant.championName || g.championName || championNames[champId] || '';
+        if (!champName.toLowerCase().includes(searchLower)) return false;
       }
       return true;
     })
@@ -591,9 +611,9 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
       )}
 
       {/* Filter Toolbar */}
-      <div className="page-toolbar page-toolbar--history flex items-center justify-between gap-2 overflow-x-auto p-1.5 rounded-xl bg-black/40 border border-white/[0.08]">
+      <div className="page-toolbar page-toolbar--history flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-black/40 border border-white/[0.08]">
         {/* Queue Filters */}
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1 shrink-0 flex-wrap">
           <Filter className="w-3.5 h-3.5 text-primary mr-1" />
           {[
             { id: 'all', label: 'All Modes' },
@@ -605,6 +625,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
           ].map((q) => (
             <button
               key={q.id.toString()}
+              type="button"
               onClick={() => setQueueFilter(q.id as any)}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 border cursor-pointer ${
                 queueFilter === q.id
@@ -617,22 +638,100 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
           ))}
         </div>
 
-        {/* Period Filters */}
-        <div className="flex items-center gap-1 shrink-0 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
-          <Clock className="w-3.5 h-3.5 text-text-dim mx-1.5" />
-          {Object.entries(PERIODS).map(([k, p]) => (
+        {/* Result Filters, Search, Period & Density */}
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
+          {/* Result Filter */}
+          <div className="flex items-center gap-1 shrink-0 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'win', label: 'Wins' },
+              { id: 'loss', label: 'Losses' },
+            ].map((res) => (
+              <button
+                key={res.id}
+                type="button"
+                onClick={() => setResultFilter(res.id as any)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition shrink-0 cursor-pointer ${
+                  resultFilter === res.id
+                    ? res.id === 'win'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : res.id === 'loss'
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                      : 'bg-white/10 text-white shadow-sm'
+                    : 'text-text-dim hover:text-white'
+                }`}
+              >
+                {res.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Champion Search */}
+          <div className="relative flex items-center">
+            <Search className="w-3.5 h-3.5 text-text-dim absolute left-2.5 pointer-events-none" />
+            <input
+              type="text"
+              value={champSearch}
+              onChange={(e) => setChampSearch(e.target.value)}
+              placeholder="Filter champion..."
+              className="pl-8 pr-7 py-1 rounded-lg text-xs bg-black/40 border border-white/[0.08] text-white placeholder:text-text-dim focus:outline-none focus:border-primary/50 w-36"
+            />
+            {champSearch && (
+              <button
+                type="button"
+                onClick={() => setChampSearch('')}
+                className="absolute right-2 text-text-dim hover:text-white"
+                title="Clear search"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Period Filters */}
+          <div className="flex items-center gap-1 shrink-0 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
+            <Clock className="w-3.5 h-3.5 text-text-dim mx-1.5" />
+            {Object.entries(PERIODS).map(([k, p]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setPeriodFilter(k)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition shrink-0 cursor-pointer ${
+                  periodFilter === k
+                    ? 'bg-white/10 text-white shadow-sm'
+                    : 'text-text-dim hover:text-white'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Density Toggle */}
+          <div className="flex items-center gap-1 shrink-0 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
             <button
-              key={k}
-              onClick={() => setPeriodFilter(k)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition shrink-0 cursor-pointer ${
-                periodFilter === k
-                  ? 'bg-white/10 text-white shadow-sm'
-                  : 'text-text-dim hover:text-white'
+              type="button"
+              onClick={() => setDensity('comfortable')}
+              className={`p-1 rounded-md text-xs transition cursor-pointer ${
+                density === 'comfortable' ? 'bg-white/10 text-white' : 'text-text-dim hover:text-white'
               }`}
+              title="Comfortable view"
+              aria-label="Comfortable view"
             >
-              {p.label}
+              <LayoutList className="w-3.5 h-3.5" />
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setDensity('compact')}
+              className={`p-1 rounded-md text-xs transition cursor-pointer ${
+                density === 'compact' ? 'bg-white/10 text-white' : 'text-text-dim hover:text-white'
+              }`}
+              title="Compact view"
+              aria-label="Compact view"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -696,7 +795,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
               return (
                 <div
                   key={gameId}
-                  className={`history-match ${isWin ? 'is-victory' : 'is-defeat'} glass-card rounded-2xl border transition duration-200 overflow-hidden ${
+                  className={`history-match ${isWin ? 'is-victory' : 'is-defeat'} ${density === 'compact' ? 'is-compact' : ''} glass-card rounded-2xl border transition duration-200 overflow-hidden ${
                     isWin
                       ? 'bg-emerald-950/20 border-emerald-500/30 hover:border-emerald-500/50'
                       : 'bg-rose-950/20 border-rose-500/30 hover:border-rose-500/50'
@@ -705,22 +804,22 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
                   {/* Summary Card Header */}
                   <div
                     onClick={() => void handleExpand(gameId)}
-                    className="history-match__summary p-3.5 flex items-center justify-between gap-3 cursor-pointer select-none"
+                    className={`history-match__summary ${density === 'compact' ? 'p-2' : 'p-3.5'} flex items-center justify-between gap-3 cursor-pointer select-none`}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void handleExpand(gameId); } }}
                   >
                     <div className="history-match__identity flex items-center gap-3 min-w-0">
-                      <div className="history-result-crest" aria-hidden="true"><span>{isWin ? 'W' : 'L'}</span></div>
+                      <div className={`history-result-crest ${density === 'compact' ? 'scale-90' : ''}`} aria-hidden="true"><span>{isWin ? 'W' : 'L'}</span></div>
 
                       {champId > 0 && (
                         <img
                           src={`/lol-game-data/assets/v1/champion-icons/${champId}.png`}
                           alt=""
-                          width="40"
-                          height="40"
+                          width={density === 'compact' ? 32 : 40}
+                          height={density === 'compact' ? 32 : 40}
                           loading="lazy"
-                          className="w-10 h-10 rounded-xl border border-white/10 bg-surface shrink-0 object-cover"
+                          className={`${density === 'compact' ? 'w-8 h-8' : 'w-10 h-10'} rounded-xl border border-white/10 bg-surface shrink-0 object-cover`}
                           onError={(e: any) => { e.target.style.display = 'none'; }}
                         />
                       )}

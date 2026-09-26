@@ -647,6 +647,55 @@ func TestChampSelectBannableFallsBackToTeamBuilderRoute(t *testing.T) {
 	}
 }
 
+func TestChampSelectBannableFallsBackWhenCurrentRoutesOnlyReturnNoBanSentinel(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		switch r.URL.Path {
+		case "/lol-champ-select/v1/bannable-champion-ids", "/lol-lobby-team-builder/champ-select/v1/bannable-champion-ids":
+			_, _ = w.Write([]byte(`[-1]`))
+		case "/lol-champ-select-legacy/v1/bannable-champion-ids":
+			_, _ = w.Write([]byte(`[555,101]`))
+		default:
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	body, err := testLockfile(server.URL).FetchChampSelectBannable(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `[555,101]` {
+		t.Fatalf("bannable response = %s, want legacy catalogue", body)
+	}
+	if len(calls) != 3 || calls[2] != "/lol-champ-select-legacy/v1/bannable-champion-ids" {
+		t.Fatalf("route calls = %#v, want current, team-builder, then legacy", calls)
+	}
+}
+
+func TestChampSelectBannableKeepsNoBanSentinelWhenNoUsableCatalogueExists(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/lol-champ-select-legacy/v1/bannable-champion-ids" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`[-1]`))
+	}))
+	defer server.Close()
+	previousClient := httpClient
+	httpClient = server.Client()
+	defer func() { httpClient = previousClient }()
+
+	body, err := testLockfile(server.URL).FetchChampSelectBannable(context.Background())
+	if err != nil || string(body) != `[-1]` {
+		t.Fatalf("bannable response = %s, error = %v; want no usable catalogue", body, err)
+	}
+}
+
 func TestPlayFlowReadRoutesUseFocusedLCUEndpoints(t *testing.T) {
 	seen := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

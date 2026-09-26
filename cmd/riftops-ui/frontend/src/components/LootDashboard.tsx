@@ -5,6 +5,7 @@ import { recipeActionLabel } from '../lootActions';
 import { loadSkinCatalog, resolveLootDisplay, skinArtSources, type CatalogSkin } from '../leagueCatalog';
 import type { ConfirmAction } from '../types';
 import ConfirmModal from './ConfirmModal';
+import ReviewOperationModal, { type ReviewOperationData } from './ReviewOperationModal';
 import { ActionFeedback, ContextPanel, EmptyState, type FeedbackState, StatusBadge, WorkspaceSection } from './DesignPrimitives';
 import PageHeader from './PageHeader';
 import { useLCUConnection } from './lcuConnectionContext';
@@ -132,6 +133,7 @@ export default function LootDashboard() {
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [batchItems, setBatchItems] = useState<LootOperationItem[]>([]);
+  const [pendingReview, setPendingReview] = useState<ReviewOperationData | null>(null);
 
   const loadLoot = useCallback(async () => {
     setLoading(true);
@@ -218,12 +220,29 @@ export default function LootDashboard() {
     setCrafting('batch');
     try {
       const preview = await previewLootOperation(batchItems);
-      const outputs = (preview.lootItems || []).map((item) => `${item.label || item.recipeName} ×${item.repeat}`).join('\n');
-      const confirmation = window.prompt(`Review ${batchItems.length} League loot recipes:\n\n${outputs}\n\nType ${preview.confirmation} to continue.`) || '';
-      if (confirmation.trim() !== preview.confirmation) { setFeedback({ tone: 'info', message: 'Bulk crafting cancelled.' }); return; }
-      await executeReviewedOperation(preview.id, confirmation.trim());
+      const targetLabels = (preview.lootItems || []).map((item) => `${item.label || item.recipeName} ×${item.repeat}`);
+      setPendingReview({
+        previewId: preview.id,
+        kind: 'loot_batch',
+        title: `Review ${batchItems.length} Loot Recipes`,
+        description: `Confirm processing ${batchItems.length} recipe action(s) directly through the League Client.`,
+        confirmation: preview.confirmation,
+        targetCount: batchItems.length,
+        targetLabels,
+        danger: false,
+      });
+    } catch (reason: any) {
+      setFeedback({ tone: 'error', message: reason?.message || 'Failed to prepare bulk crafting preview.' });
+      setCrafting('');
+    }
+  };
+
+  const confirmBatch = async (previewId: string, confirmationText: string) => {
+    try {
+      await executeReviewedOperation(previewId, confirmationText);
+      setPendingReview(null);
       for (;;) {
-        const status = await fetchReviewedOperation(preview.id);
+        const status = await fetchReviewedOperation(previewId);
         if (['complete', 'failed', 'cancelled', 'expired'].includes(status.state)) {
           const failures = status.results.filter((item) => item.status !== 'succeeded').length;
           setFeedback({ tone: failures ? 'error' : 'success', message: `${status.completed}/${status.total} recipes processed${failures ? ` · ${failures} need review` : ''}.` });
@@ -233,13 +252,18 @@ export default function LootDashboard() {
         await new Promise((resolve) => window.setTimeout(resolve, 450));
       }
       await loadLoot();
-    } catch (reason: any) { setFeedback({ tone: 'error', message: reason?.message || 'Bulk crafting failed.' }); }
-    finally { setCrafting(''); }
+    } catch (reason: any) {
+      setFeedback({ tone: 'error', message: reason?.message || 'Bulk crafting failed.' });
+      throw reason;
+    } finally {
+      setCrafting('');
+    }
   };
 
   return (
     <div className="loot-workshop">
       {confirmAction && <ConfirmModal action={confirmAction} onClose={() => setConfirmAction(null)} />}
+      <ReviewOperationModal operation={pendingReview} onClose={() => { setPendingReview(null); setCrafting(''); }} onConfirm={confirmBatch} />
       <PageHeader variant="workspace" icon={Gem} eyebrow="HEXTECH INVENTORY" title="Loot workshop" description="Inspect live balances, choose one material, and complete its recipe in the same context." meta={<StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>{connected ? 'Live inventory' : 'League offline'}</StatusBadge>} actions={<button type="button" className="page-header__button" onClick={() => void loadLoot()} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : ''} />Refresh inventory</button>} />
 
       {error && <EmptyState tone="error" icon={XCircle} title="Inventory unavailable" description={error} action={<button type="button" className="btn-secondary" onClick={() => void loadLoot()}><RefreshCw />Retry</button>} />}

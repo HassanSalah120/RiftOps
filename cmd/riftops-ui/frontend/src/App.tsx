@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Shield, Server, RotateCcw } from 'lucide-react';
+import { Play, Square, Shield, Server, RotateCcw, Zap } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
 import GameSelector from './components/GameSelector';
@@ -141,7 +141,7 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => {
       setNotification(null);
       toastTimer.current = null;
-    }, 4000);
+    }, type === 'error' ? 7000 : 4000);
   }, []);
 
   const showPhoneToast = useCallback((message: string, type: 'info' | 'success' | 'error' = 'info') => {
@@ -570,7 +570,7 @@ export default function App() {
           unreadNotifications={notificationHistory.filter((item) => !item.read).length}
         />
         <main id="riftops-main" className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col relative z-10" tabIndex={-1}>
-          {/* Toasts live in the workspace flow so they never cover page controls. */}
+          {/* Toast renders above the workspace without changing its layout. */}
           <Toast notification={notification} onClose={() => setNotification(null)} />
           {/* QoL Panel */}
           {activeTab === 'qol' && (
@@ -583,7 +583,7 @@ export default function App() {
              COMMAND CENTER (DASHBOARD)
              ═══════════════════════════════════════════════ */}
           {activeTab === 'dashboard' && (
-            <div className="workspace-stage workspace-stage--dashboard dashboard-page flex-1 flex flex-col min-h-0 animate-fadeIn">
+            <div className="workspace-stage workspace-stage--dashboard dashboard-page flex flex-1 min-h-0 min-w-0 flex-col animate-fadeIn">
               {/* Hero Banner */}
               <div className="dashboard-page__hero relative h-44 shrink-0 overflow-hidden border-b border-[#c8aa6e]/15">
                 {gameImgError ? (
@@ -666,50 +666,21 @@ export default function App() {
               <div className="dashboard-page__body flex-1 overflow-y-auto px-4 py-3 space-y-4">
                 {remoteClient && <div className="phone-session-banner"><Shield /><span><strong>Phone session connected</strong><small>Live League controls are routed through your paired RiftOps desktop.</small></span></div>}
 
-                {/* Keep match-flow automation in one place: Play & Queue. */}
+                {/* Match-flow automation quick bar */}
                 {!remoteClient && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="glass-card p-4 rounded-xl flex items-center justify-between gap-4 border border-primary/20 bg-primary/[0.04] hover:border-primary/35 transition md:col-span-2">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-primary/15 text-primary border border-primary/30">
-                          <Play className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white">Queue automation</div>
-                          <div className="text-[11px] text-text-muted">Auto-accept, roles, picks, bans, and full auto are configured beside your queue.</div>
-                        </div>
+                  <div className="glass-card p-4 rounded-xl flex items-center justify-between gap-4 border border-primary/20 bg-primary/[0.04] hover:border-primary/35 transition">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-primary/15 text-primary border border-primary/30 shrink-0">
+                        <Play className="w-5 h-5" />
                       </div>
-                      <button type="button" onClick={() => setActiveTab('play')} className="btn-secondary shrink-0 text-xs">Configure</button>
-                    </div>
-
-                    {/* Presence masking remains a dashboard-level control. */}
-                    <div className="glass-card p-4 rounded-xl flex items-center justify-between border border-white/[0.08] hover:border-[#c8aa6e]/30 transition">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${snapshot.Enabled && snapshot.Status === 'offline' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40' : 'bg-white/[0.04] text-text-dim'}`}>
-                          <Shield className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                            Stealth Mode
-                            {snapshot.Enabled && snapshot.Status === 'offline' && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
-                          </div>
-                          <div className="text-[11px] text-text-muted">Appear 100% offline to friends</div>
-                        </div>
+                      <div>
+                        <div className="text-xs font-bold text-white">Queue automation &amp; Draft strategy</div>
+                        <div className="text-[11px] text-text-muted">Auto-accept, lane preferences, champion picks, bans, and full auto loop.</div>
                       </div>
-                      <label className="toggle">
-                        <input
-                          type="checkbox"
-                          checked={leagueAvailability === 'offline'}
-                          disabled={!presenceStatusAvailable}
-                          onChange={(e) => {
-                            void handleSetStatus(e.target.checked ? 'offline' : 'online');
-                            if (presenceControlsAvailable) void handleToggleMasking(e.target.checked);
-                          }}
-                        />
-                        <span className="slider" />
-                      </label>
                     </div>
-
+                    <button type="button" onClick={() => setActiveTab('play')} className="btn-primary shrink-0 text-xs flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5" /> Open Play &amp; Queue
+                    </button>
                   </div>
                 )}
 
@@ -809,7 +780,7 @@ export default function App() {
              PLAY FLOW TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'play' && (
-            <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden animate-fadeIn">
+            <div className="workspace-stage workspace-stage--play flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden animate-fadeIn">
               <PlayFlowPage remoteClient={remoteClient} showToast={(message, type = 'info') => showToast('Play & Queue', message, type)} onOpenLive={() => setActiveTab('live')} />
             </div>
           )}
@@ -818,7 +789,7 @@ export default function App() {
              LIVE SESSION TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'live' && (
-            <div className="workspace-stage workspace-stage--live flex-1 min-h-0 min-w-0 overflow-y-auto animate-fadeIn">
+            <div className="workspace-stage workspace-stage--live flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
               <LiveSessionPage remoteClient={remoteClient} onOpenPlayFlow={() => setActiveTab('play')} onOpenCommandCenter={() => setActiveTab('dashboard')} showToast={(message, type = 'info') => showToast('Live Session', message, type)} />
             </div>
           )}
@@ -827,7 +798,7 @@ export default function App() {
              SOCIAL TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'social' && (
-            <div className="workspace-stage workspace-stage--social flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-4 animate-fadeIn">
+            <div className="workspace-stage workspace-stage--social flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden animate-fadeIn">
               <SocialCenter remoteClient={remoteClient} />
             </div>
           )}
@@ -836,7 +807,7 @@ export default function App() {
              MATCH HISTORY TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'history' && (
-            <div className="workspace-stage workspace-stage--history flex-1 overflow-y-auto p-4 animate-fadeIn">
+            <div className="workspace-stage workspace-stage--history flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
               <MatchHistory remoteClient={remoteClient} />
             </div>
           )}
@@ -845,13 +816,13 @@ export default function App() {
              SKIN SHOWCASE TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'skins' && (
-            <div className="workspace-stage workspace-stage--skins flex-1 overflow-y-auto p-4 animate-fadeIn">
+            <div className="workspace-stage workspace-stage--skins flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
               <CollectionWorkspace remoteClient={remoteClient} />
             </div>
           )}
 
           {activeTab === 'progress' && (
-            <div className="workspace-stage workspace-stage--progress flex-1 min-h-0 min-w-0 overflow-y-auto animate-fadeIn">
+            <div className="workspace-stage workspace-stage--progress flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
               <ProgressPage remoteClient={remoteClient} />
             </div>
           )}
@@ -860,13 +831,13 @@ export default function App() {
              LOOT DASHBOARD TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'loot' && (
-            <div className="workspace-stage workspace-stage--loot flex-1 overflow-y-auto animate-fadeIn">
+            <div className="workspace-stage workspace-stage--loot flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
               <LootDashboard />
             </div>
           )}
 
           {activeTab === 'remote' && !remoteClient && (
-            <div className="workspace-stage workspace-stage--remote flex-1 overflow-y-auto animate-fadeIn">
+            <div className="workspace-stage workspace-stage--remote flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
               <RemoteAccessPage showToast={showPhoneToast} />
             </div>
           )}
@@ -875,7 +846,7 @@ export default function App() {
              SETTINGS TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'settings' && (
-            <div className="workspace-stage workspace-stage--settings flex-1 overflow-y-auto p-4 animate-fadeIn">
+            <div className="workspace-stage workspace-stage--settings flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
               <SettingsPage
                 snapshot={snapshot}
                 prefGame={prefGame}

@@ -349,11 +349,12 @@ export default function SettingsPage({
       )}
 
       {/* Main Cockpit Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div className={activeTab === 'all' ? 'grid grid-cols-1 lg:grid-cols-2 gap-5' : 'max-w-4xl space-y-5'}>
         {/* LEFT COLUMN: Launch & Interface */}
-        <div className="space-y-5">
-          {/* Card 1: Launch & Presence */}
-          {(activeTab === 'all' || activeTab === 'launch') && (
+        {(activeTab === 'all' || activeTab === 'launch' || activeTab === 'interface') && (
+          <div className="space-y-5">
+            {/* Card 1: Launch & Presence */}
+            {(activeTab === 'all' || activeTab === 'launch') && (
             <section className="glass-card p-5 rounded-2xl space-y-4" id="settings-launch">
               <div className="flex items-center gap-3 pb-3 border-b border-white/5">
                 <span className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400">
@@ -599,12 +600,14 @@ export default function SettingsPage({
               </div>
             </section>
           )}
-        </div>
+          </div>
+        )}
 
         {/* RIGHT COLUMN: League Installation, Specs & Maintenance */}
-        <div className="space-y-5">
-          {/* Card 3: League Installation */}
-          {(activeTab === 'all' || activeTab === 'league') && (
+        {(activeTab === 'all' || activeTab === 'league' || activeTab === 'system') && (
+          <div className="space-y-5">
+            {/* Card 3: League Installation */}
+            {(activeTab === 'all' || activeTab === 'league') && (
             <section className="glass-card p-5 rounded-2xl space-y-4" id="settings-league">
               <div className="flex items-center gap-3 pb-3 border-b border-white/5">
                 <span className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400">
@@ -907,7 +910,8 @@ export default function SettingsPage({
               </div>
             </section>
           )}
-        </div>
+          </div>
+        )}
 
         {/* FULL WIDTH SECTION: Developer Tools & Diagnostics */}
         {(activeTab === 'diagnostics' || activeTab === 'all') && (

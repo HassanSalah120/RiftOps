@@ -724,6 +724,61 @@ export function lcuClaimEventRewards(): Promise<{ claimed: number }> {
   });
 }
 
+export interface HonorPlayerPayload {
+  puuid: string;
+  summonerId: number;
+  gameId?: number;
+  honorType?: string;
+}
+
+export function fetchHonorBallot(): Promise<any> {
+  return fetch('/api/lcu/honor-ballot').then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'Honor is not available right now.');
+    return r.json();
+  });
+}
+
+export function honorPlayer(payload: HonorPlayerPayload): Promise<any> {
+  return fetch('/api/lcu/honor-player', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'The League client rejected the honor action.');
+    return r.json().catch(() => null);
+  });
+}
+
+export function lcuSetStatusMessage(message: string): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/status-message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'Failed to update status message');
+    return r.json().catch(() => ({ ok: true }));
+  });
+}
+
+export function lcuSetAvailability(availability: string): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/availability', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ availability }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'Failed to update availability');
+    return r.json().catch(() => ({ ok: true }));
+  });
+}
+
+export function lcuDodge(): Promise<{ ok: boolean }> {
+  return fetch('/api/lcu/dodge', { method: 'POST' }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()).trim() || 'Failed to dodge match');
+    return r.json().catch(() => ({ ok: true }));
+  });
+}
+
+
 export function lcuAutoRoles(first: string, second: string): Promise<{ ok: boolean }> {
   return fetch('/api/lcu/auto-roles', {
     method: 'POST',

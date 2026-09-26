@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Activity,
   BellRing,
   Check,
   CheckCircle2,
@@ -19,14 +18,18 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
-  fetchQueuePresets,
+  fetchHonorBallot,
   fetchQoLPreferences,
+  honorPlayer,
   lcuAutoAccept,
   lcuAutoRequeue,
-  lcuAutoRoles,
+  lcuClaimEventRewards,
+  lcuDodge,
+  lcuPlayAgain,
   lcuQuitCustomSession,
+  lcuSetAvailability,
+  lcuSetStatusMessage,
   lcuStopQueue,
-  saveQueuePreset,
   saveQoLPreferences,
   type QoLPreferences,
   type QoLState,
@@ -37,15 +40,6 @@ import SafeToolsPanel from './SafeToolsPanel';
 import { StatusBadge } from './DesignPrimitives';
 import { useLCUConnection } from './lcuConnectionContext';
 import type { ConfirmAction } from '../types';
-
-const ROLE_OPTIONS = [
-  ['TOP', 'Top lane', '🛡️'],
-  ['JUNGLE', 'Jungle', '🌲'],
-  ['MIDDLE', 'Mid lane', '⚡'],
-  ['BOTTOM', 'Bottom lane', '🏹'],
-  ['UTILITY', 'Support', '✨'],
-  ['FILL', 'Fill any role', '🎲'],
-] as const;
 
 const AVAILABILITY_OPTIONS = [
   { value: 'chat', label: 'Online', color: '#16c79d' },
@@ -101,21 +95,6 @@ function formatDisplayStatus(rawPhase?: string, rawQueueState?: string, connecte
   }
 }
 
-async function readError(response: Response, fallback: string) {
-  const text = (await response.text()).trim();
-  return text || fallback;
-}
-
-async function post(path: string, body?: object) {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!response.ok) throw new Error(await readError(response, 'The League client rejected this action.'));
-  const type = response.headers.get('content-type') || '';
-  return type.includes('application/json') ? response.json() : null;
-}
 
 function SwitchRow({
   title,
@@ -158,15 +137,7 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const statusHydrated = useRef(false);
-  const rolesHydrated = useRef(false);
-  const [firstRole, setFirstRole] = useState('MIDDLE');
-  const [secondRole, setSecondRole] = useState('TOP');
   const [honorBallot, setHonorBallot] = useState<HonorBallot | null>(null);
-  const [queuePresets, setQueuePresets] = useState<Record<string, { first: string; second: string }>>({});
-  const [queueLabels, setQueueLabels] = useState<Record<string, string>>({});
-  const [presetQueue, setPresetQueue] = useState('ranked_solo');
-  const [presetFirst, setPresetFirst] = useState('MIDDLE');
-  const [presetSecond, setPresetSecond] = useState('TOP');
 
   const showToast = useCallback((message: string, ok = true) => {
     setToast({ message, ok });
@@ -183,16 +154,10 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
         setStatusMessage(sharedQolState.statusMessage || '');
         statusHydrated.current = true;
       }
-      if (sharedQolState?.firstRole && !rolesHydrated.current) {
-        setFirstRole(sharedQolState.firstRole);
-        setSecondRole(sharedQolState.secondRole || 'FILL');
-        rolesHydrated.current = true;
-      }
     } catch {
       setConnected(false);
       setState(null);
       statusHydrated.current = false;
-      rolesHydrated.current = false;
     } finally {
       if (showSpinner) setRefreshing(false);
     }
@@ -205,11 +170,6 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
       setStatusMessage(sharedQolState.statusMessage || '');
       statusHydrated.current = true;
     }
-    if (sharedQolState?.firstRole && !rolesHydrated.current) {
-      setFirstRole(sharedQolState.firstRole);
-      setSecondRole(sharedQolState.secondRole || 'FILL');
-      rolesHydrated.current = true;
-    }
   }, [sharedQolState, sharedConnected]);
 
   useEffect(() => {
@@ -218,15 +178,6 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
       .catch((error) => showToast(error.message || 'Could not load automation preferences.', false))
       .finally(() => setPreferencesLoading(false));
   }, [showToast]);
-
-  useEffect(() => {
-    fetchQueuePresets()
-      .then((data) => {
-        setQueuePresets(data.presets || {});
-        setQueueLabels(data.queues || {});
-      })
-      .catch(() => {});
-  }, []);
 
   const runAction = useCallback(async (key: string, successMessage: string, action: () => Promise<unknown>) => {
     setActiveAction(key);
@@ -254,12 +205,11 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
   };
 
   const loadHonorBallot = () => runAction('honor-load', 'Honor ballot loaded.', async () => {
-    const response = await fetch('/api/lcu/honor-ballot');
-    if (!response.ok) throw new Error(await readError(response, 'Honor is not available right now.'));
-    setHonorBallot(await response.json());
+    const ballot = await fetchHonorBallot();
+    setHonorBallot(ballot);
   });
 
-  const honorPlayer = (player: HonorPlayer) => runAction(`honor-${player.puuid}`, `${player.summonerName} honored.`, () => post('/api/lcu/honor-player', {
+  const honorPlayerAction = (player: HonorPlayer) => runAction(`honor-${player.puuid}`, `${player.summonerName} honored.`, () => honorPlayer({
     summonerId: player.summonerId,
     puuid: player.puuid,
     gameId: honorBallot?.gameId,
@@ -287,14 +237,14 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
           : inChampSelect
             ? { label: 'Open live draft', tone: 'rose' as const, action: () => onOpenLive?.() }
             : postGame
-              ? { label: 'Return to lobby', tone: 'gold' as const, action: () => void runAction('play-again', 'Returning to lobby.', () => post('/api/lcu/play-again')) }
+              ? { label: 'Return to lobby', tone: 'gold' as const, action: () => void runAction('play-again', 'Returning to lobby.', lcuPlayAgain) }
               : { label: 'Refresh status', tone: 'neutral' as const, action: () => void refreshState(true) };
 
   const primaryClass = `qol-primary-action tone-${primaryAction.tone}`;
   const updateStatus = () => {
     const next = statusMessage.trim();
     if (!next) return;
-    void runAction('status', 'Status message updated.', () => post('/api/lcu/status-message', { message: next }));
+    void runAction('status', 'Status message updated.', () => lcuSetStatusMessage(next));
   };
 
   return (
@@ -354,37 +304,6 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
               <SwitchRow title="Claim event rewards" description="Claim unlocked battle-pass and event-track rewards after a game." checked={preferences.autoClaimRewards} disabled={preferencesLoading} accent="violet" onChange={() => void updatePreferences({ ...preferences, autoClaimRewards: !preferences.autoClaimRewards })} />
             </div>
 
-            <details className="qol-disclosure">
-              <summary><span><Activity /> Queue & roles</span><small>Live actions, party roles, and saved presets</small></summary>
-              <div className="qol-disclosure__body">
-                <div className="qol-action-grid">
-                  <button type="button" className="btn-primary" disabled={!readyCheck} onClick={() => void runAction('accept', 'Ready check accepted.', lcuAutoAccept)}><Check /> Accept ready check</button>
-                  <button type="button" className="btn-primary" disabled={!inLobby} onClick={() => void runAction('queue-start', 'Matchmaking started.', lcuAutoRequeue)}><Play /> Start queue</button>
-                  <button type="button" className="btn-secondary" disabled={!inQueue} onClick={() => void runAction('queue-stop', 'Matchmaking stopped.', lcuStopQueue)}><CircleStop /> Cancel queue</button>
-                </div>
-
-                <div className="qol-subsection">
-                  <div className="qol-subsection__heading"><strong>Active lobby roles</strong><span>Sync directly to your current League party.</span></div>
-                  <div className="qol-field-grid">
-                    <label>Primary role<select value={firstRole} disabled={!inLobby} onChange={(event) => setFirstRole(event.target.value)}>{ROLE_OPTIONS.map(([value, label, icon]) => <option key={value} value={value}>{icon} {label}</option>)}</select></label>
-                    <label>Secondary role<select value={secondRole} disabled={!inLobby} onChange={(event) => setSecondRole(event.target.value)}>{ROLE_OPTIONS.map(([value, label, icon]) => <option key={value} value={value}>{icon} {label}</option>)}</select></label>
-                  </div>
-                  {firstRole === secondRole && <p className="qol-field-error">Primary and secondary roles must be different.</p>}
-                  <div className="qol-subsection__actions"><button type="button" className="btn-secondary" disabled={!inLobby || firstRole === secondRole} onClick={() => void runAction('roles', 'Lobby roles synced.', () => lcuAutoRoles(firstRole, secondRole))}><Check /> Sync roles to lobby</button></div>
-                </div>
-
-                <div className="qol-subsection">
-                  <div className="qol-subsection__heading"><strong>Queue role preset</strong><span>Auto-applies when you enter a matching queue.</span></div>
-                  <div className="qol-field-grid qol-field-grid--three">
-                    <label>Target queue<select value={presetQueue} onChange={(event) => { const queue = event.target.value; setPresetQueue(queue); const preset = queuePresets[queue]; if (preset) { setPresetFirst(preset.first); setPresetSecond(preset.second); } }}>{Object.entries(queueLabels).map(([key, label]) => <option key={key} value={key}>{label}{queuePresets[key] ? ' ✓' : ''}</option>)}</select></label>
-                    <label>Primary<select value={presetFirst} onChange={(event) => setPresetFirst(event.target.value)}>{ROLE_OPTIONS.map(([value, label, icon]) => <option key={value} value={value}>{icon} {label}</option>)}</select></label>
-                    <label>Secondary<select value={presetSecond} onChange={(event) => setPresetSecond(event.target.value)}>{ROLE_OPTIONS.map(([value, label, icon]) => <option key={value} value={value}>{icon} {label}</option>)}</select></label>
-                  </div>
-                  {presetFirst === presetSecond && <p className="qol-field-error">Preset roles must be different.</p>}
-                  <div className="qol-subsection__actions"><button type="button" className="btn-secondary" disabled={presetFirst === presetSecond || activeAction !== ''} onClick={() => void runAction(`preset-${presetQueue}`, `Preset saved for ${queueLabels[presetQueue] || presetQueue}.`, async () => setQueuePresets(await saveQueuePreset(presetQueue, presetFirst, presetSecond)))}><Check /> Save preset</button></div>
-                </div>
-              </div>
-            </details>
           </div>
         </section>
 
@@ -396,7 +315,7 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
           </header>
           <div className="qol-task-group__body">
             <div className="qol-availability" role="group" aria-label="Availability">
-              {AVAILABILITY_OPTIONS.map(({ value, label, color }) => <button key={value} type="button" disabled={!connected || activeAction !== ''} className={state?.availability === value ? 'is-selected' : ''} onClick={() => void runAction('presence', `Availability set to ${label}.`, () => post('/api/lcu/availability', { availability: value }))}><span style={{ backgroundColor: color }} />{label}</button>)}
+              {AVAILABILITY_OPTIONS.map(({ value, label, color }) => <button key={value} type="button" disabled={!connected || activeAction !== ''} className={state?.availability === value ? 'is-selected' : ''} onClick={() => void runAction('presence', `Availability set to ${label}.`, () => lcuSetAvailability(value))}><span style={{ backgroundColor: color }} />{label}</button>)}
             </div>
             <div className="qol-status-editor">
               <label htmlFor="qol-status-input">Custom status <small>{statusMessage.length}/255</small></label>
@@ -412,9 +331,9 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
             <span className="qol-task-group__summary">{formatPhaseLabel(phase)}</span>
           </header>
           <div className="qol-task-group__body">
-            {inChampSelect && <div className="qol-context-callout is-rose"><div><strong>Champion select is live</strong><span>Open the live draft workspace or apply a standard queue dodge.</span></div><div className="qol-context-callout__actions">{onOpenLive && <button type="button" className="btn-primary" onClick={onOpenLive}><Swords /> Open live draft</button>}<button type="button" className="btn-danger" onClick={() => setConfirmAction({ open: true, title: 'Dodge this champion select?', message: 'League will apply standard queue dodge penalties. This action cannot be undone.', actionLabel: 'Dodge game', danger: true, onConfirm: () => { setConfirmAction(null); void runAction('dodge', 'Dodge request sent to League.', () => post('/api/lcu/dodge')); } })}><CircleStop /> Dodge game</button></div></div>}
+            {inChampSelect && <div className="qol-context-callout is-rose"><div><strong>Champion select is live</strong><span>Open the live draft workspace or apply a standard queue dodge.</span></div><div className="qol-context-callout__actions">{onOpenLive && <button type="button" className="btn-primary" onClick={onOpenLive}><Swords /> Open live draft</button>}<button type="button" className="btn-danger" onClick={() => setConfirmAction({ open: true, title: 'Dodge this champion select?', message: 'League will apply standard queue dodge penalties. This action cannot be undone.', actionLabel: 'Dodge game', danger: true, onConfirm: () => { setConfirmAction(null); void runAction('dodge', 'Dodge request sent to League.', lcuDodge); } })}><CircleStop /> Dodge game</button></div></div>}
             {customSession && customQuitAvailable && !inChampSelect && <div className="qol-context-callout is-gold"><div><strong>Custom or practice session</strong><span>Leave the custom lobby without sending a dodge penalty.</span></div><button type="button" className="btn-danger" disabled={activeAction === 'quit-custom'} onClick={() => void runAction('quit-custom', 'Custom session closed.', lcuQuitCustomSession)}><CircleStop /> Quit custom</button></div>}
-            {postGame && <div className="qol-postgame"><div className="qol-subsection__heading"><strong>Post-game actions</strong><span>Match finished</span></div><div className="qol-action-grid"><button type="button" className="btn-primary" onClick={() => void runAction('play-again', 'Returning to lobby.', () => post('/api/lcu/play-again'))}><Play /> Play again</button><button type="button" className="btn-secondary" onClick={() => void loadHonorBallot()}><Heart /> Load honor ballot</button><button type="button" className="btn-secondary" onClick={() => void runAction('rewards', 'Event rewards checked.', () => post('/api/lcu/claim-event-rewards'))}><Gift /> Claim rewards</button></div>{honorBallot && <div className="qol-honor-grid">{[...(honorBallot.eligibleAllies || []), ...(honorBallot.eligibleOpponents || [])].map((player) => <button type="button" key={player.puuid} disabled={activeAction === `honor-${player.puuid}`} onClick={() => void honorPlayer(player)}><span><small>{player.championName}</small><strong>{player.summonerName}</strong></span><Heart /></button>)}</div>}</div>}
+            {postGame && <div className="qol-postgame"><div className="qol-subsection__heading"><strong>Post-game actions</strong><span>Match finished</span></div><div className="qol-action-grid"><button type="button" className="btn-primary" onClick={() => void runAction('play-again', 'Returning to lobby.', lcuPlayAgain)}><Play /> Play again</button><button type="button" className="btn-secondary" onClick={() => void loadHonorBallot()}><Heart /> Load honor ballot</button><button type="button" className="btn-secondary" onClick={() => void runAction('rewards', 'Event rewards checked.', lcuClaimEventRewards)}><Gift /> Claim rewards</button></div>{honorBallot && <div className="qol-honor-grid">{[...(honorBallot.eligibleAllies || []), ...(honorBallot.eligibleOpponents || [])].map((player) => <button type="button" key={player.puuid} disabled={activeAction === `honor-${player.puuid}`} onClick={() => void honorPlayerAction(player)}><span><small>{player.championName}</small><strong>{player.summonerName}</strong></span><Heart /></button>)}</div>}</div>}
             {!inChampSelect && !customSession && !postGame && <div className="qol-standby"><span className="qol-status-dot is-live" /><div><strong>{connected ? 'Client standing by' : 'Connect League to unlock actions'}</strong><small>{connected ? `Current phase: ${formatPhaseLabel(phase)}` : 'Open Riot Client and sign in.'}</small></div></div>}
             <details className="qol-disclosure">
               <summary><span><ShieldCheck /> Reviewed client utilities</span><small>Snapshots, rewards, capabilities, and identifiers</small></summary>

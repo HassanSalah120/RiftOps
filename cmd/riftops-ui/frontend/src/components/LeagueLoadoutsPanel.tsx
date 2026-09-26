@@ -8,7 +8,8 @@ import {
   type LeagueLoadouts,
 } from '../api';
 import ReviewOperationModal, { type ReviewOperationData } from './ReviewOperationModal';
-import { EmptyState, WorkspaceSection } from './DesignPrimitives';
+import { EmptyState, StatusBadge, WorkspaceSection } from './DesignPrimitives';
+import PageHeader from './PageHeader';
 import { useLCUConnection } from './lcuConnectionContext';
 
 type Feedback = { tone: 'success' | 'error'; message: string } | null;
@@ -67,13 +68,40 @@ export default function LeagueLoadoutsPanel() {
     await refresh();
   };
 
-  if (!connected) return <EmptyState icon={Layers3} title="Connect League to inspect loadouts" description="League profile loadouts are read from the signed-in client." />;
+  if (!connected) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          variant="collection"
+          icon={Layers3}
+          eyebrow="PROFILE STUDIO"
+          title="League loadouts"
+          description="Inspect account-scoped cosmetic loadouts from the local League Client."
+          meta={<StatusBadge tone="neutral">League offline</StatusBadge>}
+        />
+        <EmptyState icon={Layers3} title="Connect League to inspect loadouts" description="League profile loadouts are read from the signed-in client." />
+      </div>
+    );
+  }
 
-  return <WorkspaceSection eyebrow="PROFILE STUDIO" title="League loadouts" description="Inspect account-scoped cosmetic loadouts. Slot composition stays read-only until League semantics are verified." actions={<button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : ''} /> Refresh</button>}>
-    {feedback && <div className={`feedback-banner feedback-banner--${feedback.tone} mb-3`} role="status">{feedback.message}</div>}
-    {!data?.ready && <p className="text-xs text-text-dim mb-3">League has not marked profile loadouts ready yet.</p>}
-    {!data?.items?.length && <p className="text-sm text-text-muted py-5">No account loadouts were returned by League.</p>}
-    <div className="space-y-2">{(data?.items || []).map((loadout: any) => <article key={String(loadout.id)} className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.07] pt-3"><div className="min-w-0"><strong className="text-sm text-white">{loadout.name || 'Unnamed loadout'}</strong><small className="block text-xs text-text-muted">{loadout.scope || 'account'} · ID {loadout.id} · {Object.keys(loadout.loadout || loadout.slots || {}).length} slots</small></div><div className="flex gap-2"><button type="button" className="btn-secondary text-xs" onClick={() => void reviewChange(loadout, 'loadout-rename')}><Pencil /> Rename</button><button type="button" className="btn-danger text-xs" onClick={() => void reviewChange(loadout, 'loadout-delete')}><Trash2 /> Delete</button></div></article>)}</div>
-    <ReviewOperationModal operation={review} onClose={() => setReview(null)} onConfirm={confirmReview} />
-  </WorkspaceSection>;
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        variant="collection"
+        icon={Layers3}
+        eyebrow="PROFILE STUDIO"
+        title="League loadouts"
+        description="Inspect account-scoped cosmetic loadouts. Slot composition stays read-only until League semantics are verified."
+        meta={<StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>{connected ? 'Live loadouts' : 'League offline'}</StatusBadge>}
+        actions={<button type="button" className="page-header__button" onClick={() => void refresh()} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : ''} /> Refresh</button>}
+      />
+      <WorkspaceSection eyebrow="LOADOUT INVENTORY" title="Saved loadouts" description={`${data?.items?.length || 0} cosmetic loadouts found in client`}>
+        {feedback && <div className={`feedback-banner feedback-banner--${feedback.tone} mb-3`} role="status">{feedback.message}</div>}
+        {!data?.ready && <p className="text-xs text-text-dim mb-3">League has not marked profile loadouts ready yet.</p>}
+        {!data?.items?.length && <p className="text-sm text-text-muted py-5">No account loadouts were returned by League.</p>}
+        <div className="space-y-2">{(data?.items || []).map((loadout: any) => <article key={String(loadout.id)} className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.07] pt-3"><div className="min-w-0"><strong className="text-sm text-white">{loadout.name || 'Unnamed loadout'}</strong><small className="block text-xs text-text-muted">{loadout.scope || 'account'} · ID {loadout.id} · {Object.keys(loadout.loadout || loadout.slots || {}).length} slots</small></div><div className="flex gap-2"><button type="button" className="btn-secondary text-xs" onClick={() => void reviewChange(loadout, 'loadout-rename')}><Pencil /> Rename</button><button type="button" className="btn-danger text-xs" onClick={() => void reviewChange(loadout, 'loadout-delete')}><Trash2 /> Delete</button></div></article>)}</div>
+      </WorkspaceSection>
+      <ReviewOperationModal operation={review} onClose={() => setReview(null)} onConfirm={confirmReview} />
+    </div>
+  );
 }

@@ -392,7 +392,7 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
       />
 
       <div className="profile-studio-page__layout">
-        <main className="profile-studio-page__workspace">
+        <section className="profile-studio-page__workspace">
           {/* Sub-Navigation Category Tabs */}
           <nav className="profile-studio-page__tools" aria-label="Profile customization categories">
             <button
@@ -727,7 +727,7 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
               </WorkspaceSection>
             </div>
           )}
-        </main>
+        </section>
 
         {/* RIGHT PANEL: LIVE AUTHENTIC SUMMONER CARD COMPOSITE */}
         <ContextPanel

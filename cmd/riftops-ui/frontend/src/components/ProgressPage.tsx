@@ -9,8 +9,10 @@ import {
   Gem,
   Info,
   RefreshCw,
+  Search,
   Sparkles,
   Trophy,
+  X,
 } from 'lucide-react';
 import {
   acknowledgeProgressMastery,
@@ -28,6 +30,8 @@ import {
 import { championName, loadLeagueCatalog, resolveRewardDisplay, type LeagueCatalog } from '../leagueCatalog';
 import ReviewOperationModal, { type ReviewOperationData } from './ReviewOperationModal';
 import { useLCUConnection } from './lcuConnectionContext';
+import PageHeader from './PageHeader';
+import { EmptyState, StatusBadge } from './DesignPrimitives';
 
 type Feedback = { tone: 'success' | 'error'; message: string } | null;
 type ChampionCatalog = LeagueCatalog['champions'];
@@ -102,9 +106,16 @@ function SummaryStat({ label, value, detail, accent = false }: { label: string; 
 
 function MissionRow({ mission }: { mission: any }) {
   const objectives = Array.isArray(mission?.objectives) ? mission.objectives.slice(0, 3) : [];
-  return <article className="progress-mission-row">
+  const isComplete = text(mission?.status).toLowerCase().includes('complete');
+  return <article className={`progress-mission-row ${isComplete ? 'is-complete opacity-75' : ''}`}>
     <div className="progress-mission-row__heading">
-      <div><strong>{text(mission?.title, 'Mission')}</strong><p>{text(mission?.description ?? mission?.helperText, 'Complete the objective in League.')}</p></div>
+      <div>
+        <strong>
+          {text(mission?.title, 'Mission')}
+          {isComplete && <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Completed</span>}
+        </strong>
+        <p>{text(mission?.description ?? mission?.helperText, 'Complete the objective in League.')}</p>
+      </div>
       {mission?.endAt && <span><Clock3 aria-hidden="true" /> Ends {formatDate(mission.endAt)}</span>}
     </div>
     {objectives.length > 0 ? <div className="progress-mission-row__objectives">{objectives.map((objective: any, index: number) => {
@@ -163,6 +174,10 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [selectedRewards, setSelectedRewards] = useState<Record<string, string[]>>({});
   const [review, setReview] = useState<ReviewOperationData | null>(null);
+  const [masterySearch, setMasterySearch] = useState('');
+  const [masterySort, setMasterySort] = useState<'points' | 'level' | 'closest' | 'recent'>('points');
+  const [masteryLimit, setMasteryLimit] = useState(12);
+  const [missionFilter, setMissionFilter] = useState<'active' | 'all'>('active');
 
   const refresh = useCallback(async () => {
     if (!connected) return;
@@ -190,7 +205,51 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
 
   const pendingRewards = useMemo(() => rewards?.grants?.filter((grant: any) => text(grant?.status ?? grant?.info?.status).toUpperCase() === 'PENDING_SELECTION') || [], [rewards]);
   const activeMissions = useMemo(() => missions?.missions?.filter((mission: any) => !text(mission?.status).toLowerCase().includes('complete')) || [], [missions]);
-  const masteryChampions = useMemo(() => (mastery?.champions || []).slice().sort((a: any, b: any) => readNumber(b?.championPoints) - readNumber(a?.championPoints)).slice(0, 8), [mastery]);
+  const displayMissions = useMemo(() => {
+    const list = missions?.missions || [];
+    if (missionFilter === 'active') {
+      return list.filter((m: any) => !text(m?.status).toLowerCase().includes('complete'));
+    }
+    return list;
+  }, [missions, missionFilter]);
+
+  const filteredMastery = useMemo(() => {
+    const list = mastery?.champions ? [...mastery.champions] : [];
+    const searchLower = masterySearch.trim().toLowerCase();
+    const filtered = searchLower
+      ? list.filter((c: any) => {
+          const id = text(c?.championId);
+          const name = championName(id, catalog.champions).toLowerCase();
+          return name.includes(searchLower) || id.includes(searchLower);
+        })
+      : list;
+
+    filtered.sort((a: any, b: any) => {
+      if (masterySort === 'level') {
+        const diff = readNumber(b?.championLevel) - readNumber(a?.championLevel);
+        return diff !== 0 ? diff : readNumber(b?.championPoints) - readNumber(a?.championPoints);
+      }
+      if (masterySort === 'closest') {
+        const untilA = readNumber(a?.championPointsUntilNextLevel);
+        const untilB = readNumber(b?.championPointsUntilNextLevel);
+        if (untilA > 0 && untilB > 0) return untilA - untilB;
+        if (untilA > 0) return -1;
+        if (untilB > 0) return 1;
+        return readNumber(b?.championPoints) - readNumber(a?.championPoints);
+      }
+      if (masterySort === 'recent') {
+        return readNumber(b?.lastPlayTime) - readNumber(a?.lastPlayTime);
+      }
+      return readNumber(b?.championPoints) - readNumber(a?.championPoints);
+    });
+
+    return filtered;
+  }, [mastery, catalog.champions, masterySearch, masterySort]);
+
+  const displayedMastery = useMemo(() => {
+    return filteredMastery.slice(0, masteryLimit);
+  }, [filteredMastery, masteryLimit]);
+
   const score = readNumber(mastery?.totalScore);
 
   const toggleReward = (grant: any, choiceID: string) => {
@@ -254,66 +313,184 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
   };
 
   if (!connected) {
-    return <main className="workspace-stage progress-page"><section className="progress-surface progress-empty"><BookOpen aria-hidden="true" /><h2>Progress is waiting for League</h2><p>Connect the League Client to load missions, mastery, and rewards.</p></section></main>;
+    return (
+      <div className="progress-page space-y-4">
+        <PageHeader
+          variant="workspace"
+          icon={BookOpen}
+          eyebrow="PLAYER PROGRESS"
+          title="Progress"
+          description="Track active missions, champion mastery progression, and pending reward choices."
+          meta={<StatusBadge tone="neutral">League offline</StatusBadge>}
+        />
+        <EmptyState
+          icon={BookOpen}
+          title="Progress is waiting for League"
+          description="Connect the League Client to load missions, mastery, and rewards."
+        />
+      </div>
+    );
   }
 
-  return <main className="workspace-stage progress-page">
-    <header className="progress-page__header">
-      <div><span className="progress-page__eyebrow">PLAYER PROGRESS</span><h1>Progress</h1><p>See what is ready, what is growing, and what needs your choice.</p></div>
-      <div className="progress-page__header-actions"><span className={`progress-sync${loading ? ' is-syncing' : ''}`}><span />{loading ? 'Syncing with League' : 'Synced'}</span><button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : ''} aria-hidden="true" /> Refresh</button></div>
-    </header>
+  return (
+    <div className="progress-page space-y-4">
+      <PageHeader
+        variant="workspace"
+        icon={BookOpen}
+        eyebrow="PLAYER PROGRESS"
+        title="Progress"
+        description="Track active missions, champion mastery progression, and pending reward choices."
+        meta={
+          <StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>
+            {loading ? 'Syncing with League' : 'Synced'}
+          </StatusBadge>
+        }
+        actions={
+          <button type="button" className="page-header__button" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+            Refresh
+          </button>
+        }
+      />
 
-    {error && <div className="feedback-banner feedback-banner--error" role="status">{error}</div>}
-    {feedback && <div className={`feedback-banner feedback-banner--${feedback.tone}`} role="status">{feedback.message}</div>}
+      {error && <div className="feedback-banner feedback-banner--error" role="status">{error}</div>}
+      {feedback && <div className={`feedback-banner feedback-banner--${feedback.tone}`} role="status">{feedback.message}</div>}
 
-    <section className="progress-summary" aria-label="Progress summary">
-      <SummaryStat label="Active missions" value={String(activeMissions.length)} detail={missions ? `${missions.missions.length} tracked in League` : 'Waiting for League'} />
-      <SummaryStat label="Pending rewards" value={String(pendingRewards.length)} detail={pendingRewards.length ? 'Your choice is needed' : 'Nothing waiting'} accent={pendingRewards.length > 0} />
-      <SummaryStat label="Mastery score" value={score ? score.toLocaleString() : '—'} detail={mastery ? `${masteryChampions.length} champions shown` : 'Waiting for League'} />
-      <SummaryStat label="League loadouts" value={remoteClient ? '—' : String(loadoutCount)} detail={remoteClient ? 'Desktop only' : 'Saved in your client'} />
-    </section>
-
-    <div className="progress-dashboard-grid">
-      <section className="progress-surface">
-        <header className="progress-surface__header"><div className="progress-section-title"><BookOpen aria-hidden="true" /><div><h2>Missions</h2><p>Track objectives before they expire.</p></div></div><span className="progress-section-count">{activeMissions.length} active</span></header>
-        <div className="progress-surface__body">
-          {activeMissions.length ? activeMissions.slice(0, 8).map((mission: any) => <MissionRow key={text(mission?.id)} mission={mission} />) : <div className="progress-empty progress-empty--inline"><CalendarClock aria-hidden="true" /><strong>{missions ? 'No active missions' : 'Mission data unavailable'}</strong><p>{missions ? 'League has no active objectives for this account right now.' : 'Refresh after the League Client is ready.'}</p></div>}
-        </div>
+      <section className="progress-summary" aria-label="Progress summary">
+        <SummaryStat label="Active missions" value={String(activeMissions.length)} detail={missions ? `${missions.missions.length} tracked in League` : 'Waiting for League'} />
+        <SummaryStat label="Pending rewards" value={String(pendingRewards.length)} detail={pendingRewards.length ? 'Your choice is needed' : 'Nothing waiting'} accent={pendingRewards.length > 0} />
+        <SummaryStat label="Mastery score" value={score ? score.toLocaleString() : '—'} detail={mastery ? `${filteredMastery.length} champions tracked` : 'Waiting for League'} />
+        <SummaryStat label="League loadouts" value={remoteClient ? '—' : String(loadoutCount)} detail={remoteClient ? 'Desktop only' : 'Saved in your client'} />
       </section>
 
-      <section className="progress-surface">
-        <header className="progress-surface__header"><div className="progress-section-title"><Award aria-hidden="true" /><div><h2>Mastery</h2><p>Champion levels and recent progress.</p></div></div><span className="progress-section-count">{score ? `${score.toLocaleString()} score` : 'No score'}</span></header>
-        {Boolean(mastery?.notification) && <div className="progress-notification"><div><Sparkles aria-hidden="true" /><span>New mastery progress is ready to review.</span></div>{!remoteClient && <button type="button" className="btn-secondary" onClick={() => void acknowledge()}>Acknowledge</button>}</div>}
-        <div className="progress-surface__body progress-mastery-grid">
-          {masteryChampions.length ? masteryChampions.map((champion: any) => <MasteryCard key={text(champion?.championId)} champion={champion} catalog={catalog.champions} />) : <div className="progress-empty progress-empty--inline"><Trophy aria-hidden="true" /><strong>Mastery data unavailable</strong><p>Champion levels will appear when League returns mastery data.</p></div>}
-        </div>
-        {!Object.keys(catalog.champions).length && masteryChampions.length > 0 && <div className="progress-data-note"><Info aria-hidden="true" /> Champion names are unavailable from League metadata; IDs will resolve on the next refresh.</div>}
-      </section>
-    </div>
+      <div className="progress-dashboard-grid">
+        <section className="progress-surface">
+          <header className="progress-surface__header flex items-center justify-between gap-2">
+            <div className="progress-section-title">
+              <BookOpen aria-hidden="true" />
+              <div>
+                <h2>Missions</h2>
+                <p>Track objectives before they expire.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
+                <button
+                  type="button"
+                  onClick={() => setMissionFilter('active')}
+                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition cursor-pointer ${
+                    missionFilter === 'active' ? 'bg-white/10 text-white shadow-sm' : 'text-text-dim hover:text-white'
+                  }`}
+                >
+                  Active
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMissionFilter('all')}
+                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition cursor-pointer ${
+                    missionFilter === 'all' ? 'bg-white/10 text-white shadow-sm' : 'text-text-dim hover:text-white'
+                  }`}
+                >
+                  All
+                </button>
+              </div>
+              <span className="progress-section-count">{displayMissions.length} {missionFilter}</span>
+            </div>
+          </header>
+          <div className="progress-surface__body">
+            {displayMissions.length ? displayMissions.slice(0, 8).map((mission: any) => <MissionRow key={text(mission?.id)} mission={mission} />) : <div className="progress-empty progress-empty--inline"><CalendarClock aria-hidden="true" /><strong>{missions ? 'No missions found' : 'Mission data unavailable'}</strong><p>{missions ? 'League has no matching objectives for this account right now.' : 'Refresh after the League Client is ready.'}</p></div>}
+          </div>
+        </section>
 
-    <section className="progress-surface progress-rewards">
-      <header className="progress-surface__header"><div className="progress-section-title"><Gem aria-hidden="true" /><div><h2>Rewards</h2><p>Review each choice before sending it to League.</p></div></div><span className="progress-section-count">{pendingRewards.length} pending</span></header>
-      <div className="progress-surface__body">
-        {pendingRewards.length ? <>
-          <div className="progress-rewards__guide"><div><Sparkles aria-hidden="true" /><span><strong>Choose your reward</strong><small>Selections are reviewed first and never sent automatically.</small></span></div><b>{pendingRewards.length} choice{pendingRewards.length === 1 ? '' : 's'} waiting</b></div>
-          <div className="progress-rewards__list">{pendingRewards.map((grant: any, grantIndex: number) => {
-            const id = grantID(grant) || `grant-${grantIndex + 1}`;
-            const options = rewardList(grant);
-            const selected = selectedForGrant(grant, selectedRewards);
-            const { minimum, maximum } = rewardLimits(grant, options.length);
-            return <article key={id} className="progress-reward-grant">
-              <header className="progress-reward-grant__header"><div><strong>Reward selection</strong><span>{grant?.createdAt ? `Received ${formatDate(grant.createdAt)}` : 'Pending in League'}</span></div><span className="progress-reward-status">Pending choice</span></header>
-              <div className="progress-reward-grant__meta"><span><b>{minimum === maximum ? `Choose ${minimum}` : `Choose ${minimum}–${maximum}`}</b> option{maximum === 1 ? '' : 's'}</span><span>{text(grant?.strategy, 'SELECTION')} strategy</span><span>{selected.length} selected</span></div>
-              {options.length ? <div className="progress-reward-options">{options.slice(0, 12).map((reward: any, index: number) => {
-                const choiceID = rewardID(reward, index);
-                return <RewardChoice key={choiceID} reward={reward} index={index} active={selected.includes(choiceID)} disabled={remoteClient} catalog={catalog} onClick={() => toggleReward(grant, choiceID)} />;
-              })}</div> : <div className="progress-empty progress-empty--compact"><Info aria-hidden="true" /><span>League returned this grant without selectable reward details.</span></div>}
-              <footer className="progress-reward-grant__footer">{remoteClient ? <span className="progress-reward-remote"><Info aria-hidden="true" /> Reward choices can only be applied on the desktop app.</span> : <span>{selected.length < minimum ? `${minimum - selected.length} more required` : selected.length === maximum ? 'Ready to review' : `${maximum - selected.length} more allowed`}</span>}<button type="button" className="btn-primary" onClick={() => void reviewReward(grant)} disabled={remoteClient || selected.length < minimum || selected.length > maximum}>Review selection <ChevronRight aria-hidden="true" /></button></footer>
-            </article>;
-          })}</div>
-        </> : <div className="progress-empty progress-empty--inline"><Gem aria-hidden="true" /><strong>No pending rewards</strong><p>New reward choices will appear here when League grants them.</p></div>}
+        <section className="progress-surface">
+          <header className="progress-surface__header flex flex-wrap items-center justify-between gap-2">
+            <div className="progress-section-title">
+              <Award aria-hidden="true" />
+              <div>
+                <h2>Mastery</h2>
+                <p>Champion levels and recent progress.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative flex items-center">
+                <Search className="w-3.5 h-3.5 text-text-dim absolute left-2.5 pointer-events-none" />
+                <input
+                  type="text"
+                  value={masterySearch}
+                  onChange={(e) => setMasterySearch(e.target.value)}
+                  placeholder="Find champion..."
+                  className="pl-8 pr-7 py-1 rounded-lg text-xs bg-black/40 border border-white/[0.08] text-white placeholder:text-text-dim focus:outline-none focus:border-primary/50 w-32 sm:w-36"
+                />
+                {masterySearch && (
+                  <button
+                    type="button"
+                    onClick={() => setMasterySearch('')}
+                    className="absolute right-2 text-text-dim hover:text-white"
+                    title="Clear search"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              <select
+                value={masterySort}
+                onChange={(e) => setMasterySort(e.target.value as any)}
+                className="py-1 px-2.5 rounded-lg text-xs bg-black/40 border border-white/[0.08] text-white focus:outline-none focus:border-primary/50 cursor-pointer"
+                aria-label="Sort champions"
+              >
+                <option value="points">Highest Points</option>
+                <option value="level">Highest Level</option>
+                <option value="closest">Closest to Next Level</option>
+                <option value="recent">Recently Played</option>
+              </select>
+              <span className="progress-section-count">
+                {score ? `${score.toLocaleString()} score` : 'No score'}
+              </span>
+            </div>
+          </header>
+          {Boolean(mastery?.notification) && <div className="progress-notification"><div><Sparkles aria-hidden="true" /><span>New mastery progress is ready to review.</span></div>{!remoteClient && <button type="button" className="btn-secondary" onClick={() => void acknowledge()}>Acknowledge</button>}</div>}
+          <div className="progress-surface__body progress-mastery-grid">
+            {displayedMastery.length ? displayedMastery.map((champion: any) => <MasteryCard key={text(champion?.championId)} champion={champion} catalog={catalog.champions} />) : <div className="progress-empty progress-empty--inline"><Trophy aria-hidden="true" /><strong>{masterySearch ? 'No matching champions' : 'Mastery data unavailable'}</strong><p>{masterySearch ? 'Try a different champion name or ID.' : 'Champion levels will appear when League returns mastery data.'}</p></div>}
+          </div>
+          {filteredMastery.length > displayedMastery.length && (
+            <div className="p-3 text-center border-t border-white/[0.06]">
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                onClick={() => setMasteryLimit((prev) => prev + 12)}
+              >
+                Show more champions ({displayedMastery.length} of {filteredMastery.length})
+              </button>
+            </div>
+          )}
+          {!Object.keys(catalog.champions).length && displayedMastery.length > 0 && <div className="progress-data-note"><Info aria-hidden="true" /> Champion names are unavailable from League metadata; IDs will resolve on the next refresh.</div>}
+        </section>
       </div>
-    </section>
-    <ReviewOperationModal operation={review} onClose={() => setReview(null)} onConfirm={confirmReview} />
-  </main>;
+
+      <section className="progress-surface progress-rewards">
+        <header className="progress-surface__header"><div className="progress-section-title"><Gem aria-hidden="true" /><div><h2>Rewards</h2><p>Review each choice before sending it to League.</p></div></div><span className="progress-section-count">{pendingRewards.length} pending</span></header>
+        <div className="progress-surface__body">
+          {pendingRewards.length ? <>
+            <div className="progress-rewards__guide"><div><Sparkles aria-hidden="true" /><span><strong>Choose your reward</strong><small>Selections are reviewed first and never sent automatically.</small></span></div><b>{pendingRewards.length} choice{pendingRewards.length === 1 ? '' : 's'} waiting</b></div>
+            <div className="progress-rewards__list">{pendingRewards.map((grant: any, grantIndex: number) => {
+              const id = grantID(grant) || `grant-${grantIndex + 1}`;
+              const options = rewardList(grant);
+              const selected = selectedForGrant(grant, selectedRewards);
+              const { minimum, maximum } = rewardLimits(grant, options.length);
+              return <article key={id} className="progress-reward-grant">
+                <header className="progress-reward-grant__header"><div><strong>Reward selection</strong><span>{grant?.createdAt ? `Received ${formatDate(grant.createdAt)}` : 'Pending in League'}</span></div><span className="progress-reward-status">Pending choice</span></header>
+                <div className="progress-reward-grant__meta"><span><b>{minimum === maximum ? `Choose ${minimum}` : `Choose ${minimum}–${maximum}`}</b> option{maximum === 1 ? '' : 's'}</span><span>{text(grant?.strategy, 'SELECTION')} strategy</span><span>{selected.length} selected</span></div>
+                {options.length ? <div className="progress-reward-options">{options.slice(0, 12).map((reward: any, index: number) => {
+                  const choiceID = rewardID(reward, index);
+                  return <RewardChoice key={choiceID} reward={reward} index={index} active={selected.includes(choiceID)} disabled={remoteClient} catalog={catalog} onClick={() => toggleReward(grant, choiceID)} />;
+                })}</div> : <div className="progress-empty progress-empty--compact"><Info aria-hidden="true" /><span>League returned this grant without selectable reward details.</span></div>}
+                <footer className="progress-reward-grant__footer">{remoteClient ? <span className="progress-reward-remote"><Info aria-hidden="true" /> Reward choices can only be applied on the desktop app.</span> : <span>{selected.length < minimum ? `${minimum - selected.length} more required` : selected.length === maximum ? 'Ready to review' : `${maximum - selected.length} more allowed`}</span>}<button type="button" className="btn-primary" onClick={() => void reviewReward(grant)} disabled={remoteClient || selected.length < minimum || selected.length > maximum}>Review selection <ChevronRight aria-hidden="true" /></button></footer>
+              </article>;
+            })}</div>
+          </> : <div className="progress-empty progress-empty--inline"><Gem aria-hidden="true" /><strong>No pending rewards</strong><p>New reward choices will appear here when League grants them.</p></div>}
+        </div>
+      </section>
+      <ReviewOperationModal operation={review} onClose={() => setReview(null)} onConfirm={confirmReview} />
+    </div>
+  );
 }

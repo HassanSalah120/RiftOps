@@ -9,7 +9,6 @@ import {
   Shield,
   Heart,
   X,
-  ChevronRight,
   ChevronDown,
   Gem,
   LayoutGrid,
@@ -46,8 +45,10 @@ const TIER_MAP: Record<string, { label: string; color: string; rank: number }> =
 type SkinCategory = 'normal' | 'classic';
 type SkinDensity = 'comfortable' | 'compact';
 type SkinSort = 'rarity' | 'name';
-type SkinStatusFilter = 'all' | 'owned' | 'missing' | 'available' | 'shard' | 'rental' | 'wishlist' | 'unavailable';
-type SmartFilter = 'all' | 'near-complete' | 'missing-one' | 'rarest' | 'shard-candidates';
+type ChampionSort = 'completion' | 'least-owned' | 'owned' | 'total' | 'name';
+type SkinStatusFilter = 'all' | 'owned' | 'missing' | 'zero-owned' | 'available' | 'shard' | 'rental' | 'wishlist' | 'unavailable';
+type SmartFilter = 'all' | 'zero-skins' | 'near-complete' | 'missing-one' | 'rarest' | 'shard-candidates';
+type ViewLayout = 'roster' | 'gallery';
 
 function readPreference<T>(key: string, fallback: T): T {
   try {
@@ -250,13 +251,15 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   const [allSkins, setAllSkins] = useState<any[]>([]);
   const [search, setSearch] = useState(() => readPreference('riftops-skin-search', ''));
   const [tierFilter, setTierFilter] = useState<string>(() => readPreference('riftops-skin-tier', 'all'));
-  const [championSort, setChampionSort] = useState<'completion' | 'owned' | 'name' | 'total'>(() => readPreference('riftops-skin-sort', 'completion'));
+  const [championSort, setChampionSort] = useState<ChampionSort>(() => readPreference('riftops-skin-sort', 'completion'));
   const [skinCategory, setSkinCategory] = useState<SkinCategory>(() => readPreference('riftops-skin-category', 'normal'));
   const [shardsOnly, setShardsOnly] = useState(() => readPreference('riftops-skin-shards-only', false));
   const [selectedChampId, setSelectedChampId] = useState<number | null>(null);
   const [favsOnly, setFavsOnly] = useState(() => readPreference('riftops-skin-favs-only', false));
   const [statusFilter, setStatusFilter] = useState<SkinStatusFilter>(() => readPreference('riftops-skin-status', 'all'));
   const [smartFilter, setSmartFilter] = useState<SmartFilter>(() => readPreference('riftops-skin-smart-filter', 'all'));
+  const [viewLayout, setViewLayout] = useState<ViewLayout>(() => readPreference('riftops-skin-layout', 'gallery'));
+  const [collapsedChamps, setCollapsedChamps] = useState<Set<number>>(new Set());
   const [viewMode, setViewMode] = useState<SkinView>(() => readPreference('riftops-skin-view', 'grid'));
   const [density, setDensity] = useState<SkinDensity>(() => readPreference('riftops-skin-density', 'comfortable'));
   const [skinSort, setSkinSort] = useState<SkinSort>(() => readPreference('riftops-skin-item-sort', 'rarity'));
@@ -296,11 +299,12 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     localStorage.setItem('riftops-skin-favs-only', JSON.stringify(favsOnly));
     localStorage.setItem('riftops-skin-status', JSON.stringify(statusFilter));
     localStorage.setItem('riftops-skin-smart-filter', JSON.stringify(smartFilter));
+    localStorage.setItem('riftops-skin-layout', JSON.stringify(viewLayout));
     localStorage.setItem('riftops-skin-view', JSON.stringify(viewMode));
     localStorage.setItem('riftops-skin-density', JSON.stringify(density));
     localStorage.setItem('riftops-skin-item-sort', JSON.stringify(skinSort));
     localStorage.setItem('riftops-skin-filters-open', JSON.stringify(filtersOpen));
-  }, [search, tierFilter, championSort, skinCategory, shardsOnly, favsOnly, statusFilter, smartFilter, viewMode, density, skinSort, filtersOpen]);
+  }, [search, tierFilter, championSort, skinCategory, shardsOnly, favsOnly, statusFilter, smartFilter, viewLayout, viewMode, density, skinSort, filtersOpen]);
 
   const toggleFav = (skinOrId: any) => {
     setFavs((prev) => {
@@ -498,9 +502,9 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   // from champion coverage so both numbers describe something meaningful.
   const totalOwned = categorySkins.filter((s) => s.owned).length;
   const totalShards = categorySkins.filter((s) => s.shard).length;
-  const totalRentals = categorySkins.filter((s) => s.rental).length;
   const totalUnavailable = categorySkins.filter((s) => s.unavailable).length;
   const champsWithOwned = categoryChamps.filter((c) => c.owned > 0).length;
+  const champsWithZeroOwned = categoryChamps.filter((c) => c.owned === 0).length;
   const pct = categorySkins.length ? Math.round((totalOwned / categorySkins.length) * 100) : 0;
   const championPct = categoryChamps.length ? Math.round((champsWithOwned / categoryChamps.length) * 100) : 0;
   const activeFilterCount = [
@@ -512,6 +516,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     favsOnly,
     selectedChampId !== null,
   ].filter(Boolean).length;
+
   const clearFilters = () => {
     setSearch('');
     setTierFilter('all');
@@ -532,6 +537,23 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     chooseStatus(statusFilter === next && !shardsOnly ? 'all' : next);
   };
 
+  const toggleCollapse = (champId: number) => {
+    setCollapsedChamps((prev) => {
+      const next = new Set(prev);
+      if (next.has(champId)) next.delete(champId);
+      else next.add(champId);
+      return next;
+    });
+  };
+
+  const toggleAllCollapse = () => {
+    if (collapsedChamps.size >= displayedChamps.length) {
+      setCollapsedChamps(new Set());
+    } else {
+      setCollapsedChamps(new Set(displayedChamps.map((c) => c.id)));
+    }
+  };
+
   const visibleSkins = useMemo(() => {
     const query = search.trim().toLowerCase();
     const rarityRank = (skin: any) => (TIER_MAP[skin.rarity] || TIER_MAP.standard).rank;
@@ -548,11 +570,13 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
       if (favsOnly && !isSkinFavorite(favs, skin)) return false;
       if (statusFilter === 'owned' && !skin.owned) return false;
       if (statusFilter === 'missing' && (skin.owned || skin.rental || skin.shard)) return false;
+      if (statusFilter === 'zero-owned' && (!champ || champ.owned > 0)) return false;
       if (statusFilter === 'available' && skin.unavailable) return false;
       if (statusFilter === 'shard' && !skin.shard) return false;
       if (statusFilter === 'rental' && !skin.rental) return false;
       if (statusFilter === 'wishlist' && !wishlist.has(skinKey(skin))) return false;
       if (statusFilter === 'unavailable' && !skin.unavailable) return false;
+      if (smartFilter === 'zero-skins' && (!champ || champ.owned > 0)) return false;
       if (smartFilter === 'rarest' && rarityRank(skin) < TIER_MAP.legendary.rank) return false;
       if (smartFilter === 'shard-candidates' && !skin.shard) return false;
       if (smartFilter === 'near-complete' && (!champ || champ.owned >= champ.total || champ.owned / champ.total < 0.75)) return false;
@@ -570,6 +594,9 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   // remains useful and stable when several champions share the same percent.
   const sortedChamps = [...filteredChamps].sort((a, b) => {
     const completion = (champ: any) => champ.total > 0 ? champ.owned / champ.total : 0;
+    if (championSort === 'least-owned') {
+      return a.owned - b.owned || completion(a) - completion(b) || b.total - a.total || a.name.localeCompare(b.name);
+    }
     if (championSort === 'completion') {
       return completion(b) - completion(a) || b.owned - a.owned || b.total - a.total || a.name.localeCompare(b.name);
     }
@@ -583,10 +610,6 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   });
 
   const displayedChamps = sortedChamps.slice(0, championLimit);
-  // Kept only for the non-rendered legacy drawer below while the new vault
-  // layout settles existing saved preferences during this release.
-  const champRows: any[][] = [];
-  for (let index = 0; index < displayedChamps.length; index += 4) champRows.push(displayedChamps.slice(index, index + 4));
   const visibleSkinsByChampion = useMemo(() => {
     const rarityRank = (skin: any) => (TIER_MAP[skin.rarity] || TIER_MAP.standard).rank;
     const sorted = [...visibleSkins].sort((a, b) => {
@@ -599,7 +622,79 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   }, [skinSort, visibleSkins]);
   const tierOptions = Object.entries(TIER_MAP).filter(([tier]) => categorySkins.some((skin) => skin.rarity === tier));
   const missingCount = categorySkins.filter((skin) => !skin.owned && !skin.rental && !skin.shard).length;
-  const showLegacyDrawer = false;
+
+  const renderSkinCard = (skin: any) => {
+    const isFav = isSkinFavorite(favs, skin);
+    const isWishlisted = wishlist.has(skinKey(skin));
+    const tier = TIER_MAP[skin.rarity] || TIER_MAP.standard;
+    const status = skin.owned ? 'Owned' : skin.rental ? 'Rental' : skin.shard ? 'Shard ready' : skin.unavailable ? 'Legacy' : 'Missing';
+
+    return (
+      <article
+        key={skin.id}
+        className={`skin-vault-card ${skin.owned ? 'is-owned' : skin.rental ? 'is-rental' : skin.shard ? 'is-shard' : 'is-missing'} ${skin.unavailable ? 'is-unavailable' : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-label={`Preview ${skin.name}, ${status}`}
+        onClick={() => setPreviewSkin(skin)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setPreviewSkin(skin);
+          }
+        }}
+      >
+        <div className="skin-vault-card__media">
+          <SkinCardArt
+            key={`${viewMode}-${skin.id}`}
+            skin={skin}
+            viewMode={viewMode}
+            alt={skin.name}
+          />
+          <div className="skin-vault-card__wash" />
+        </div>
+        <div className="skin-vault-card__body">
+          <div className="skin-vault-card__header">
+            <div className="skin-vault-card__badges">
+              <span style={{ '--tier-color': tier.color } as React.CSSProperties}><i />{tier.label}</span>
+              <em className={`is-${status.toLowerCase().replaceAll(' ', '-')}`}>{status}</em>
+              {skin.shard && <em className="is-shard-tag">◆ Shard</em>}
+            </div>
+            <div className="skin-vault-card__tools">
+              <button
+                type="button"
+                className={isWishlisted ? 'is-selected' : ''}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleWishlist(skin);
+                }}
+                aria-label={isWishlisted ? `Remove ${skin.name} from wishlist` : `Add ${skin.name} to wishlist`}
+                title={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+              >
+                <Bookmark className={isWishlisted ? 'fill-current text-amber-300' : ''} />
+              </button>
+              <button
+                type="button"
+                className={isFav ? 'is-favorite' : ''}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleFav(skin);
+                }}
+                aria-label={isFav ? `Remove ${skin.name} from favorites` : `Add ${skin.name} to favorites`}
+                title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+              >
+                <Heart className={isFav ? 'fill-current text-rose-400' : ''} />
+              </button>
+            </div>
+          </div>
+          <div className="skin-vault-card__copy">
+            <strong>{skin.name}</strong>
+            <small>{skin.chromaCount > 0 ? `${skin.chromaCount} chroma${skin.chromaCount === 1 ? '' : 's'}` : skin.isLegacy ? 'Legacy cosmetic' : 'League cosmetic'}</small>
+          </div>
+        </div>
+      </article>
+    );
+  };
 
   const headerMeta = (
     <>
@@ -631,501 +726,502 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
       />
 
       <section className="skin-vault-summary" aria-label="Collection progress">
-        <div className="skin-vault-summary__progress">
+        <button
+          type="button"
+          className={`skin-vault-summary__progress skin-vault-summary__clickable ${statusFilter === 'all' && smartFilter === 'all' ? 'is-active' : ''}`}
+          onClick={() => { chooseStatus('all'); setSmartFilter('all'); }}
+          title="Reset to all skins"
+        >
           <div><strong>{totalOwned}</strong><span>/ {categorySkins.length}</span></div>
           <div className="skin-vault-summary__bar"><span style={{ width: `${pct}%` }} /></div>
           <small>{skinCategory === 'classic' ? 'Classic collection' : 'Normal skins'} · {pct}% complete</small>
+        </button>
+        <button
+          type="button"
+          className={`skin-vault-summary__stat skin-vault-summary__clickable ${statusFilter === 'missing' ? 'is-active' : ''}`}
+          onClick={() => chooseStatus(statusFilter === 'missing' ? 'all' : 'missing')}
+          title="Filter to missing skins"
+        >
+          <strong>{missingCount}</strong>
+          <span>Still missing</span>
+        </button>
+        <button
+          type="button"
+          className={`skin-vault-summary__stat skin-vault-summary__clickable is-zero-stat ${statusFilter === 'zero-owned' ? 'is-active' : ''}`}
+          onClick={() => chooseStatus(statusFilter === 'zero-owned' ? 'all' : 'zero-owned')}
+          title="Filter to champions with 0 skins owned"
+        >
+          <strong>{champsWithZeroOwned}</strong>
+          <span>0 skins owned</span>
+        </button>
+        <button
+          type="button"
+          className={`skin-vault-summary__stat skin-vault-summary__clickable is-shard ${statusFilter === 'shard' ? 'is-active' : ''}`}
+          onClick={() => chooseStatus(statusFilter === 'shard' ? 'all' : 'shard')}
+          title="Filter to skins with loot shards"
+        >
+          <strong>◆ {totalShards}</strong>
+          <span>Shards ready</span>
+        </button>
+        <div className="skin-vault-summary__stat">
+          <strong>{championPct}%</strong>
+          <span>Coverage ({champsWithOwned}/{categoryChamps.length})</span>
         </div>
-        <div className="skin-vault-summary__stat"><strong>{missingCount}</strong><span>Still missing</span></div>
-        <div className="skin-vault-summary__stat is-shard"><strong>◆ {totalShards}</strong><span>Shards ready</span></div>
-        <div className="skin-vault-summary__stat"><strong>{championPct}%</strong><span>Champion coverage</span></div>
       </section>
 
       <div className={`skin-vault ${filtersOpen ? 'is-filters-open' : ''}`}>
         <button type="button" className="skin-vault__scrim" onClick={() => setFiltersOpen(false)} aria-label="Close filters" />
         <aside className="skin-vault-filters" aria-label="Collection filters">
-          <div className="skin-vault-filters__title"><span><SlidersHorizontal /> Filters</span><button type="button" onClick={() => setFiltersOpen(false)} aria-label="Close filters"><X /></button></div>
-          <label className="skin-vault-filters__search"><Search /><input type="text" name="skin-search" autoComplete="off" placeholder="Search a skin" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search skins and champions" /></label>
-          <div className="skin-vault-filters__segments" role="group" aria-label="Ownership filter">{(['all', 'owned', 'missing'] as SkinStatusFilter[]).map((filter) => <button type="button" key={filter} onClick={() => chooseStatus(filter)} className={statusFilter === filter && !shardsOnly ? 'is-selected' : ''} aria-pressed={statusFilter === filter && !shardsOnly}>{filter === 'all' ? 'All' : filter[0].toUpperCase() + filter.slice(1)}</button>)}</div>
+          <div className="skin-vault-filters__title">
+            <span><SlidersHorizontal /> Filters</span>
+            <button type="button" onClick={() => setFiltersOpen(false)} aria-label="Close filters"><X /></button>
+          </div>
+          <label className="skin-vault-filters__search">
+            <Search />
+            <input
+              type="text"
+              name="skin-search"
+              autoComplete="off"
+              placeholder="Search skin or champion..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              aria-label="Search skins and champions"
+            />
+          </label>
+          <div className="skin-vault-filters__segments" role="group" aria-label="Ownership filter">
+            {(['all', 'owned', 'missing', 'zero-owned'] as SkinStatusFilter[]).map((filter) => (
+              <button
+                type="button"
+                key={filter}
+                onClick={() => chooseStatus(filter)}
+                className={statusFilter === filter && !shardsOnly ? 'is-selected' : ''}
+                aria-pressed={statusFilter === filter && !shardsOnly}
+              >
+                {filter === 'all' ? 'All' : filter === 'zero-owned' ? '0 Skins' : filter[0].toUpperCase() + filter.slice(1)}
+              </button>
+            ))}
+          </div>
 
-          <div className="skin-vault-filter-group"><span>Champion</span><label className="skin-vault-filter-group__select"><select value={selectedChampId ?? ''} onChange={(event) => setSelectedChampId(event.target.value ? Number(event.target.value) : null)}><option value="">Every champion</option>{[...categoryChamps].sort((a, b) => a.name.localeCompare(b.name)).map((champ) => <option key={champ.id} value={champ.id}>{champ.name}</option>)}</select><ChevronDown /></label></div>
-
-          <div className="skin-vault-filter-group"><span>Collection</span>{(['normal', 'classic'] as SkinCategory[]).map((category) => { const skins = category === 'classic' ? classicSkins : normalSkins; const owned = skins.filter((skin) => skin.owned).length; return <button type="button" key={category} className={`skin-vault-filter-row ${skinCategory === category ? 'is-selected' : ''}`} onClick={() => { setSkinCategory(category); setSelectedChampId(null); }}><i /><strong>{category === 'classic' ? 'Classic champions' : 'Normal skins'}</strong><small>{owned}/{skins.length}</small></button>; })}</div>
-
-          <div className="skin-vault-filter-group"><span>Focus</span><label className="skin-vault-filter-group__select"><select value={smartFilter} onChange={(event) => setSmartFilter(event.target.value as SmartFilter)}><option value="all">Every collection</option><option value="near-complete">Near complete</option><option value="missing-one">Missing one skin</option><option value="rarest">Rare skins</option><option value="shard-candidates">Shard candidates</option></select><ChevronDown /></label></div>
-
-          <div className="skin-vault-filter-group"><span>Tier</span><button type="button" className={`skin-vault-filter-row ${tierFilter === 'all' ? 'is-selected' : ''}`} onClick={() => setTierFilter('all')}><i /><strong>Every tier</strong><small>{totalOwned}/{categorySkins.length}</small></button>{tierOptions.map(([tier, info]) => { const skins = categorySkins.filter((skin) => skin.rarity === tier); return <button type="button" key={tier} className={`skin-vault-filter-row ${tierFilter === tier ? 'is-selected' : ''}`} onClick={() => setTierFilter(tierFilter === tier ? 'all' : tier)}><i style={{ '--tier-color': info.color } as React.CSSProperties} /><strong>{info.label}</strong><small>{skins.filter((skin) => skin.owned).length}/{skins.length}</small></button>; })}</div>
-
-          <div className="skin-vault-filter-group"><span>Availability</span><button type="button" className={`skin-vault-filter-row ${statusFilter === 'available' ? 'is-selected' : ''}`} onClick={() => toggleStatus('available')}><i /><strong>Available</strong><small>{categorySkins.length - totalUnavailable}</small></button><button type="button" className={`skin-vault-filter-row ${statusFilter === 'unavailable' ? 'is-selected' : ''}`} onClick={() => toggleStatus('unavailable')}><i /><strong>Legacy / unavailable</strong><small>{totalUnavailable}</small></button><button type="button" className={`skin-vault-filter-row ${statusFilter === 'shard' || shardsOnly ? 'is-selected' : ''}`} onClick={() => toggleStatus('shard')}><Gem /><strong>Shard available</strong><small>{totalShards}</small></button><button type="button" className={`skin-vault-filter-row ${statusFilter === 'rental' ? 'is-selected' : ''}`} onClick={() => toggleStatus('rental')}><i /><strong>Rental</strong><small>{totalRentals}</small></button><button type="button" className={`skin-vault-filter-row ${statusFilter === 'wishlist' ? 'is-selected' : ''}`} onClick={() => toggleStatus('wishlist')}><Bookmark /><strong>Wishlist</strong><small>{wishlist.size}</small></button><button type="button" className={`skin-vault-filter-row ${favsOnly ? 'is-selected' : ''}`} onClick={() => setFavsOnly((value) => !value)}><Heart className={favsOnly ? 'fill-current' : ''} /><strong>Favorites</strong><small>{favs.size}</small></button></div>
-
-          {activeFilterCount > 0 && <button type="button" className="skin-vault-filters__clear" onClick={clearFilters}><RotateCcw /> Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'}</button>}
-        </aside>
-
-        <main className="skin-vault-results">
-          <div className="skin-vault-toolbar"><div><strong>{visibleSkins.length}</strong><span> skins · {filteredChamps.length} champions</span></div><button type="button" className="skin-vault-toolbar__mobile-filter" onClick={() => setFiltersOpen(true)}><SlidersHorizontal /> Filters {activeFilterCount > 0 && <b>{activeFilterCount}</b>}</button><label><span>Group</span><select value="champion" disabled><option value="champion">Champion</option></select><ChevronDown /></label><label><span>Champions</span><select value={championSort} onChange={(event) => setChampionSort(event.target.value as typeof championSort)}><option value="completion">Most complete</option><option value="owned">Most owned</option><option value="total">Most skins</option><option value="name">Name A–Z</option></select><ChevronDown /></label><label><span>Sort</span><select value={skinSort} onChange={(event) => setSkinSort(event.target.value as SkinSort)}><option value="rarity">Highest tier</option><option value="name">Name A–Z</option></select><ChevronDown /></label><label><span>Size</span><select value={density} onChange={(event) => setDensity(event.target.value as SkinDensity)}><option value="comfortable">Auto</option><option value="compact">Compact</option></select><ChevronDown /></label><div className="skin-vault-toolbar__view"><button type="button" className={viewMode === 'grid' ? 'is-selected' : ''} onClick={() => setViewMode('grid')} aria-label="Grid view"><LayoutGrid /></button><button type="button" className={viewMode === 'list' ? 'is-selected' : ''} onClick={() => setViewMode('list')} aria-label="List view"><List /></button></div></div>
-
-      {/* Legacy control markup remains hidden as a compatibility fallback for
-          saved layouts while the new explorer owns the visible interaction. */}
-      <div className="skin-explorer__legacy">
-      {/* Filter Toolbar */}
-      <div className="page-toolbar page-toolbar--skins flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-dim" />
-          <input
-            type="text"
-            placeholder="Search champion or skin..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-xs rounded-xl"
-          />
-        </div>
-
-        <label className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] font-black uppercase tracking-wider text-text-dim">Sort</span>
-          <select
-            value={championSort}
-            onChange={(e) => setChampionSort(e.target.value as typeof championSort)}
-            aria-label="Sort champion collection"
-            className="px-2.5 py-2 rounded-xl text-xs font-bold"
-          >
-            <option value="completion">Most complete</option>
-            <option value="owned">Most owned</option>
-            <option value="total">Largest collection</option>
-            <option value="name">Name A–Z</option>
-          </select>
-        </label>
-
-        <label className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] font-black uppercase tracking-wider text-text-dim">Status</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as SkinStatusFilter)}
-            aria-label="Filter skins by ownership status"
-            className="px-2.5 py-2 rounded-xl text-xs font-bold"
-          >
-            <option value="all">All skins</option>
-            <option value="owned">Owned</option>
-            <option value="missing">Missing</option>
-            <option value="shard">Shard available</option>
-            <option value="rental">Rental</option>
-            <option value="wishlist">Wishlist</option>
-            <option value="unavailable">Legacy / unavailable</option>
-          </select>
-        </label>
-
-        <label className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] font-black uppercase tracking-wider text-text-dim">Smart view</span>
-          <select
-            value={smartFilter}
-            onChange={(e) => setSmartFilter(e.target.value as SmartFilter)}
-            aria-label="Choose a smart collection view"
-            className="px-2.5 py-2 rounded-xl text-xs font-bold"
-          >
-            <option value="all">Everything</option>
-            <option value="near-complete">Near complete</option>
-            <option value="missing-one">Missing one skin</option>
-            <option value="rarest">Rare skins</option>
-            <option value="shard-candidates">Shard candidates</option>
-          </select>
-        </label>
-
-        <div className="flex gap-1 shrink-0">
-          {['all', 'legendary', 'epic', 'mythic', 'ultimate'].map((t) => (
-            <button
-              key={t}
-              onClick={() => setTierFilter(t)}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition capitalize border cursor-pointer ${
-                tierFilter === t
-                  ? 'bg-primary/20 text-primary border-primary/40 shadow-[0_0_12px_rgba(200,170,110,0.25)]'
-                  : 'text-text-dim border-white/[0.06] hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-
-        {/* Shards Only Toggle */}
-        <button
-          onClick={() => setShardsOnly(!shardsOnly)}
-          className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border cursor-pointer ${
-            shardsOnly
-              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-[0_0_12px_rgba(46,204,113,0.25)]'
-              : 'text-text-dim border-white/[0.06] hover:text-white'
-          }`}
-        >
-          <Gem className="w-3.5 h-3.5 text-emerald-400" />
-          <span>◆ Shards ({totalShards})</span>
-        </button>
-
-        {/* Favorites Toggle */}
-        <button
-          onClick={() => setFavsOnly(!favsOnly)}
-          className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border cursor-pointer ${
-            favsOnly
-              ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-              : 'text-text-dim border-white/[0.06] hover:text-white'
-          }`}
-        >
-          <Heart className={`w-3.5 h-3.5 ${favsOnly ? 'fill-rose-400' : ''}`} />
-          <span>Favorites ({favs.size})</span>
-        </button>
-
-        <div className="flex items-center gap-1 p-1 rounded-xl border border-white/[0.06] bg-white/[0.02] shrink-0" aria-label="Skin card layout">
-          <button
-            type="button"
-            onClick={() => setViewMode('grid')}
-            className={`p-1.5 rounded-lg cursor-pointer ${viewMode === 'grid' ? 'bg-primary/20 text-primary' : 'text-text-dim hover:text-white'}`}
-            title="Grid view"
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('list')}
-            className={`p-1.5 rounded-lg cursor-pointer ${viewMode === 'list' ? 'bg-primary/20 text-primary' : 'text-text-dim hover:text-white'}`}
-            title="List view"
-          >
-            <List className="w-3.5 h-3.5" />
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => setDensity(density === 'comfortable' ? 'compact' : 'comfortable')}
-          className="px-2.5 py-2 rounded-xl text-xs font-bold text-text-dim border border-white/[0.06] hover:text-white cursor-pointer"
-          title="Toggle compact cards"
-        >
-          {density === 'comfortable' ? 'Compact' : 'Comfortable'}
-        </button>
-      </div>
-      </div>
-
-      {loading && <div className="skin-vault-state"><Loader2 className="animate-spin" /><strong>Loading your collection</strong><span>Reading skins and ownership from League Client…</span></div>}
-      {error && !loading && <div className="skin-vault-state is-error"><Shield /><strong>Collection unavailable</strong><span>{error}</span><button type="button" onClick={() => void loadData()}>Retry connection</button></div>}
-      {!loading && !error && displayedChamps.length === 0 && <div className="skin-vault-state"><Sparkles /><strong>No skins match these filters</strong><span>Clear a filter or search for another champion.</span>{activeFilterCount > 0 && <button type="button" onClick={clearFilters}>Clear filters</button>}</div>}
-
-      {!loading && !error && displayedChamps.map((champ) => {
-        const skins = visibleSkinsByChampion.get(champ.id) || [];
-        const shownOwned = skins.filter((skin) => skin.owned).length;
-        const completion = champ.total ? Math.round((champ.owned / champ.total) * 100) : 0;
-        return (
-          <section className="skin-vault-group" key={champ.id}>
-            <header className="skin-vault-group__header">
-              <img src={`/lol-game-data/assets/v1/champion-icons/${champ.id}.png`} alt="" width="32" height="32" loading="lazy" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
-              <strong>{champ.name}</strong>
-              <span>{shownOwned} owned shown · {champ.owned}/{champ.total} total</span>
-              {champ.shards > 0 && <em>◆ {champ.shards} shard{champ.shards === 1 ? '' : 's'}</em>}
-              <div><span style={{ width: `${completion}%` }} /></div>
-            </header>
-            <div className={`skin-vault-cards is-${viewMode} is-${density}`}>
-              {skins.map((skin) => {
-                const isFav = isSkinFavorite(favs, skin);
-                const isWishlisted = wishlist.has(skinKey(skin));
-                const tier = TIER_MAP[skin.rarity] || TIER_MAP.standard;
-                const status = skin.owned ? 'Owned' : skin.rental ? 'Rental' : skin.shard ? 'Shard ready' : skin.unavailable ? 'Legacy' : 'Missing';
+          <div className="skin-vault-filter-group">
+            <span>Collection</span>
+            <div className="skin-vault-filters__collection-toggle">
+              {(['normal', 'classic'] as SkinCategory[]).map((category) => {
+                const skins = category === 'classic' ? classicSkins : normalSkins;
+                const owned = skins.filter((skin) => skin.owned).length;
                 return (
-                  <article
-                    key={skin.id}
-                    className={`skin-vault-card ${skin.owned ? 'is-owned' : skin.rental ? 'is-rental' : skin.shard ? 'is-shard' : 'is-missing'} ${skin.unavailable ? 'is-unavailable' : ''}`}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Preview ${skin.name}, ${status}`}
-                    onClick={() => setPreviewSkin(skin)}
-                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setPreviewSkin(skin); } }}
+                  <button
+                    type="button"
+                    key={category}
+                    className={skinCategory === category ? 'is-selected' : ''}
+                    onClick={() => {
+                      setSkinCategory(category);
+                      setSelectedChampId(null);
+                    }}
                   >
-                    <div className="skin-vault-card__media">
-                      <SkinCardArt
-                        key={`${viewMode}-${skin.id}`}
-                        skin={skin}
-                        viewMode={viewMode}
-                        alt={skin.name}
-                      />
-                      <div className="skin-vault-card__wash" />
-                    </div>
-                    <div className="skin-vault-card__body">
-                      <div className="skin-vault-card__header">
-                        <div className="skin-vault-card__badges">
-                          <span style={{ '--tier-color': tier.color } as React.CSSProperties}><i />{tier.label}</span>
-                          <em className={`is-${status.toLowerCase().replaceAll(' ', '-')}`}>{status}</em>
-                          {skin.shard && <em className="is-shard-tag">◆ Shard</em>}
-                        </div>
-                        <div className="skin-vault-card__tools">
-                          <button type="button" className={isWishlisted ? 'is-selected' : ''} onClick={(event) => { event.stopPropagation(); toggleWishlist(skin); }} aria-label={isWishlisted ? `Remove ${skin.name} from wishlist` : `Add ${skin.name} to wishlist`} title={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}><Bookmark className={isWishlisted ? 'fill-current' : ''} /></button>
-                          <button type="button" className={isFav ? 'is-favorite' : ''} onClick={(event) => { event.stopPropagation(); toggleFav(skin); }} aria-label={isFav ? `Remove ${skin.name} from favorites` : `Add ${skin.name} to favorites`} title={isFav ? 'Remove from favorites' : 'Add to favorites'}><Heart className={isFav ? 'fill-current' : ''} /></button>
-                        </div>
-                      </div>
-                      <div className="skin-vault-card__copy">
-                        <strong>{skin.name}</strong>
-                        <small>{skin.chromaCount > 0 ? `${skin.chromaCount} chroma${skin.chromaCount === 1 ? '' : 's'}` : skin.isLegacy ? 'Legacy cosmetic' : 'League cosmetic'}</small>
-                      </div>
-                    </div>
-                  </article>
+                    <span>{category === 'classic' ? 'Classic' : 'Normal'}</span>
+                    <small>{owned}/{skins.length}</small>
+                  </button>
                 );
               })}
             </div>
-          </section>
-        );
-      })}
-      {!loading && !error && displayedChamps.length < sortedChamps.length && <div className="incremental-actions"><button type="button" className="skin-vault-results__more" onClick={() => setChampionLimit((limit) => Math.min(limit + 12, sortedChamps.length))}>Load {Math.min(12, sortedChamps.length - displayedChamps.length)} more champions <span>{sortedChamps.length - displayedChamps.length} remaining</span></button><button type="button" className="skin-vault-results__more" onClick={() => setChampionLimit(sortedChamps.length)}>Load all {sortedChamps.length} champions</button></div>}
+          </div>
 
-      {/* The previous drawer renderer stays unreachable for one migration
-          release so existing persisted view settings remain harmless. */}
-      {showLegacyDrawer && <>
-      {!loading && !error && (
-        <div className="skin-results-summary">
-          <span><strong>{filteredChamps.length}</strong> champions · <strong>{visibleSkins.length}</strong> skins in this view</span>
-          <span>{wishlist.size} wishlisted · {favs.size} favorites</span>
-        </div>
-      )}
+          <div className="skin-vault-filter-group">
+            <span>Champion</span>
+            <label className="skin-vault-filter-group__select">
+              <select
+                value={selectedChampId ?? ''}
+                onChange={(event) => setSelectedChampId(event.target.value ? Number(event.target.value) : null)}
+              >
+                <option value="">Every champion ({categoryChamps.length})</option>
+                {[...categoryChamps].sort((a, b) => a.name.localeCompare(b.name)).map((champ) => (
+                  <option key={champ.id} value={champ.id}>
+                    {champ.name} ({champ.owned}/{champ.total})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown />
+            </label>
+          </div>
 
-      {/* Loading state */}
-      {loading && (
-        <div className="glass-card p-8 flex flex-col items-center justify-center gap-3">
-          <Loader2 className="w-6 h-6 animate-spin text-primary" />
-          <span className="text-xs text-text-muted font-semibold">Loading skin collection from local LCU...</span>
-        </div>
-      )}
+          <div className="skin-vault-filter-group">
+            <span>Focus</span>
+            <label className="skin-vault-filter-group__select">
+              <select value={smartFilter} onChange={(event) => setSmartFilter(event.target.value as SmartFilter)}>
+                <option value="all">Every collection</option>
+                <option value="zero-skins">No skins owned (0 skins)</option>
+                <option value="near-complete">Near complete (75%+)</option>
+                <option value="missing-one">Missing one skin</option>
+                <option value="rarest">Rare skins (Legendary+)</option>
+                <option value="shard-candidates">Shard candidates</option>
+              </select>
+              <ChevronDown />
+            </label>
+          </div>
 
-      {/* Error state */}
-      {error && !loading && (
-        <div className="glass-card p-6 flex flex-col items-center justify-center gap-2 text-center">
-          <Shield className="w-8 h-8 text-text-dim/40" />
-          <p className="text-xs text-text-muted font-bold">{error}</p>
-          <button
-            onClick={() => void loadData()}
-            className="text-xs text-primary font-bold hover:underline mt-1 cursor-pointer"
-          >
-            Retry Connection
-          </button>
-        </div>
-      )}
+          <div className="skin-vault-filter-group">
+            <span>Tier</span>
+            <label className="skin-vault-filter-group__select">
+              <select value={tierFilter} onChange={(event) => setTierFilter(event.target.value)}>
+                <option value="all">Every tier ({totalOwned}/{categorySkins.length})</option>
+                {tierOptions.map(([tier, info]) => {
+                  const skins = categorySkins.filter((skin) => skin.rarity === tier);
+                  const owned = skins.filter((skin) => skin.owned).length;
+                  return (
+                    <option key={tier} value={tier}>
+                      {info.label} ({owned}/{skins.length})
+                    </option>
+                  );
+                })}
+              </select>
+              <ChevronDown />
+            </label>
+          </div>
 
-      {/* Champion Cards Grid with Inline Row-Expanded Skin Drawer */}
-      {!loading && !error && (
-        <div className="space-y-3">
-          {champRows.length === 0 ? (
-            <div className="glass-card p-8 text-center text-text-dim space-y-1">
-              <Sparkles className="w-8 h-8 opacity-20 mx-auto" />
-              <p className="text-xs font-bold text-text-muted">No champions match your filter criteria</p>
+          <div className="skin-vault-filter-group">
+            <span>Quick Toggles</span>
+            <div className="skin-vault-filter-chips">
+              <button
+                type="button"
+                className={`skin-vault-filter-chip ${statusFilter === 'shard' || shardsOnly ? 'is-selected' : ''}`}
+                onClick={() => toggleStatus('shard')}
+              >
+                <Gem className="w-3 h-3 text-emerald-400" />
+                <span>Shards</span>
+                <small>{totalShards}</small>
+              </button>
+              <button
+                type="button"
+                className={`skin-vault-filter-chip ${favsOnly ? 'is-selected' : ''}`}
+                onClick={() => setFavsOnly((value) => !value)}
+              >
+                <Heart className={`w-3 h-3 ${favsOnly ? 'fill-current text-rose-400' : 'text-rose-400'}`} />
+                <span>Favorites</span>
+                <small>{favs.size}</small>
+              </button>
+              <button
+                type="button"
+                className={`skin-vault-filter-chip ${statusFilter === 'wishlist' ? 'is-selected' : ''}`}
+                onClick={() => toggleStatus('wishlist')}
+              >
+                <Bookmark className={`w-3 h-3 ${statusFilter === 'wishlist' ? 'fill-current text-amber-300' : 'text-amber-300'}`} />
+                <span>Wishlist</span>
+                <small>{wishlist.size}</small>
+              </button>
+              <button
+                type="button"
+                className={`skin-vault-filter-chip ${statusFilter === 'unavailable' ? 'is-selected' : ''}`}
+                onClick={() => toggleStatus('unavailable')}
+              >
+                <span>Legacy</span>
+                <small>{totalUnavailable}</small>
+              </button>
             </div>
-          ) : (
-            <>
-            {champRows.map((row, rIdx) => {
-              const containsSelected = row.some((c) => c.id === selectedChampId);
+          </div>
 
-              return (
-                <div key={rIdx} className="space-y-3">
-                  {/* Row of 4 Champion Cards */}
-                  <div className="skin-champion-grid grid grid-cols-4 gap-2.5">
-                    {row.map((c) => {
-                      const isSelected = selectedChampId === c.id;
-                      const iconUrl = `/lol-game-data/assets/v1/champion-icons/${c.id}.png`;
-                      const completion = c.total > 0 ? Math.round((c.owned / c.total) * 100) : 0;
-                      const missing = Math.max(0, c.total - c.owned);
+          {activeFilterCount > 0 && (
+            <button type="button" className="skin-vault-filters__clear" onClick={clearFilters}>
+              <RotateCcw /> Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'}
+            </button>
+          )}
+        </aside>
 
-                      return (
-                        <div
-                          key={c.id}
-                          onClick={() => setSelectedChampId(isSelected ? null : c.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              setSelectedChampId(isSelected ? null : c.id);
-                            }
-                          }}
-                          role="button"
-                          tabIndex={0}
-                          aria-expanded={isSelected}
-                          aria-label={`${c.name}, ${completion}% complete`}
-                          className={`skin-champion-card glass-card p-2.5 rounded-xl border transition flex items-center justify-between cursor-pointer ${
-                            isSelected
-                              ? 'bg-primary/20 border-primary shadow-[0_0_15px_rgba(200,170,110,0.3)]'
-                              : 'hover:bg-white/[0.05] border-white/[0.06]'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <img
-                              src={iconUrl}
-                              alt={c.name}
-                              width="32"
-                              height="32"
-                              loading="lazy"
-                              className="w-8 h-8 rounded-lg border border-white/10 object-cover shrink-0"
-                              onError={(e: any) => { e.target.style.display = 'none'; }}
-                            />
-                            <div className="min-w-0">
-                              <p className="text-xs font-black text-white truncate">{c.name}</p>
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] text-text-muted font-bold">{c.owned} / {c.total} Skins</span>
-                                {c.shards > 0 && (
-                                  <span className="text-[9px] text-emerald-400 font-extrabold">◆ {c.shards}</span>
-                                )}
-                              </div>
-                              <div className="skin-champion-card__progress" aria-hidden="true"><span style={{ width: `${completion}%` }} /></div>
-                              <span className="skin-champion-card__hint">{completion === 100 ? 'Complete' : `${missing} missing`}</span>
-                            </div>
-                          </div>
-                          <ChevronRight className={`w-4 h-4 text-text-dim shrink-0 transition-transform ${isSelected ? 'rotate-90 text-primary' : ''}`} />
-                        </div>
-                      );
-                    })}
-                  </div>
+        <section className="skin-vault-results">
+          <div className="skin-vault-toolbar">
+            <div className="skin-vault-toolbar__counts">
+              {statusFilter === 'zero-owned' ? (
+                <><strong>{filteredChamps.length}</strong><span> champions with 0 skins</span></>
+              ) : (
+                <><strong>{visibleSkins.length}</strong><span> skins · {filteredChamps.length} champions</span></>
+              )}
+            </div>
 
-                  {/* Expanded Skin Drawer directly underneath the clicked row */}
-                  {containsSelected && selectedChampId != null && (
-                    <div className="glass-card p-4 rounded-2xl border border-primary/40 space-y-3 animate-fadeIn my-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-black text-white">
-                            {categoryChamps.find((c) => c.id === selectedChampId)?.name} Skins
-                          </h3>
-                          <span className="text-xs text-primary font-bold">
-                            ({visibleSkins.filter((s) => s.championId === selectedChampId && s.owned).length} shown · {categorySkins.filter((s) => s.championId === selectedChampId && s.owned).length} / {categorySkins.filter((s) => s.championId === selectedChampId).length})
+            <button type="button" className="skin-vault-toolbar__mobile-filter" onClick={() => setFiltersOpen(true)}>
+              <SlidersHorizontal /> Filters {activeFilterCount > 0 && <b>{activeFilterCount}</b>}
+            </button>
+
+            <div className="skin-vault-toolbar__layout-switch" role="group" aria-label="Layout mode">
+              <button
+                type="button"
+                className={viewLayout === 'roster' ? 'is-selected' : ''}
+                onClick={() => setViewLayout('roster')}
+                title="Roster view (compact champions overview)"
+              >
+                Roster
+              </button>
+              <button
+                type="button"
+                className={viewLayout === 'gallery' ? 'is-selected' : ''}
+                onClick={() => setViewLayout('gallery')}
+                title="Gallery view (skins grouped by champion)"
+              >
+                Gallery
+              </button>
+            </div>
+
+            {viewLayout === 'gallery' && (
+              <button
+                type="button"
+                className="skin-vault-toolbar__collapse-btn"
+                onClick={toggleAllCollapse}
+                title={collapsedChamps.size >= displayedChamps.length ? 'Expand all champions' : 'Collapse all champions'}
+              >
+                {collapsedChamps.size >= displayedChamps.length ? 'Expand All' : 'Collapse All'}
+              </button>
+            )}
+
+            <label>
+              <span>Champions</span>
+              <select value={championSort} onChange={(event) => setChampionSort(event.target.value as ChampionSort)}>
+                <option value="completion">Most complete</option>
+                <option value="least-owned">Least owned (0 first)</option>
+                <option value="owned">Most owned</option>
+                <option value="total">Most skins</option>
+                <option value="name">Name A–Z</option>
+              </select>
+              <ChevronDown />
+            </label>
+
+            {viewLayout === 'gallery' && (
+              <>
+                <label>
+                  <span>Sort</span>
+                  <select value={skinSort} onChange={(event) => setSkinSort(event.target.value as SkinSort)}>
+                    <option value="rarity">Highest tier</option>
+                    <option value="name">Name A–Z</option>
+                  </select>
+                  <ChevronDown />
+                </label>
+
+                <label>
+                  <span>Size</span>
+                  <select value={density} onChange={(event) => setDensity(event.target.value as SkinDensity)}>
+                    <option value="comfortable">Comfortable</option>
+                    <option value="compact">Compact</option>
+                  </select>
+                  <ChevronDown />
+                </label>
+
+                <div className="skin-vault-toolbar__view">
+                  <button
+                    type="button"
+                    className={viewMode === 'grid' ? 'is-selected' : ''}
+                    onClick={() => setViewMode('grid')}
+                    aria-label="Grid view"
+                  >
+                    <LayoutGrid />
+                  </button>
+                  <button
+                    type="button"
+                    className={viewMode === 'list' ? 'is-selected' : ''}
+                    onClick={() => setViewMode('list')}
+                    aria-label="List view"
+                  >
+                    <List />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {loading && (
+            <div className="skin-vault-state">
+              <Loader2 className="animate-spin" />
+              <strong>Loading your collection</strong>
+              <span>Reading skins and ownership from League Client…</span>
+            </div>
+          )}
+          {error && !loading && (
+            <div className="skin-vault-state is-error">
+              <Shield />
+              <strong>Collection unavailable</strong>
+              <span>{error}</span>
+              <button type="button" onClick={() => void loadData()}>Retry connection</button>
+            </div>
+          )}
+          {!loading && !error && displayedChamps.length === 0 && (
+            <div className="skin-vault-state">
+              <Sparkles />
+              <strong>No skins match these filters</strong>
+              <span>Clear a filter or search for another champion.</span>
+              {activeFilterCount > 0 && <button type="button" onClick={clearFilters}>Clear filters</button>}
+            </div>
+          )}
+
+          {/* Roster View */}
+          {!loading && !error && viewLayout === 'roster' && (
+            <div className="skin-roster-view">
+              <div className="skin-roster-grid">
+                {displayedChamps.map((champ) => {
+                  const isSelected = selectedChampId === champ.id;
+                  const completion = champ.total ? Math.round((champ.owned / champ.total) * 100) : 0;
+                  const isZero = champ.owned === 0;
+                  return (
+                    <article
+                      key={champ.id}
+                      className={`skin-roster-card ${isSelected ? 'is-selected' : ''} ${isZero ? 'is-zero' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedChampId(isSelected ? null : champ.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedChampId(isSelected ? null : champ.id);
+                        }
+                      }}
+                      aria-expanded={isSelected}
+                      aria-label={`${champ.name}, ${isZero ? '0 skins owned' : `${champ.owned} of ${champ.total} skins`}`}
+                    >
+                      <img
+                        src={`/lol-game-data/assets/v1/champion-icons/${champ.id}.png`}
+                        alt=""
+                        width="34"
+                        height="34"
+                        loading="lazy"
+                        onError={(e: any) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                      <div className="skin-roster-card__info">
+                        <div className="skin-roster-card__header">
+                          <strong>{champ.name}</strong>
+                          <span className={`skin-roster-card__badge ${isZero ? 'is-zero' : completion === 100 ? 'is-complete' : ''}`}>
+                            {isZero ? '0 skins' : `${champ.owned}/${champ.total}`}
                           </span>
                         </div>
-                        <button
-                          onClick={() => setSelectedChampId(null)}
-                          className="p-1 rounded-lg hover:bg-white/10 text-text-dim hover:text-white cursor-pointer"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      {/* Champion Skins List Grid */}
-                      {visibleSkins.filter((s) => s.championId === selectedChampId).length === 0 && (
-                        <div className="rounded-xl border border-dashed border-white/[0.1] p-6 text-center">
-                          <p className="text-xs font-bold text-text-muted">No skins match the active filters.</p>
-                          <p className="text-[10px] text-text-dim mt-1">Try switching Status, Smart view, or Year back to Everything.</p>
+                        <div className="skin-roster-card__progress">
+                          <span style={{ width: `${completion}%` }} />
                         </div>
-                      )}
-                      <div className={viewMode === 'list' ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-2 sm:grid-cols-3 gap-3'}>
-                        {visibleSkins
-                          .filter((s) => s.championId === selectedChampId)
-                          .map((skin) => {
-                            const isFav = isSkinFavorite(favs, skin);
-                            const isWishlisted = wishlist.has(skinKey(skin));
-                            const tierInfo = TIER_MAP[skin.rarity] || TIER_MAP.standard;
-                            const splashUrl = `/lol-game-data/assets/v1/champion-splashes/${skin.assetChampionId || skin.championId}/${skin.id}.jpg`;
-                            const statusLabel = skin.owned ? 'Owned' : skin.rental ? 'Rental' : skin.shard ? 'Shard' : 'Missing';
-                            const statusClass = skin.owned
-                              ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/40'
-                              : skin.rental
-                              ? 'text-sky-300 bg-sky-500/20 border-sky-500/40'
-                              : skin.shard
-                              ? 'text-amber-300 bg-amber-500/20 border-amber-500/40'
-                              : skin.unavailable
-                              ? 'text-amber-300 bg-amber-500/15 border-amber-500/40'
-                              : 'text-text-muted bg-black/50 border-white/10';
-
-                            return (
-                              <div
-                                key={skin.id}
-                                onClick={() => setPreviewSkin(skin)}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter' || event.key === ' ') {
-                                    event.preventDefault();
-                                    setPreviewSkin(skin);
-                                  }
-                                }}
-                                role="button"
-                                tabIndex={0}
-                                aria-label={`Preview ${skin.name}`}
-                                className={`skin-skin-card ${density === 'compact' ? 'is-compact' : ''} glass-card overflow-hidden rounded-xl border relative ${viewMode === 'list' ? 'h-24' : density === 'compact' ? 'h-32' : 'h-44'} flex flex-col justify-end p-2.5 group cursor-pointer transition ${
-                                  skin.owned
-                                    ? 'border-white/10 hover:border-primary/40'
-                                    : skin.rental
-                                    ? 'border-sky-500/50 bg-sky-950/20'
-                                    : skin.shard
-                                    ? 'border-emerald-500/50 bg-emerald-950/20'
-                                    : skin.unavailable
-                                    ? 'opacity-60 grayscale border-amber-500/30'
-                                    : 'opacity-40 grayscale border-white/5'
-                                }`}
-                              >
-                                <img
-                                  src={splashUrl}
-                                  alt={skin.name}
-                                  width="320"
-                                  height="180"
-                                  loading="lazy"
-                                  className="skin-skin-card__art absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                                  onError={(e: any) => {
-                                    const image = e.currentTarget as HTMLImageElement;
-                                    if (image.dataset.fallbackApplied) {
-                                      image.classList.add('is-missing');
-                                      return;
-                                    }
-                                    image.dataset.fallbackApplied = 'true';
-                                    image.src = `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${skin.championName.replace(/[^a-zA-Z0-9]/g, '')}_${skin.skinNum}.jpg`;
-                                  }}
-                                />
-                                <div className="skin-skin-card__wash absolute inset-0" />
-
-                                {/* Favorite button */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleFav(skin);
-                                  }}
-                                  className="absolute top-2 right-2 z-20 p-1.5 rounded-lg bg-black/50 hover:bg-black/80 text-white cursor-pointer"
-                                >
-                                  <Heart className={`w-3.5 h-3.5 ${isFav ? 'fill-rose-400 text-rose-400' : ''}`} />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleWishlist(skin);
-                                  }}
-                                  className="absolute top-2 left-2 z-20 p-1.5 rounded-lg bg-black/50 hover:bg-black/80 text-white cursor-pointer"
-                                  title={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
-                                >
-                                  <Bookmark className={`w-3.5 h-3.5 ${isWishlisted ? 'fill-amber-300 text-amber-300' : ''}`} />
-                                </button>
-
-                                <div className="relative z-10 space-y-0.5">
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-black/60 text-amber-300 border border-amber-400/20">
-                                      {tierInfo.label}
-                                    </span>
-                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${statusClass}`}>
-                                      {statusLabel}
-                                    </span>
-                                    {skin.shard && (
-                                      <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                                        ◆ Shard
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-xs font-black text-white truncate">{skin.name}</p>
-                                  <p className="text-[9px] text-text-muted font-bold truncate">
-                                    {skin.chromaCount > 0 ? `${skin.chromaCount} chroma${skin.chromaCount === 1 ? '' : 's'}` : 'League cosmetic'}{skin.isLegacy ? ' · Legacy' : ''}
-                                  </p>
-                                </div>
-                              </div>
-                            );
-                          })}
+                        <div className="skin-roster-card__meta">
+                          <span className="skin-roster-card__hint">{isZero ? 'No skins owned' : completion === 100 ? 'Complete' : `${champ.total - champ.owned} missing`}</span>
+                          {champ.shards > 0 && <span className="skin-roster-card__shard">◆ {champ.shards}</span>}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {displayedChamps.length < sortedChamps.length && (
-              <div className="incremental-actions"><button
-                type="button"
-                onClick={() => setChampionLimit((limit) => Math.min(limit + 48, sortedChamps.length))}
-                className="w-full py-2 rounded-xl text-xs font-black text-primary border border-primary/30 bg-primary/10 hover:bg-primary/20 transition cursor-pointer"
-              >
-                Load more champions ({sortedChamps.length - displayedChamps.length} remaining)
-              </button><button type="button" onClick={() => setChampionLimit(sortedChamps.length)} className="w-full py-2 rounded-xl text-xs font-black text-primary border border-primary/30 bg-primary/10 hover:bg-primary/20 transition cursor-pointer">Load all champions</button></div>
-            )}
-            </>
-          )}
-        </div>
-      )}
+                      <ChevronDown className={`skin-roster-card__chevron ${isSelected ? 'rotate-180' : ''}`} />
+                    </article>
+                  );
+                })}
+              </div>
 
-      </>}
-        </main>
+              {/* Drawer when a champion is selected in roster view */}
+              {selectedChampId !== null && (
+                <div className="skin-roster-drawer">
+                  {(() => {
+                    const selectedChamp = categoryChamps.find((c) => c.id === selectedChampId);
+                    const skins = visibleSkinsByChampion.get(selectedChampId) || [];
+                    const shownOwned = skins.filter((s) => s.owned).length;
+                    if (!selectedChamp) return null;
+                    return (
+                      <>
+                        <div className="skin-roster-drawer__header">
+                          <div className="skin-roster-drawer__title">
+                            <img
+                              src={`/lol-game-data/assets/v1/champion-icons/${selectedChamp.id}.png`}
+                              alt=""
+                              width="28"
+                              height="28"
+                              loading="lazy"
+                            />
+                            <div>
+                              <h3>{selectedChamp.name} Skins</h3>
+                              <span>{shownOwned} owned shown · {selectedChamp.owned}/{selectedChamp.total} total</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedChampId(null)}
+                            className="skin-roster-drawer__close"
+                            aria-label="Close skins drawer"
+                          >
+                            <X />
+                          </button>
+                        </div>
+
+                        {skins.length === 0 ? (
+                          <div className="skin-vault-state is-empty-inline">
+                            <Sparkles />
+                            <strong>No skins match the active filter</strong>
+                            <span>Try clearing filters to see this champion's skins.</span>
+                          </div>
+                        ) : (
+                          <div className={`skin-vault-cards is-grid is-${density}`}>
+                            {skins.map((skin) => renderSkinCard(skin))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Gallery View */}
+          {!loading && !error && viewLayout === 'gallery' && displayedChamps.map((champ) => {
+            const skins = visibleSkinsByChampion.get(champ.id) || [];
+            const shownOwned = skins.filter((skin) => skin.owned).length;
+            const completion = champ.total ? Math.round((champ.owned / champ.total) * 100) : 0;
+            const isCollapsed = collapsedChamps.has(champ.id);
+            const isZero = champ.owned === 0;
+
+            return (
+              <section className="skin-vault-group" key={champ.id}>
+                <header
+                  className="skin-vault-group__header is-clickable"
+                  onClick={() => toggleCollapse(champ.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      toggleCollapse(champ.id);
+                    }
+                  }}
+                  aria-expanded={!isCollapsed}
+                >
+                  <img
+                    src={`/lol-game-data/assets/v1/champion-icons/${champ.id}.png`}
+                    alt=""
+                    width="26"
+                    height="26"
+                    loading="lazy"
+                    onError={(event) => { event.currentTarget.style.display = 'none'; }}
+                  />
+                  <strong>{champ.name}</strong>
+                  <span className={`skin-vault-group__badge ${isZero ? 'is-zero' : ''}`}>
+                    {isZero ? '0 skins owned' : `${shownOwned} shown · ${champ.owned}/${champ.total} owned`}
+                  </span>
+                  {champ.shards > 0 && <em>◆ {champ.shards} shard{champ.shards === 1 ? '' : 's'}</em>}
+                  <div className="skin-vault-group__bar"><span style={{ width: `${completion}%` }} /></div>
+                  <ChevronDown className={`skin-vault-group__chevron ${isCollapsed ? '' : 'rotate-180'}`} />
+                </header>
+
+                {!isCollapsed && (
+                  <div className={`skin-vault-cards is-${viewMode} is-${density}`}>
+                    {skins.map((skin) => renderSkinCard(skin))}
+                  </div>
+                )}
+              </section>
+            );
+          })}
+
+          {!loading && !error && displayedChamps.length < sortedChamps.length && (
+            <div className="incremental-actions">
+              <button
+                type="button"
+                className="skin-vault-results__more"
+                onClick={() => setChampionLimit((limit) => Math.min(limit + 12, sortedChamps.length))}
+              >
+                Load {Math.min(12, sortedChamps.length - displayedChamps.length)} more champions <span>{sortedChamps.length - displayedChamps.length} remaining</span>
+              </button>
+              <button
+                type="button"
+                className="skin-vault-results__more"
+                onClick={() => setChampionLimit(sortedChamps.length)}
+              >
+                Load all {sortedChamps.length} champions
+              </button>
+            </div>
+          )}
+        </section>
       </div>
 
       {/* Fullsplash Modal Preview */}

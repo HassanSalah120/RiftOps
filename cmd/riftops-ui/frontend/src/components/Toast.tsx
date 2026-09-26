@@ -1,12 +1,12 @@
 import { CheckCircle2, AlertCircle, Shield, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import type { Notification } from '../types';
 
 export default function Toast({ notification, onClose }: { notification: Notification | null; onClose?: () => void }) {
   if (!notification) return null;
-  return (
+  return createPortal(
     <div
-      className="riftops-toast glass rounded-2xl p-3.5 shadow-2xl cursor-pointer"
-      onClick={onClose}
+      className={`riftops-toast is-${notification.type}`}
       role={notification.type === 'error' ? 'alert' : 'status'}
       aria-live={notification.type === 'error' ? 'assertive' : 'polite'}
       aria-atomic="true"
@@ -20,13 +20,15 @@ export default function Toast({ notification, onClose }: { notification: Notific
           <p className="text-[11px] text-text-muted mt-1 leading-relaxed">{notification.message}</p>
         </div>
         <button
-          onClick={(e) => { e.stopPropagation(); onClose?.(); }}
-          className="p-1 rounded-lg hover:bg-white/[0.06] text-text-dim hover:text-white transition shrink-0 cursor-pointer"
+          type="button"
+          onClick={onClose}
+          className="riftops-toast__close"
           aria-label="Dismiss notification"
         >
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -1,5 +1,6 @@
 import { Bell, Command, Search, ShieldCheck } from 'lucide-react';
 import type { Tab } from '../types';
+import { useLocale } from '../localeContext';
 
 const TAB_LABELS: Record<Tab, string> = {
   dashboard: 'Home',
@@ -13,6 +14,20 @@ const TAB_LABELS: Record<Tab, string> = {
   loot: 'Hextech Loot',
   remote: 'Phone Companion',
   settings: 'Settings',
+};
+
+const TAB_LOCALE_MAP: Partial<Record<Tab, string>> = {
+  dashboard: 'nav.command',
+  play: 'nav.play',
+  live: 'nav.live',
+  social: 'nav.social',
+  history: 'nav.history',
+  skins: 'nav.skins',
+  progress: 'nav.progress',
+  loot: 'nav.loot',
+  qol: 'nav.qol',
+  remote: 'nav.remote',
+  settings: 'nav.settings',
 };
 
 export default function WorkspaceHeader({
@@ -30,14 +45,17 @@ export default function WorkspaceHeader({
   onOpenNotifications?: () => void;
   unreadNotifications?: number;
 }) {
+  const { t } = useLocale();
   const live = phase !== 'idle' && phase !== 'error';
+  const labelKey = TAB_LOCALE_MAP[activeTab];
+  const label = labelKey ? t(labelKey) : TAB_LABELS[activeTab];
   return (
     <header className="workspace-header">
       <div className="workspace-header__crumbs">
         <span className="workspace-header__mark"><ShieldCheck /></span>
         <span className="workspace-header__slash">RIFTOPS</span>
         <span className="workspace-header__divider">/</span>
-        <strong>{TAB_LABELS[activeTab]}</strong>
+        <strong>{label}</strong>
         {detail && <span className="workspace-header__detail">{detail}</span>}
       </div>
       <div className="workspace-header__tools">
