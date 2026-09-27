@@ -41,6 +41,22 @@ func TestRiotIDMatchRequiresBothNamesAndTags(t *testing.T) {
 	}
 }
 
+func TestProfileExpectedRiotIDIgnoresLegacyLoginUsername(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{value: "magdylvs9", want: ""},
+		{value: "Dynamoo#2208", want: "Dynamoo#2208"},
+		{value: "#2208", want: ""},
+		{value: "Dynamoo#", want: ""},
+	} {
+		if got := profileExpectedRiotID(test.value); got != test.want {
+			t.Errorf("profileExpectedRiotID(%q) = %q, want %q", test.value, got, test.want)
+		}
+	}
+}
+
 func TestFailPreservesDisabledState(t *testing.T) {
 	backend, _ := newTestEngine(t)
 	if err := backend.SetEnabled(context.Background(), false); err != nil {
@@ -194,6 +210,7 @@ func TestSaveRiotClientPathValidatesAndPersists(t *testing.T) {
 func TestLaunchProfileSelectionPersistsAndUpdatesSnapshot(t *testing.T) {
 	backend, store := newTestEngine(t)
 	profile := settings.NewProfile("League main")
+	profile.LoginUsername = "magdylvs9"
 	profile.RiotID = "Player#EUW"
 	profile.Region = "EUW1"
 	profile.DefaultGame = model.GameLeague
@@ -204,7 +221,7 @@ func TestLaunchProfileSelectionPersistsAndUpdatesSnapshot(t *testing.T) {
 	if err := backend.SelectLaunchProfile(profile.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := backend.ActiveLaunchProfile(); got.ID != profile.ID || got.RiotID != profile.RiotID {
+	if got := backend.ActiveLaunchProfile(); got.ID != profile.ID || got.LoginUsername != profile.LoginUsername || got.RiotID != profile.RiotID {
 		t.Fatalf("active profile = %+v", got)
 	}
 	if snapshot := backend.Snapshot(); snapshot.Game != model.GameLeague || snapshot.Status != model.StatusMobile {
@@ -214,7 +231,7 @@ func TestLaunchProfileSelectionPersistsAndUpdatesSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.ActiveProfileID != profile.ID {
-		t.Fatalf("active profile ID = %q, want %q", persisted.ActiveProfileID, profile.ID)
+	if persisted.ActiveProfileID != profile.ID || persisted.ActiveProfile().LoginUsername != profile.LoginUsername {
+		t.Fatalf("persisted active profile = %+v, want login username %q", persisted.ActiveProfile(), profile.LoginUsername)
 	}
 }

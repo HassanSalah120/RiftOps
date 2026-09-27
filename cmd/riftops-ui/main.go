@@ -1212,9 +1212,9 @@ func captureSession(w http.ResponseWriter, r *http.Request) {
 		statusCode := http.StatusInternalServerError
 		switch {
 		case errors.Is(err, engine.ErrRiotIDRequired):
-			message, statusCode = "Enter this profile's Riot ID before saving its login.", http.StatusConflict
+			message, statusCode = "Set this profile's Riot ID to the connected Name#Tag before saving its login.", http.StatusConflict
 		case errors.Is(err, engine.ErrRiotAccountMismatch):
-			message, statusCode = "The signed-in Riot account does not match this profile's Riot ID. Sign in to the correct account first.", http.StatusConflict
+			message, statusCode = "The signed-in Riot ID did not match this profile, or the account changed while saving. Verify the account and try again.", http.StatusConflict
 		case errors.Is(err, engine.ErrRiotAccountUnverified):
 			message, statusCode = "Riot Client is not signed in with a verifiable account. Sign in and try again.", http.StatusConflict
 		}

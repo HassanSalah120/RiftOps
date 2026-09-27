@@ -271,7 +271,7 @@ func (v *Vault) Restore(profileID, expectedRiotID string) error {
 	if value.Version < 2 {
 		return ErrUnverified
 	}
-	if !strings.EqualFold(strings.TrimSpace(value.Identity.RiotID), strings.TrimSpace(expectedRiotID)) {
+	if expectedRiotID == "" || !strings.EqualFold(strings.TrimSpace(value.Identity.RiotID), strings.TrimSpace(expectedRiotID)) {
 		return ErrIdentityMismatch
 	}
 	if v.now().After(value.ExpiresAt) {

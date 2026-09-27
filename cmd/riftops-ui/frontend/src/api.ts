@@ -80,6 +80,7 @@ export interface LaunchProfile {
   id: string;
   name: string;
   accountLabel?: string;
+  loginUsername?: string;
   riotId?: string;
   region?: string;
   enabled: boolean;

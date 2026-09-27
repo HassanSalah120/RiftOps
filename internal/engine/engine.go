@@ -96,8 +96,8 @@ type ProxyStatus struct {
 
 var ErrRiotAlreadyRunning = errors.New("Riot Client is already running")
 var ErrRiotCloseFailed = errors.New("Riot Client could not be fully closed")
-var ErrRiotIDRequired = errors.New("enter this profile's Riot ID before saving its login")
-var ErrRiotAccountMismatch = errors.New("the signed-in Riot account does not match this profile's Riot ID")
+var ErrRiotIDRequired = errors.New("configure this profile's Riot ID before saving its login")
+var ErrRiotAccountMismatch = errors.New("the signed-in Riot identity did not match the profile or changed while saving")
 var ErrRiotAccountUnverified = errors.New("Riot Client is not signed in with a verifiable account")
 
 type Engine struct {
@@ -387,7 +387,8 @@ func (e *Engine) savedLoginStatusForProfile(vault *sessionvault.Vault, profile s
 	if err != nil {
 		return status, err
 	}
-	if !sameRiotID(status.Identity.RiotID, profile.RiotID) {
+	expectedRiotID := profileExpectedRiotID(profile.RiotID)
+	if expectedRiotID == "" || !sameRiotID(status.Identity.RiotID, expectedRiotID) {
 		return status, sessionvault.ErrIdentityMismatch
 	}
 	return status, nil
@@ -395,6 +396,21 @@ func (e *Engine) savedLoginStatusForProfile(vault *sessionvault.Vault, profile s
 
 func sameRiotID(a, b string) bool {
 	return a != "" && b != "" && strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+// Legacy profiles used riotId for sign-in usernames. Only a complete Name#Tag
+// value is an expected in-game identity; a login username must never be
+// compared with the Riot ID reported by the connected client.
+func profileExpectedRiotID(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.Count(value, "#") != 1 {
+		return ""
+	}
+	name, tag, _ := strings.Cut(value, "#")
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(tag) == "" {
+		return ""
+	}
+	return value
 }
 
 func (e *Engine) CaptureSavedLogin(ctx context.Context, lifetime time.Duration) error {
@@ -412,14 +428,15 @@ func (e *Engine) CaptureSavedLogin(ctx context.Context, lifetime time.Duration) 
 	if len(processes) == 0 {
 		return errors.New("Riot Client must be running and signed in before its session can be saved")
 	}
-	if strings.TrimSpace(profile.RiotID) == "" {
+	expectedRiotID := profileExpectedRiotID(profile.RiotID)
+	if expectedRiotID == "" {
 		return ErrRiotIDRequired
 	}
 	account, err := riotclient.CurrentRiotAccountSession(ctx)
 	if err != nil || !account.Authorized {
 		return ErrRiotAccountUnverified
 	}
-	if !sameRiotID(account.RiotID, profile.RiotID) {
+	if !sameRiotID(account.RiotID, expectedRiotID) {
 		return ErrRiotAccountMismatch
 	}
 	if err := vault.CaptureVerified(profile.ID, lifetime, sessionvault.Identity{PUUID: account.PUUID, RiotID: account.RiotID}, func() error {
@@ -427,7 +444,7 @@ func (e *Engine) CaptureSavedLogin(ctx context.Context, lifetime time.Duration) 
 		if err != nil || !current.Authorized {
 			return ErrRiotAccountUnverified
 		}
-		if current.PUUID != account.PUUID || !sameRiotID(current.RiotID, account.RiotID) {
+		if current.PUUID != account.PUUID {
 			return ErrRiotAccountMismatch
 		}
 		return nil
@@ -600,7 +617,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 					return e.fail(game, status, fmt.Errorf("clear previous Riot login before fresh sign-in: %w", err))
 				}
 			} else {
-				if err := e.vault.Restore(profile.ID, profile.RiotID); err != nil {
+				if err := e.vault.Restore(profile.ID, profileExpectedRiotID(profile.RiotID)); err != nil {
 					switch {
 					case errors.Is(err, sessionvault.ErrNotFound):
 					case errors.Is(err, sessionvault.ErrExpired):

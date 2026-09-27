@@ -70,6 +70,21 @@ func TestCaptureStatusRestoreAndDelete(t *testing.T) {
 	}
 }
 
+func TestRestoreRequiresExpectedRiotID(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Now()
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}, now: func() time.Time { return now }}
+	if err := os.WriteFile(filepath.Join(dataDir, privateSettingsFile), []byte("session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := vault.Capture("profile-bound", time.Hour, testIdentity); err != nil {
+		t.Fatal(err)
+	}
+	if err := vault.Restore("profile-bound", ""); !errors.Is(err, ErrIdentityMismatch) {
+		t.Fatalf("restore without configured Riot ID error = %v, want identity mismatch", err)
+	}
+}
+
 func TestExpiredLoginIsNotRestored(t *testing.T) {
 	dataDir := t.TempDir()
 	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}}

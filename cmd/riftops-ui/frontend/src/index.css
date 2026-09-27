@@ -1810,9 +1810,10 @@ html[data-performance='quiet'] .control-room__glow { animation: none !important;
 .account-switcher__editor-heading h3 { margin: 0; color: #f0e6d2; font-size: 16px; }
 .account-switcher__detect-button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; margin-top: 14px; padding: 10px 12px; color: #e2d2ab; border: 1px solid rgba(200,170,110,.25); border-radius: 10px; background: rgba(200,170,110,.07); font-size: 11px; font-weight: 750; text-align: left; }
 .account-switcher__detect-button span { min-width: 0; overflow: hidden; color: #c1b9a6; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.account-switcher__fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.account-switcher__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 .account-switcher__fields label { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: #c4cdd0; font-size: 11px; font-weight: 700; }
 .account-switcher__fields input, .account-switcher__fields select { width: 100%; min-width: 0; min-height: 42px; padding-inline: 10px; color: #f0e6d2; border: 1px solid rgba(255,255,255,.14); border-radius: 9px; background: #0b1930; font-size: 12px; }
+.account-switcher__fields label small { color: #91a2ac; font-size: 10px; font-weight: 500; line-height: 1.4; }
 .account-switcher__advanced { margin-top: 12px; color: #b7c3c8; font-size: 11px; }
 .account-switcher__advanced summary { width: fit-content; cursor: pointer; }
 .account-switcher__advanced .account-switcher__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }

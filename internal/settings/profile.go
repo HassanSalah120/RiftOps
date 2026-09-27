@@ -16,6 +16,7 @@ type LaunchProfile struct {
 	ID             string                      `json:"id"`
 	Name           string                      `json:"name"`
 	AccountLabel   string                      `json:"accountLabel,omitempty"`
+	LoginUsername  string                      `json:"loginUsername,omitempty"`
 	RiotID         string                      `json:"riotId,omitempty"`
 	Region         string                      `json:"region,omitempty"`
 	Enabled        bool                        `json:"enabled"`
@@ -77,7 +78,7 @@ func (p LaunchProfile) Validate() error {
 	if p.Name == "" || len([]rune(p.Name)) > 48 {
 		return fmt.Errorf("profile name must contain 1 to 48 characters")
 	}
-	if len([]rune(p.AccountLabel)) > 80 || len([]rune(p.RiotID)) > 80 || len([]rune(p.Region)) > 24 {
+	if len([]rune(p.AccountLabel)) > 80 || len([]rune(p.LoginUsername)) > 80 || len([]rune(p.RiotID)) > 80 || len([]rune(p.Region)) > 24 {
 		return fmt.Errorf("profile account details are too long")
 	}
 	if !p.Status.Valid() {
@@ -160,6 +161,7 @@ func (s *Settings) UpsertProfile(profile LaunchProfile) error {
 	profile.ID = strings.TrimSpace(profile.ID)
 	profile.Name = strings.TrimSpace(profile.Name)
 	profile.AccountLabel = strings.TrimSpace(profile.AccountLabel)
+	profile.LoginUsername = strings.TrimSpace(profile.LoginUsername)
 	profile.RiotID = strings.TrimSpace(profile.RiotID)
 	profile.Region = strings.ToUpper(strings.TrimSpace(profile.Region))
 	profile.Patchline = strings.TrimSpace(profile.Patchline)
