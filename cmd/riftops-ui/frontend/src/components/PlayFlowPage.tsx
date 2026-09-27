@@ -173,6 +173,19 @@ function roleLabel(role: string): string {
   return ROLE_OPTIONS.find(([value]) => value === role)?.[1] || role;
 }
 
+const PLAY_FLOW_STAGE_LABELS: Record<PlayFlowRuntimeStatus['stage'], string> = {
+  idle: 'Ready to start',
+  preflight: 'Checking setup',
+  lobby: 'Preparing lobby',
+  matchmaking: 'Finding a match',
+  'ready-check': 'Ready check',
+  'champ-select': 'Champion select',
+  'in-game': 'Game in progress',
+  'post-game': 'Returning to lobby',
+  blocked: 'Needs attention',
+  stopped: 'Full Auto stopped',
+};
+
 type QueueGroupKey = 'ranked' | 'standard' | 'special' | 'bots' | 'practice';
 
 const QUEUE_GROUP_META: Record<QueueGroupKey, { label: string; detail: string }> = {
@@ -1012,6 +1025,8 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
     ? configuredRolePlans > 0
     : Boolean(prefs.pickChampionId || prefs.fallbackPickChampionId);
   const hasBanPlan = Boolean(prefs.banChampionId || prefs.fallbackBanChampionId);
+  const assignedRolePlan = detectedRole ? rolePickPlanFor(detectedRole, prefs.rolePickPlans) : null;
+  const hasAssignedRolePlan = Boolean(assignedRolePlan?.pickChampionId || assignedRolePlan?.fallbackPickChampionId);
   const activeLockout = Boolean(restrictions?.notifications.some((item) => item.lockoutRemainingMs > 0 || /lockout/i.test(item.type)));
   const activePenalty = Boolean(matchmaking?.lowPriority && matchmaking.lowPriority.penaltySeconds > 0);
   const rankedRestriction = Boolean(restrictions?.ranked && restrictions.ranked.punishedGamesRemaining > 0 && /ranked/i.test(selectedQueue ? queueLabel(selectedQueue) : ''));
@@ -1028,17 +1043,73 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
             : flowMode === 'full-auto' ? 'Start Full Auto'
               : isCustomSelection ? 'Start game' : 'Start queue';
   const primaryActionDisabled = acting !== '' || (!autoMode && (!connected || (canStartQueue && queueStartBlocked) || (!canStartQueue && phase !== 'Matchmaking' && phase !== 'ReadyCheck' && (!isLivePhase || !onOpenLive))));
-  const statusStage = autoMode ? runtimeStatus.stage : runtimeStatus.stage === 'blocked' && canStartQueue ? 'blocked' : phase === 'Matchmaking' ? 'matchmaking' : phase === 'ReadyCheck' ? 'ready-check' : isLivePhase ? 'in-game' : 'idle';
+  const terminalRuntimeStatus = !autoMode && (runtimeStatus.stage === 'blocked' || runtimeStatus.stage === 'stopped');
+  const statusStage = autoMode ? runtimeStatus.stage : terminalRuntimeStatus ? runtimeStatus.stage : phase === 'Matchmaking' ? 'matchmaking' : phase === 'ReadyCheck' ? 'ready-check' : isLivePhase ? 'in-game' : 'idle';
   const statusMessage = autoMode ? runtimeStatus.message
+    : terminalRuntimeStatus ? runtimeStatus.stopReason || runtimeStatus.message || 'Full Auto stopped.'
     : !connected ? 'Connect League to start a queue.'
-      : phase === 'Matchmaking' ? `Searching${matchmaking?.elapsedSeconds ? ` · ${Math.floor(matchmaking.elapsedSeconds)}s elapsed` : ''}${matchmaking?.estimatedSeconds ? ` · about ${Math.round(matchmaking.estimatedSeconds)}s estimated` : ''}.`
+      : phase === 'Matchmaking' ? 'League is searching for a match.'
         : phase === 'ReadyCheck' ? 'A match was found. Respond to the ready check in League or here.'
           : phase === 'ChampSelect' ? 'Champion select is active. Open Live Game to follow the draft.'
             : isLivePhase ? 'Your game is in progress. Changes here will apply to a later queue.'
               : !canStartQueue ? `League is ${phase.replaceAll('_', ' ')}. Queue start is unavailable right now.`
-                : runtimeStatus.stage === 'blocked' ? runtimeStatus.message
+                : runtimeStatus.stage === 'blocked' ? runtimeStatus.stopReason || runtimeStatus.message
                   : queueStartBlocked ? 'League has a restriction that blocks this queue.'
                     : 'Ready to start.';
+  const statusHeading = autoMode
+    ? PLAY_FLOW_STAGE_LABELS[runtimeStatus.stage]
+    : terminalRuntimeStatus
+      ? PLAY_FLOW_STAGE_LABELS[runtimeStatus.stage]
+      : !connected
+        ? 'League is offline'
+        : queueStartBlocked
+          ? 'Queue blocked'
+          : phase === 'Matchmaking'
+            ? 'Searching for a match'
+            : phase === 'ReadyCheck'
+              ? 'Ready check'
+              : phase === 'ChampSelect'
+                ? 'Draft in progress'
+                : isLivePhase
+                  ? 'Game in progress'
+                  : canStartQueue
+                    ? 'Ready when you are'
+                    : `League is ${phase.replaceAll('_', ' ').toLowerCase()}`;
+  const lobbyQueueId = Number(lobby?.gameConfig?.queueId || 0);
+  const lobbyQueue = lobbyQueueId > 0 ? findQueue(lobbyQueueId, queues) : undefined;
+  const queueSummary = prefs.selectedQueue > 0
+    ? selectedQueue ? queueLabel(selectedQueue) : `Queue ${prefs.selectedQueue}`
+    : lobbyQueue ? `${queueLabel(lobbyQueue)} · current lobby`
+      : lobbyQueueId > 0 ? `Current lobby · queue ${lobbyQueueId}` : 'Use current lobby';
+  const flowSummary = autoMode
+    ? `Full Auto · ${runtimeStatus.cycleMode === 'repeat' ? 'Repeat' : 'One match'}`
+    : flowMode === 'full-auto'
+      ? `Full Auto · ${cycleMode === 'repeat' ? 'Repeat' : 'One match'}`
+      : 'Manual start';
+  const pickPlanSummary = !prefs.autoPick
+    ? 'Auto-pick off · choose manually'
+    : isArenaSelection
+      ? prefs.arenaBraveryPick ? 'Bravery, then saved priorities' : `${prefs.arenaPickPriority.length} Arena priorities`
+      : isARAMSelection
+        ? `${prefs.aramChampionPriority.length || 'First available'} ${prefs.aramChampionPriority.length === 1 ? 'favorite' : 'favorites'} · rerolls stay manual`
+        : selectedNeedsRoles && prefs.roleAwarePicks
+          ? champSelectLive
+            ? detectedRole
+              ? `${roleLabel(detectedRole)} plan ${hasAssignedRolePlan ? 'ready' : 'not set'}`
+              : 'Waiting for League to assign a lane'
+            : `${configuredRolePlans} of 5 lane plans configured`
+          : hasPickPlan ? 'Pick path configured' : 'No pick target selected';
+  const pickPlanReady = !prefs.autoPick
+    || isArenaSelection
+    || isARAMSelection
+    || (selectedNeedsRoles && prefs.roleAwarePicks
+      ? champSelectLive ? hasAssignedRolePlan : configuredRolePlans === PICK_ROLES.length
+      : hasPickPlan);
+  const banPlanSummary = isArenaSelection || isARAMSelection
+    ? 'Not used in this mode'
+    : !prefs.autoBan ? 'Auto-ban off · choose manually'
+      : hasBanPlan ? 'Ban target configured' : 'No ban target selected';
+  const banPlanReady = isArenaSelection || isARAMSelection || !prefs.autoBan || hasBanPlan;
 
   const flushPlayFlowPreferences = async () => {
     const saved = await saveQoLPreferences({ playFlow: prefsRef.current });
@@ -1154,7 +1225,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
   };
 
   return (
-    <div className="play-flow-page flex-1 min-h-0 min-w-0 overflow-y-auto animate-fadeIn space-y-5" role="region" aria-label="Play and Queue workspace" tabIndex={0}>
+    <div className="play-flow-page play-flow__workspace flex-1 min-h-0 min-w-0 overflow-y-auto animate-fadeIn" role="region" aria-label="Play and Queue workspace" tabIndex={0}>
       <section className="glass-card play-flow__setup" aria-labelledby="queue-setup-title">
         <header className="play-flow__header">
           <div className="play-flow__header-copy">
@@ -1170,17 +1241,6 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         </header>
 
         <ActionFeedback state={feedback} />
-
-      {(matchmaking?.errors?.length || matchmakingFailure || activePenalty || activeLockout || rankedRestriction || restrictions?.ranked?.needsAck) ? (
-        <section className="play-flow__safety-strip" aria-live="polite">
-          {activeLockout && <div className="play-flow__safety-warning"><ShieldCheck className="h-4 w-4" /><span>League reports an active queue lockout. Queue start and Full auto are paused until it clears.</span></div>}
-          {activePenalty && <div className="play-flow__safety-warning"><ShieldCheck className="h-4 w-4" /><span>League reports a low-priority penalty with {Math.ceil(matchmaking?.lowPriority?.penaltySeconds || 0)} seconds remaining. Full auto is paused.</span></div>}
-          {rankedRestriction && <div className="play-flow__safety-warning"><ShieldCheck className="h-4 w-4" /><span>Ranked is restricted for {restrictions?.ranked?.punishedGamesRemaining || 0} game(s). Choose another queue or wait for the restriction to clear.</span></div>}
-          {matchmakingFailure && !matchmaking?.errors?.length && <div className="play-flow__safety-warning"><WifiOff className="h-4 w-4" /><span>League matchmaking reported {matchmaking?.state || 'an error'}; Full auto has been paused.</span></div>}
-          {restrictions?.ranked?.needsAck && <div className="play-flow__safety-warning"><ShieldCheck className="h-4 w-4" /><span>Ranked restrictions are active: {restrictions.ranked.punishedGamesRemaining} game(s) remaining.</span></div>}
-          {matchmaking?.errors?.map((item) => <div className="play-flow__safety-warning" key={item.id}><WifiOff className="h-4 w-4" /><span>{item.message || item.type}</span></div>)}
-        </section>
-      ) : null}
 
       {!connected && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
@@ -1287,10 +1347,6 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
             {acting !== '' ? <Loader2 className="h-4 w-4 animate-spin" /> : autoMode || phase === 'Matchmaking' ? <Square className="h-4 w-4 fill-current" /> : phase === 'ReadyCheck' ? <CheckCircle2 className="h-4 w-4" /> : isLivePhase ? <Swords className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
             {primaryActionLabel}
           </button>
-          <div className={`play-flow__runtime-status is-${statusStage}`} role="status" aria-live="polite">
-            <span className="play-flow__runtime-dot" aria-hidden="true" />
-            <span><strong>{autoMode ? `${runtimeStatus.stage.replaceAll('-', ' ')} · ` : ''}</strong>{statusMessage}</span>
-          </div>
         </div>
 
         {!autoMode && flowMode === 'manual' && canStartQueue && prefs.selectedQueue > 0 && (isCustomSelection || isPracticeSelection) && (
@@ -1309,6 +1365,52 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
 
         <p className="play-flow__save-note">{autoMode ? 'Stopping Full Auto will not cancel League matchmaking or dodge champion select.' : prefsSaveState === 'saving' ? 'Saving choices…' : prefsSaveState === 'local' ? 'Saved locally · League sync unavailable' : 'Choices saved automatically.'}</p>
       </section>
+
+      <aside className={`glass-card play-flow__readiness is-${statusStage}`} aria-labelledby="play-flow-readiness-title">
+        <header className="play-flow__readiness-header">
+          <h2 id="play-flow-readiness-title">Run status</h2>
+          <span className={`play-flow__readiness-mode ${autoMode ? 'is-running' : ''}`}>{flowSummary}</span>
+        </header>
+
+        <div className={`play-flow__runtime-status is-${statusStage}`} role="status" aria-live="polite">
+          <span className="play-flow__runtime-dot" aria-hidden="true" />
+          <span className="play-flow__runtime-copy"><strong>{statusHeading}</strong><span>{statusMessage}</span></span>
+        </div>
+
+        <dl className="play-flow__readiness-facts">
+          <div><dt>Queue</dt><dd>{queueSummary}</dd></div>
+          {selectedNeedsRoles && <div><dt>Preferred lanes</dt><dd>{roleLabel(prefs.primaryRole)} + {roleLabel(prefs.secondaryRole)}</dd></div>}
+        </dl>
+
+        <section className="play-flow__draft-readiness" aria-labelledby="play-flow-draft-readiness-title">
+          <h3 id="play-flow-draft-readiness-title">Draft plan</h3>
+          <dl>
+            <div><dt>Pick</dt><dd className={!pickPlanReady ? 'is-incomplete' : ''}>{pickPlanSummary}</dd></div>
+            <div><dt>Ban</dt><dd className={!banPlanReady ? 'is-incomplete' : ''}>{banPlanSummary}</dd></div>
+          </dl>
+        </section>
+
+        {phase === 'Matchmaking' && matchmaking && (matchmaking.elapsedSeconds > 0 || matchmaking.estimatedSeconds > 0) && (
+          <dl className="play-flow__queue-progress" aria-label="Matchmaking timing">
+            {matchmaking.elapsedSeconds > 0 && <div><dt>Elapsed</dt><dd>{Math.floor(matchmaking.elapsedSeconds)} sec</dd></div>}
+            {matchmaking.estimatedSeconds > 0 && <div><dt>Estimated queue</dt><dd>About {Math.round(matchmaking.estimatedSeconds)} sec</dd></div>}
+          </dl>
+        )}
+        {autoMode && Number(runtimeStatus.countdownMs) > 0 && (
+          <p className="play-flow__countdown">Next step in about {Math.ceil(Number(runtimeStatus.countdownMs) / 1000)} sec</p>
+        )}
+
+        {(matchmaking?.errors?.length || matchmakingFailure || activePenalty || activeLockout || rankedRestriction || restrictions?.ranked?.needsAck) && (
+          <section className="play-flow__safety-strip" aria-label="Queue restrictions and matchmaking alerts" aria-live="polite">
+            {activeLockout && <div className="play-flow__safety-warning"><ShieldCheck className="h-4 w-4" /><span>League reports an active queue lockout. Queue start and Full Auto are paused until it clears.</span></div>}
+            {activePenalty && <div className="play-flow__safety-warning"><ShieldCheck className="h-4 w-4" /><span>League reports a low-priority penalty with {Math.ceil(matchmaking?.lowPriority?.penaltySeconds || 0)} seconds remaining. Full Auto is paused.</span></div>}
+            {rankedRestriction && <div className="play-flow__safety-warning"><ShieldCheck className="h-4 w-4" /><span>Ranked is restricted for {restrictions?.ranked?.punishedGamesRemaining || 0} game(s). Choose another queue or wait for the restriction to clear.</span></div>}
+            {matchmakingFailure && !matchmaking?.errors?.length && <div className="play-flow__safety-warning"><WifiOff className="h-4 w-4" /><span>League matchmaking reported {matchmaking?.state || 'an error'}; Full Auto has been paused.</span></div>}
+            {restrictions?.ranked?.needsAck && <div className="play-flow__safety-warning"><ShieldCheck className="h-4 w-4" /><span>Ranked restrictions are active: {restrictions.ranked.punishedGamesRemaining} game(s) remaining.</span></div>}
+            {matchmaking?.errors?.map((item) => <div className="play-flow__safety-warning" key={item.id}><WifiOff className="h-4 w-4" /><span>{item.message || item.type}</span></div>)}
+          </section>
+        )}
+      </aside>
 
       {isCustomSelection && customDirectory && <section className="glass-card p-4 rounded-2xl play-flow__custom-directory" aria-labelledby="custom-directory-title"><div className="flex items-start justify-between gap-3"><div><span className="text-[10px] tracking-[0.14em] text-primary font-black">CUSTOM SESSIONS</span><h2 id="custom-directory-title" className="text-sm font-bold text-white mt-1">Browse custom games</h2><p className="text-xs text-text-muted mt-1">Join only after reviewing the lobby and slot count.</p></div><button type="button" className="btn-secondary text-xs" onClick={() => void refreshLCUCustomGames().then(setCustomDirectory).catch((reason: any) => showToast(reason?.message || 'Could not refresh custom games.', 'error'))}><RefreshCw className="w-3.5" /> Refresh</button></div><div className="space-y-2 mt-3">{customDirectory.invitations.map((invitation) => <div key={invitation.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs"><span><strong className="text-white">Invitation from {invitation.senderName}</strong><small className="block text-text-muted">{invitation.restrictions.length ? invitation.restrictions.join(', ') : 'Ready to review'}</small></span><span className="flex gap-2"><button type="button" className="btn-secondary text-xs" disabled={!invitation.canAccept || acting !== ''} onClick={() => void (async () => { const preview = await previewExpandedReviewedOperation({ kind: 'lobby-invitation-accept', invitation: { invitationId: invitation.id } }); setCustomReview({ previewId: preview.id, kind: preview.kind, title: 'Accept lobby invitation', description: 'Accepting may replace your current lobby.', confirmation: preview.confirmation, targetCount: 1, targetLabels: [invitation.senderName] }); })()}>Accept</button><button type="button" className="btn-danger text-xs" disabled={acting !== ''} onClick={() => void actOnLCULobbyInvitation(invitation.id, 'decline').then(() => showToast('Invitation declined.', 'success')).catch((reason: any) => showToast(reason?.message || 'Could not decline invitation.', 'error'))}>Decline</button></span></div>)}{customDirectory.games.slice(0, 8).map((game) => <div key={game.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-black/20 p-3 text-xs"><span><strong className="text-white">{game.name || 'Custom game'}</strong><small className="block text-text-muted">{game.owner} · {game.players.filled}/{game.players.maximum} players · {game.passwordRequired ? 'Password required' : 'Open'}</small></span><span className="flex gap-2"><button type="button" className="btn-secondary text-xs" onClick={() => void reviewCustomJoin(game, true)}>Spectate</button><button type="button" className="btn-primary text-xs" onClick={() => void reviewCustomJoin(game, false)}>Join</button></span></div>)}{customDirectory.games.length === 0 && customDirectory.invitations.length === 0 && <p className="text-xs text-text-muted">No custom games or invitations are available.</p>}</div></section>}
 
