@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   FolderOpen,
@@ -122,7 +122,18 @@ export default function SettingsPage({
   logs = [],
   onClearLogs,
 }: SettingsPageProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('all');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('interface');
+  const categoriesRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const nav = categoriesRef.current;
+    const selected = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !selected) return;
+    const bounds = nav.getBoundingClientRect();
+    const item = selected.getBoundingClientRect();
+    if (item.left < bounds.left) nav.scrollBy({ left: item.left - bounds.left - 8 });
+    else if (item.right > bounds.right) nav.scrollBy({ left: item.right - bounds.right + 8 });
+  }, [activeTab]);
   const [confirmModal, setConfirmModal] = useState<ConfirmAction | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [chatPrivacy, setChatPrivacy] = useState<api.ChatPrivacy | null>(null);
@@ -274,7 +285,7 @@ export default function SettingsPage({
       <PageHeader
         icon={SlidersHorizontal}
         eyebrow="WORKSPACE & SYSTEM PREFERENCES"
-        title="Application Settings"
+        title="Settings"
         description="Configure launch targets, client performance mode, League installation paths, and desktop integration."
         meta={
           <StatusBadge tone="neutral" icon={ShieldCheck}>
@@ -291,12 +302,14 @@ export default function SettingsPage({
         }
       />
 
+      <div className="settings-layout">
       {/* Category Sub-Navigation Bar */}
-      <nav className="flex items-center gap-1.5 p-1.5 bg-dark-card/60 backdrop-blur-md rounded-2xl border border-white/5 overflow-x-auto mb-6" aria-label="Settings categories">
+      <nav ref={categoriesRef} className="settings-categories" aria-label="Settings categories">
         <button
           type="button"
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'all' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('all')}
+          aria-current={activeTab === 'all' ? 'page' : undefined}
         >
           <SlidersHorizontal className="w-3.5 h-3.5" />
           <span>All Settings</span>
@@ -305,6 +318,7 @@ export default function SettingsPage({
           type="button"
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'launch' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('launch')}
+          aria-current={activeTab === 'launch' ? 'page' : undefined}
         >
           <Play className="w-3.5 h-3.5" />
           <span>Launch & Startup</span>
@@ -313,6 +327,7 @@ export default function SettingsPage({
           type="button"
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'interface' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('interface')}
+          aria-current={activeTab === 'interface' ? 'page' : undefined}
         >
           <Sparkles className="w-3.5 h-3.5" />
           <span>Interface & Performance</span>
@@ -321,6 +336,7 @@ export default function SettingsPage({
           type="button"
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'league' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('league')}
+          aria-current={activeTab === 'league' ? 'page' : undefined}
         >
           <FolderOpen className="w-3.5 h-3.5" />
           <span>League Installation</span>
@@ -329,6 +345,7 @@ export default function SettingsPage({
           type="button"
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'system' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('system')}
+          aria-current={activeTab === 'system' ? 'page' : undefined}
         >
           <HardDrive className="w-3.5 h-3.5" />
           <span>System & Storage</span>
@@ -337,12 +354,14 @@ export default function SettingsPage({
           type="button"
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${activeTab === 'diagnostics' ? 'bg-primary/15 text-primary border border-primary/30 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
           onClick={() => setActiveTab('diagnostics')}
+          aria-current={activeTab === 'diagnostics' ? 'page' : undefined}
         >
           <Terminal className="w-3.5 h-3.5" />
           <span>Developer Tools & Logs</span>
         </button>
       </nav>
 
+      <div className="settings-content">
       {/* Feedback Bar */}
       {settingsFeedback && (
         <ActionFeedback state={settingsFeedback} className="settings-feedback mb-4" />
@@ -361,15 +380,15 @@ export default function SettingsPage({
                   <Play className="w-4 h-4" />
                 </span>
                 <div>
-                  <small>LAUNCH & STARTUP</small>
-                  <h3>Startup Behavior</h3>
+
+                  <h2>Startup Behavior</h2>
                   <p>Choose what RiftOps launches and how your presence starts.</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 {/* Default Game */}
-                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 space-y-2">
+                <div className="settings-preference settings-preference--options">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                     <label className="text-xs font-bold text-white">Default Launch Game</label>
                     <span className="text-[11px] text-text-dim">Select which title opens by default in Command Center.</span>
@@ -378,6 +397,7 @@ export default function SettingsPage({
                     {GAMES.map((game) => (
                       <button
                         key={game.value}
+                        aria-pressed={prefGame === game.value}
                         type="button"
                         className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${prefGame === game.value ? 'bg-primary/20 text-primary border border-primary/40 font-bold' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
                         onClick={() => {
@@ -395,7 +415,7 @@ export default function SettingsPage({
                 </div>
 
                 {/* Startup Presence */}
-                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 space-y-2">
+                <div className="settings-preference settings-preference--options">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                     <label className="text-xs font-bold text-white">Initial Chat Presence</label>
                     <span className="text-[11px] text-text-dim">The availability status applied immediately upon starting Riot Client.</span>
@@ -404,6 +424,7 @@ export default function SettingsPage({
                     {PRESENCE_MODES.map((mode) => (
                       <button
                         key={mode.id}
+                        aria-pressed={prefStartup === mode.id}
                         type="button"
                         className={`flex items-center gap-2 p-2 rounded-xl bg-dark-bg/60 border text-xs transition ${prefStartup === mode.id ? 'border-primary/40 text-white bg-primary/10 font-bold' : 'border-white/5 text-text-muted hover:text-white hover:border-white/15'}`}
                         onClick={() => {
@@ -421,7 +442,7 @@ export default function SettingsPage({
                 </div>
 
                 {/* Keep Lobby Chat Connected (MUC) */}
-                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                <div className="settings-preference settings-preference--switch">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-bold text-white">Keep Lobby Chat Connected (MUC)</span>
                     <span className="text-[11px] text-text-dim">
@@ -431,6 +452,7 @@ export default function SettingsPage({
                   <label className="toggle">
                     <input
                       type="checkbox"
+                      role="switch"
                       aria-label="Keep lobby chat connected"
                       checked={prefMUC}
                       onChange={(e) => {
@@ -455,15 +477,15 @@ export default function SettingsPage({
                   <Sparkles className="w-4 h-4" />
                 </span>
                 <div>
-                  <small>INTERFACE & ACCESSIBILITY</small>
-                  <h3>Workspace Preferences</h3>
+
+                  <h2>Workspace Preferences</h2>
                   <p>Display language, client performance mode, and visual comfort.</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 {/* Language */}
-                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 space-y-2">
+                <div className="settings-preference settings-preference--options">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                     <label className="text-xs font-bold text-white">{t('settings.language') || 'Interface Language'}</label>
                     <span className="text-[11px] text-text-dim">{t('settings.languageHelp') || 'Choose between English and Arabic.'}</span>
@@ -471,6 +493,7 @@ export default function SettingsPage({
                   <div className="flex gap-2">
                     <button
                       type="button"
+                      aria-pressed={locale === 'en'}
                       className={`btn-secondary flex-1 py-1.5 text-xs ${locale === 'en' ? 'border-primary/60 text-primary bg-primary/10' : ''}`}
                       onClick={() => {
                         setLocale('en');
@@ -481,6 +504,7 @@ export default function SettingsPage({
                     </button>
                     <button
                       type="button"
+                      aria-pressed={locale === 'ar'}
                       className={`btn-secondary flex-1 py-1.5 text-xs ${locale === 'ar' ? 'border-primary/60 text-primary bg-primary/10' : ''}`}
                       onClick={() => {
                         setLocale('ar');
@@ -493,7 +517,7 @@ export default function SettingsPage({
                 </div>
 
                 {/* Performance Mode */}
-                <div className="p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 space-y-2">
+                <div className="settings-preference settings-preference--options">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                     <label className="text-xs font-bold text-white">Client Polling Profile</label>
                     <span className="text-[11px] text-text-dim">Adjust background LCU refresh intervals to save CPU/battery.</span>
@@ -502,6 +526,7 @@ export default function SettingsPage({
                     {Object.entries(PERFORMANCE_MODES).map(([key, mode]) => (
                       <button
                         key={key}
+                        aria-pressed={performanceMode === key}
                         type="button"
                         className={`flex flex-col items-center justify-center p-2.5 rounded-xl bg-dark-bg/60 border text-xs text-center transition ${performanceMode === key ? 'border-primary/40 text-white bg-primary/10 font-bold' : 'border-white/5 text-text-muted hover:text-white hover:border-white/15'}`}
                         onClick={() => {
@@ -517,7 +542,7 @@ export default function SettingsPage({
                 </div>
 
                 {/* Compact Mode */}
-                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                <div className="settings-preference settings-preference--switch">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-bold text-white">Compact Workspace Density</span>
                     <span className="text-[11px] text-text-dim">Reduces padding and card heights for smaller screens or windowed mode.</span>
@@ -525,6 +550,7 @@ export default function SettingsPage({
                   <label className="toggle">
                     <input
                       type="checkbox"
+                      role="switch"
                       aria-label="Use compact workspace density"
                       checked={compactMode}
                       onChange={(e) => {
@@ -537,7 +563,7 @@ export default function SettingsPage({
                 </div>
 
                 {/* Reduced Motion */}
-                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                <div className="settings-preference settings-preference--switch">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-bold text-white">Reduce Interface Motion</span>
                     <span className="text-[11px] text-text-dim">Disables intense glowing pulses, radar sweeps, and transition animations.</span>
@@ -545,6 +571,7 @@ export default function SettingsPage({
                   <label className="toggle">
                     <input
                       type="checkbox"
+                      role="switch"
                       aria-label="Reduce interface motion"
                       checked={reducedMotion}
                       onChange={(e) => {
@@ -557,7 +584,7 @@ export default function SettingsPage({
                 </div>
 
                 {/* Streamer & Privacy Mode */}
-                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                <div className="settings-preference settings-preference--switch">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-bold text-white">Streamer & Privacy Mode</span>
                     <span className="text-[11px] text-text-dim">Masks summoner names, Riot IDs, and friend identities across the entire interface for streaming and screenshots.</span>
@@ -565,6 +592,7 @@ export default function SettingsPage({
                   <label className="toggle">
                     <input
                       type="checkbox"
+                      role="switch"
                       aria-label="Streamer and privacy mode"
                       checked={streamerMode}
                       onChange={(e) => {
@@ -577,7 +605,7 @@ export default function SettingsPage({
                 </div>
 
                 {/* Automatic Updates */}
-                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-dark-bg/40 border border-white/5 hover:border-white/10 transition">
+                <div className="settings-preference settings-preference--switch">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-bold text-white">Automatic Update Checks</span>
                     <span className="text-[11px] text-text-dim">Notifies you silently when a newer verified release of RiftOps is published.</span>
@@ -585,6 +613,7 @@ export default function SettingsPage({
                   <label className="toggle">
                     <input
                       type="checkbox"
+                      role="switch"
                       aria-label="Automatically check for updates"
                       checked={prefUpdates}
                       onChange={(e) => {
@@ -615,7 +644,7 @@ export default function SettingsPage({
                 </span>
                 <div>
                   <small>LEAGUE INSTALLATION</small>
-                  <h3>Client Location & Desktop</h3>
+                  <h2>Client Location & Desktop</h2>
                   <p>Configure the Riot Client executable RiftOps binds to.</p>
                 </div>
               </div>
@@ -699,6 +728,7 @@ export default function SettingsPage({
                     <label className="toggle">
                       <input
                         type="checkbox"
+                      role="switch"
                         aria-label="Start RiftOps with Windows"
                         checked={autostartEnabled}
                         onChange={(e) => void handleAutostart(e.target.checked)}
@@ -711,7 +741,7 @@ export default function SettingsPage({
                 <div className="mt-4 pt-4 border-t border-white/5 space-y-3" aria-labelledby="chat-privacy-title">
                   <div className="flex items-center gap-3">
                     <span className="w-9 h-9 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-300"><MessageCircle className="w-4 h-4" /></span>
-                    <div><small>CHAT PRIVACY</small><h3 id="chat-privacy-title">League chat settings</h3><p>Control client notifications and typing visibility. RiftOps changes only the supported League fields.</p></div>
+                    <div><small>CHAT PRIVACY</small><h2 id="chat-privacy-title">League chat settings</h2><p>Control client notifications and typing visibility. RiftOps changes only the supported League fields.</p></div>
                   </div>
                   {!lcuConnected && <p className="text-xs text-text-dim">Connect League to read your current chat privacy settings.</p>}
                   {lcuConnected && !chatPrivacy && <p className="text-xs text-text-dim">Chat privacy is unavailable for this League patch.</p>}
@@ -727,7 +757,8 @@ export default function SettingsPage({
                       const checked = key === 'chatFilterDisabled' ? !raw : raw;
                       return <div key={key} className="flex items-center justify-between gap-4 p-3 rounded-xl bg-dark-bg/40 border border-white/5">
                         <div className="flex flex-col gap-0.5"><span className="text-xs font-bold text-white">{label}</span><span className="text-[11px] text-text-dim">{description}</span></div>
-                        <label className="toggle"><input type="checkbox" aria-label={label} checked={Boolean(checked)} disabled={chatPrivacyBusy === key} onChange={(event) => { const next = key === 'chatFilterDisabled' ? !event.target.checked : event.target.checked; void updateChatPrivacy(key, next); }} /><span className="slider" /></label>
+                        <label className="toggle"><input type="checkbox"
+                      role="switch" aria-label={label} checked={Boolean(checked)} disabled={chatPrivacyBusy === key} onChange={(event) => { const next = key === 'chatFilterDisabled' ? !event.target.checked : event.target.checked; void updateChatPrivacy(key, next); }} /><span className="slider" /></label>
                       </div>;
                     })}
                   </div>}
@@ -745,7 +776,7 @@ export default function SettingsPage({
                 </span>
                 <div>
                   <small>SYSTEM & MAINTENANCE</small>
-                  <h3>App Storage & Runtime</h3>
+                  <h2>App Storage & Runtime</h2>
                   <p>Inspect active runtime specs and perform local maintenance.</p>
                 </div>
               </div>
@@ -923,7 +954,7 @@ export default function SettingsPage({
                     <Terminal className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 id="settings-diagnostics-title" className="font-bold text-sm text-white">Developer Diagnostics & Logs</h3>
+                    <h2 id="settings-diagnostics-title" className="font-bold text-sm text-white">Developer Diagnostics & Logs</h2>
                     <p className="text-xs text-text-muted">Live console logs and internal client event stream for troubleshooting</p>
                   </div>
                 </div>
@@ -932,6 +963,8 @@ export default function SettingsPage({
             </section>
           </div>
         )}
+      </div>
+      </div>
       </div>
     </div>
   );

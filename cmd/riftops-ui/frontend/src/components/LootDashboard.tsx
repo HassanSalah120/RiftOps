@@ -1,6 +1,7 @@
+import { runReviewedOperation } from '../reviewedOperation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckSquare, Clock3, Gem, Hammer, Loader2, PackageOpen, RefreshCw, Trash2, XCircle } from 'lucide-react';
-import { craftLCULootRecipe, executeReviewedOperation, fetchLCULoot, fetchLCULootRecipes, fetchLCUWallet, fetchReviewedOperation, previewLootOperation, type LootOperationItem } from '../api';
+import { craftLCULootRecipe, fetchLCULoot, fetchLCULootRecipes, fetchLCUWallet, previewLootOperation, type LootOperationItem } from '../api';
 import { recipeActionLabel } from '../lootActions';
 import { loadSkinCatalog, resolveLootDisplay, skinArtSources, type CatalogSkin } from '../leagueCatalog';
 import type { ConfirmAction } from '../types';
@@ -123,9 +124,11 @@ export default function LootDashboard() {
   const [skinCatalog, setSkinCatalog] = useState<Record<string, CatalogSkin>>({});
   const [skinArtByLootId, setSkinArtByLootId] = useState<Record<string, CatalogSkin>>({});
   const [wallet, setWallet] = useState<Record<string, number>>({});
+  const [walletUnavailable, setWalletUnavailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [materialSearch, setMaterialSearch] = useState('');
   const [selectedLootId, setSelectedLootId] = useState('');
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [recipesLoading, setRecipesLoading] = useState(false);
@@ -141,7 +144,7 @@ export default function LootDashboard() {
     try {
       const [body, walletBody, skins] = await Promise.all([
         fetchLCULoot(),
-        fetchLCUWallet().catch(() => ({})),
+        fetchLCUWallet().then((value) => { setWalletUnavailable(false); return value; }).catch(() => { setWalletUnavailable(true); return {}; }),
         loadSkinCatalog(),
       ]);
       const items = (Array.isArray(body) ? body : []) as LootItem[];
@@ -170,23 +173,27 @@ export default function LootDashboard() {
   useEffect(() => { void loadLoot(); }, [loadLoot]);
 
   useEffect(() => {
-    if (!selectedLootId) { setRecipes([]); setFeedback(null); return; }
+    let active = true;
+    setRecipes([]);
+    if (!selectedLootId) { setRecipesLoading(false); setFeedback(null); return; }
     setRecipesLoading(true);
     setFeedback({ tone: 'working', message: 'Reading live recipes from League…' });
     fetchLCULootRecipes(selectedLootId)
       .then((next) => {
+        if (!active) return;
         setRecipes(next);
         setFeedback(next.length ? { tone: 'info', message: `${next.length} League recipe${next.length === 1 ? '' : 's'} available for this material.` } : { tone: 'info', message: 'League does not expose a recipe for this material right now.' });
       })
-      .catch((reason) => { setRecipes([]); setFeedback({ tone: 'error', message: reason?.message || 'Recipes are unavailable for this item.' }); })
-      .finally(() => setRecipesLoading(false));
+      .catch((reason) => { if (active) { setRecipes([]); setFeedback({ tone: 'error', message: reason?.message || 'Recipes are unavailable for this item.' }); } })
+      .finally(() => { if (active) setRecipesLoading(false); });
+    return () => { active = false; };
   }, [selectedLootId]);
 
   const resources = RESOURCE_DEFS.map((definition) => {
     const items = loot.filter((item) => definition.match(item.lootId || ''));
     const inventoryValue = items.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
     const walletValue = definition.key === 'blue' ? wallet.ip ?? wallet.blueEssence ?? wallet.blue_essence : definition.key === 'rp' ? wallet.rp ?? wallet.RP : undefined;
-    return { ...definition, item: items[0], value: typeof walletValue === 'number' ? walletValue : inventoryValue };
+    return { ...definition, item: items[0], value: typeof walletValue === 'number' ? walletValue : walletUnavailable && ['blue', 'rp'].includes(definition.key) && !items.length ? null : inventoryValue };
   });
   const craftableItems = useMemo(() => loot.filter((item) => (Number(item.count) || 0) > 0 && item.type !== 'CURRENCY').sort((a, b) => itemName(a, skinCatalog).localeCompare(itemName(b, skinCatalog))), [loot, skinCatalog]);
   const selectedItem = craftableItems.find((item) => item.lootId === selectedLootId);
@@ -239,18 +246,13 @@ export default function LootDashboard() {
 
   const confirmBatch = async (previewId: string, confirmationText: string) => {
     try {
-      await executeReviewedOperation(previewId, confirmationText);
+      setFeedback({ tone: 'working', message: 'Crafting the reviewed recipes. Waiting for League…' });
+      const status = await runReviewedOperation(previewId, confirmationText);
+      if (status.state !== 'complete') throw new Error(`Crafting ${status.state}. Review the inventory before starting another operation.`);
+      const failures = status.results.filter((item) => item.status !== 'succeeded').length;
+      setFeedback({ tone: failures ? 'error' : 'success', message: `${status.completed}/${status.total} recipes processed${failures ? ` · ${failures} need review` : ''}.` });
+      if (!failures) setBatchItems([]);
       setPendingReview(null);
-      for (;;) {
-        const status = await fetchReviewedOperation(previewId);
-        if (['complete', 'failed', 'cancelled', 'expired'].includes(status.state)) {
-          const failures = status.results.filter((item) => item.status !== 'succeeded').length;
-          setFeedback({ tone: failures ? 'error' : 'success', message: `${status.completed}/${status.total} recipes processed${failures ? ` · ${failures} need review` : ''}.` });
-          if (!failures) setBatchItems([]);
-          break;
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, 450));
-      }
       await loadLoot();
     } catch (reason: any) {
       setFeedback({ tone: 'error', message: reason?.message || 'Bulk crafting failed.' });
@@ -270,15 +272,17 @@ export default function LootDashboard() {
 
       {!error && <>
         <WorkspaceSection eyebrow="RESOURCE WALLET" title="Spendable balances" description={`${craftableItems.length} materials with possible recipes · ${affordableUpgrades} affordable upgrades`} className="loot-wallet">
-          <div className="loot-wallet__grid">{resources.map((resource) => <article className="loot-resource" key={resource.key} style={{ '--resource-color': resource.color } as React.CSSProperties}><div className="loot-resource__icon"><GameAsset item={resource.item} fallback={resource.fallback} icon={resource.icon} cdn={resource.cdn} /></div><div><strong>{loading ? '—' : resource.value.toLocaleString()}</strong><span>{resource.label}</span></div></article>)}</div>
+          {walletUnavailable && <ActionFeedback state={{ tone: 'info', message: 'Wallet unavailable. Inventory is still usable; refresh to retry balances.' }} />}
+          <div className="loot-wallet__grid">{resources.map((resource) => <article className="loot-resource" key={resource.key} style={{ '--resource-color': resource.color } as React.CSSProperties}><div className="loot-resource__icon"><GameAsset item={resource.item} fallback={resource.fallback} icon={resource.icon} cdn={resource.cdn} /></div><div><strong>{loading || resource.value === null ? '—' : resource.value.toLocaleString()}</strong><span>{resource.label}</span></div></article>)}</div>
         </WorkspaceSection>
 
         <div className="loot-workshop__flow">
           <WorkspaceSection eyebrow="SELECT" title="Choose a material" description="RiftOps asks League for the exact recipes attached to your selection." className="loot-forge">
-            {loading ? <ActionFeedback state={{ tone: 'working', message: 'Loading inventory materials…' }} /> : craftableItems.length === 0 ? <EmptyState icon={PackageOpen} title="No craftable materials" description="Loot shards, tokens, and capsules will appear here when League reports them." /> : <div className="loot-material-list">{craftableItems.map((item) => {
+            <label className="loot-search"><span>Find a material</span><input value={materialSearch} onChange={(event) => setMaterialSearch(event.target.value)} placeholder="Search shards, tokens, capsules…" /></label>
+            {loading ? <ActionFeedback state={{ tone: 'working', message: 'Loading inventory materials…' }} /> : craftableItems.filter((item) => itemName(item, skinCatalog).toLowerCase().includes(materialSearch.toLowerCase())).length === 0 ? <EmptyState icon={PackageOpen} title={materialSearch ? 'No matching materials' : 'No craftable materials'} description={materialSearch ? 'Try another name or clear the search to see your materials.' : 'Loot shards, tokens, and capsules will appear here when League reports them.'} action={materialSearch ? <button type="button" className="btn-secondary" onClick={() => setMaterialSearch('')}>Clear search</button> : undefined} /> : <div className="loot-material-list">{craftableItems.filter((item) => itemName(item, skinCatalog).toLowerCase().includes(materialSearch.toLowerCase())).map((item) => {
               const selected = item.lootId === selectedLootId;
               const display = resolveLootDisplay(item, skinCatalog);
-              return <button type="button" key={item.lootId} className={selected ? 'is-selected' : ''} onClick={() => setSelectedLootId(item.lootId)} aria-pressed={selected}><span><GameAsset item={item} skinArt={skinArtByLootId[item.lootId]} fallback="LOOT" /></span><div><strong>{display.label}</strong><small>{display.skin ? display.detail : item.rarity || item.type || display.detail}</small></div><b>×{Number(item.count) || 0}</b></button>;
+              return <button type="button" key={item.lootId} className={selected ? 'is-selected' : ''} disabled={crafting !== ''} onClick={() => setSelectedLootId(item.lootId)} aria-pressed={selected}><span><GameAsset item={item} skinArt={skinArtByLootId[item.lootId]} fallback="LOOT" /></span><div><strong>{display.label}</strong><small>{display.skin ? display.detail : item.rarity || item.type || display.detail}</small></div><b>×{Number(item.count) || 0}</b></button>;
             })}</div>}
           </WorkspaceSection>
 
@@ -295,11 +299,11 @@ export default function LootDashboard() {
           </ContextPanel>
         </div>
 
-        {batchItems.length > 0 && <WorkspaceSection eyebrow="REVIEWED BATCH" title={`${batchItems.length} queued recipe${batchItems.length === 1 ? '' : 's'}`} description="RiftOps revalidates every recipe and inventory item immediately before crafting, runs sequentially, and never retries an ambiguous result."><div className="loot-batch-list">{batchItems.map((item) => <div key={`${item.lootId}:${item.recipeName}`}><span><strong>{item.label || item.recipeName}</strong><small>{item.lootId} · repeat {item.repeat}</small></span><button type="button" className="btn-danger" onClick={() => setBatchItems((current) => current.filter((entry) => entry !== item))} disabled={crafting !== ''}><Trash2 /></button></div>)}</div><button type="button" className="btn-primary" onClick={() => void executeBatch()} disabled={crafting !== ''}>{crafting === 'batch' ? <Loader2 className="animate-spin" /> : <Hammer />}Preview & craft selected</button></WorkspaceSection>}
+        {batchItems.length > 0 && <WorkspaceSection eyebrow="REVIEWED BATCH" title={`${batchItems.length} queued recipe${batchItems.length === 1 ? '' : 's'}`} description="RiftOps revalidates every recipe and inventory item immediately before crafting, runs sequentially, and never retries an ambiguous result."><div className="loot-batch-list">{batchItems.map((item) => <div key={`${item.lootId}:${item.recipeName}`}><span><strong>{item.label || item.recipeName}</strong><small>{item.lootId} · repeat {item.repeat}</small></span><button type="button" aria-label={`Remove ${item.label || item.recipeName} from review`} className="btn-danger" onClick={() => setBatchItems((current) => current.filter((entry) => entry !== item))} disabled={crafting !== ''}><Trash2 /></button></div>)}</div><button type="button" className="btn-primary" onClick={() => void executeBatch()} disabled={crafting !== ''}>{crafting === 'batch' ? <Loader2 className="animate-spin" /> : <Hammer />}Preview & craft selected</button></WorkspaceSection>}
 
-        <WorkspaceSection eyebrow="LOCAL LEDGER" title="Recent inventory changes" description="Changes detected between refreshes on this device." className="loot-activity">
+        <details className="workflow-disclosure"><summary><span><Clock3 /><strong>Recent inventory changes</strong><small>Changes detected on this device</small></span></summary><div><WorkspaceSection eyebrow="LOCAL LEDGER" title="Recent inventory changes" description="Changes detected between refreshes on this device." className="loot-activity">
           {activity.length === 0 ? <EmptyState icon={Clock3} title="No changes recorded" description="Refresh after a craft or reward to record the difference here." /> : <div className="loot-activity__list">{activity.map((entry, index) => <div key={`${entry.id}-${entry.time}-${index}`}><span className={entry.delta > 0 ? 'is-positive' : 'is-negative'}>{entry.delta > 0 ? '+' : ''}{entry.delta}</span><strong>{entry.name}</strong><time>{entry.time}</time></div>)}</div>}
-        </WorkspaceSection>
+        </WorkspaceSection></div></details>
       </>}
     </div>
   );

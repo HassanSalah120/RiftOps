@@ -391,13 +391,13 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
         meta={<StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>{connected ? 'League connected' : 'League offline'}</StatusBadge>}
       />
 
-      <div className="profile-studio-page__layout">
+      {!connected ? <EmptyState icon={UserRound} title="Connect League to customize your profile" description="Sign in through Riot Client to load your owned artwork, icons, and regalia." action={<button type="button" className="btn-primary" onClick={() => window.dispatchEvent(new CustomEvent('riftops:navigate', { detail: 'play' }))}>Open Play &amp; Queue</button>} /> : <div className="profile-studio-page__layout">
         <section className="profile-studio-page__workspace">
           {/* Sub-Navigation Category Tabs */}
           <nav className="profile-studio-page__tools" aria-label="Profile customization categories">
             <button
               type="button"
-              className={tool === 'background' ? 'is-active' : ''}
+              className={tool === 'background' ? 'is-active' : ''} aria-current={tool === 'background' ? 'page' : undefined}
               onClick={() => { setTool('background'); setFeedback(null); }}
             >
               <Paintbrush />
@@ -408,7 +408,7 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
             </button>
             <button
               type="button"
-              className={tool === 'icon' ? 'is-active' : ''}
+              className={tool === 'icon' ? 'is-active' : ''} aria-current={tool === 'icon' ? 'page' : undefined}
               onClick={() => { setTool('icon'); setFeedback(null); }}
             >
               <UserRound />
@@ -419,7 +419,7 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
             </button>
             <button
               type="button"
-              className={tool === 'regalia' ? 'is-active' : ''}
+              className={tool === 'regalia' ? 'is-active' : ''} aria-current={tool === 'regalia' ? 'page' : undefined}
               onClick={() => { setTool('regalia'); setFeedback(null); }}
             >
               <Crown />
@@ -430,7 +430,7 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
             </button>
             <button
               type="button"
-              className={tool === 'presets' ? 'is-active' : ''}
+              className={tool === 'presets' ? 'is-active' : ''} aria-current={tool === 'presets' ? 'page' : undefined}
               onClick={() => { setTool('presets'); setFeedback(null); }}
             >
               <Sliders />
@@ -860,7 +860,7 @@ export default function ProfileStudio({ remoteClient: _remoteClient = false }: {
             </div>
           </div>
         </ContextPanel>
-      </div>
+      </div>}
 
       {/* Confirmation Modal */}
       {confirmModal && (

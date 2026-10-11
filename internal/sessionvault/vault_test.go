@@ -14,6 +14,83 @@ type testProtector struct{}
 
 var testIdentity = Identity{PUUID: "puuid-account-a", RiotID: "Account A#NA1"}
 
+func TestRefreshPreservesRetentionAndLatestRotatedSession(t *testing.T) {
+	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	vault := &Vault{RiotDataDir: t.TempDir(), VaultDir: t.TempDir(), protector: testProtector{}, now: func() time.Time { return now }}
+	path := filepath.Join(vault.RiotDataDir, privateSettingsFile)
+	os.WriteFile(path, []byte("session-original"), 0o600)
+	if err := vault.Capture("rotating", 30*24*time.Hour, testIdentity); err != nil {
+		t.Fatal(err)
+	}
+	original, _ := vault.Status("rotating")
+	for _, rotated := range []string{"rotation-one", "rotation-two", "rotation-three"} {
+		now = now.Add(time.Hour)
+		if err := os.WriteFile(path, []byte(rotated), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := vault.RefreshVerified("rotating", testIdentity, func() error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("other-account"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := vault.Restore("rotating", testIdentity.RiotID); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(path)
+		if string(got) != rotated {
+			t.Fatal("restored an obsolete remembered-login session")
+		}
+	}
+	status, err := vault.Status("rotating")
+	if err != nil || !status.ExpiresAt.Equal(original.ExpiresAt) || !status.CapturedAt.Equal(original.CapturedAt) {
+		t.Fatal("refresh changed the original retention period")
+	}
+}
+
+func TestRefreshRejectsWrongIdentityAndFailedVerification(t *testing.T) {
+	vault := &Vault{RiotDataDir: t.TempDir(), VaultDir: t.TempDir(), protector: testProtector{}, now: time.Now}
+	path := filepath.Join(vault.RiotDataDir, privateSettingsFile)
+	os.WriteFile(path, []byte("original"), 0o600)
+	if err := vault.Capture("bound", time.Hour, testIdentity); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(path, []byte("different"), 0o600)
+	wrong := Identity{PUUID: "other", RiotID: testIdentity.RiotID}
+	if err := vault.RefreshVerified("bound", wrong, func() error { return nil }); !errors.Is(err, ErrIdentityMismatch) {
+		t.Fatal("accepted another account's session")
+	}
+	failed := errors.New("identity changed during capture")
+	if err := vault.RefreshVerified("bound", testIdentity, func() error { return failed }); !errors.Is(err, failed) {
+		t.Fatal("ignored verification failure")
+	}
+	if err := vault.Restore("bound", testIdentity.RiotID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "original" {
+		t.Fatal("failed refresh overwrote the saved session")
+	}
+}
+
+func TestRefreshDoesNotReviveExpiredOrMissingLogin(t *testing.T) {
+	now := time.Now()
+	vault := &Vault{RiotDataDir: t.TempDir(), VaultDir: t.TempDir(), protector: testProtector{}, now: func() time.Time { return now }}
+	if err := vault.RefreshVerified("missing", testIdentity, func() error { return nil }); !errors.Is(err, ErrNotFound) {
+		t.Fatal("refresh created a previously unsaved login")
+	}
+	if err := os.WriteFile(filepath.Join(vault.RiotDataDir, privateSettingsFile), []byte("session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := vault.Capture("expired", time.Hour, testIdentity); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Hour)
+	if err := vault.RefreshVerified("expired", testIdentity, func() error { return nil }); !errors.Is(err, ErrExpired) {
+		t.Fatal("refresh revived an expired login")
+	}
+}
+
 func (testProtector) seal(plaintext, context []byte) ([]byte, error) {
 	result := append([]byte("sealed:"), context...)
 	result = append(result, 0)

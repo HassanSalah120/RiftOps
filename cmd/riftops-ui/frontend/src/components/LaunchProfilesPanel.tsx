@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CircleUserRound, Loader2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X, Zap } from 'lucide-react';
 import {
   captureSavedLogin,
@@ -12,6 +12,8 @@ import {
   type ConnectedLeagueAccount,
   type ProfileSessionStatus,
 } from '../api';
+import ConfirmModal from './ConfirmModal';
+import type { ConfirmAction } from '../types';
 import { useLCUConnection } from './lcuConnectionContext';
 
 type Toast = (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
@@ -66,6 +68,8 @@ export default function LaunchProfilesPanel({
   const [connected, setConnected] = useState<ConnectedLeagueAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const accountActionLock = useRef(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<ConfirmAction | null>(null);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -110,6 +114,8 @@ export default function LaunchProfilesPanel({
   };
 
   const runSwitch = async (profile: LaunchProfile, forceLogin = false) => {
+    if (accountActionLock.current) return;
+    accountActionLock.current = true;
     const profileLabel = streamerMode ? 'this profile' : profile.name;
     setBusy(`switch:${profile.id}${forceLogin ? ':force' : ''}`);
     setError('');
@@ -119,6 +125,7 @@ export default function LaunchProfilesPanel({
       await load();
       if (result.verification === 'verified') {
         showToast('Account verified', `${profileLabel} signed in with the saved Riot account.`, 'success');
+        if (result.sessionRefreshed === false) setError('Sign-in succeeded, but the saved login could not be refreshed. Keep Riot open and use Save current login to update it.');
       } else if (result.verification === 'wrong-account') {
         setError('Riot opened a different account. Use Fresh sign-in, sign in to the intended account, then save that login again.');
         showToast('Wrong Riot account opened', `Riot opened a different account for ${profileLabel}. Use Re-login, sign in to the intended account, then save it again.`, 'error');
@@ -138,12 +145,15 @@ export default function LaunchProfilesPanel({
       setError(cause?.message || 'RiftOps could not switch Riot profiles.');
       showToast('Account switch failed', cause?.message || 'RiftOps could not switch Riot profiles.', 'error');
     } finally {
+      accountActionLock.current = false;
       setBusy('');
     }
   };
 
   const saveCurrentSession = async () => {
     if (!activeProfile) return;
+    if (accountActionLock.current) return;
+    accountActionLock.current = true;
     setBusy('capture');
     try {
       await captureSavedLogin();
@@ -153,6 +163,7 @@ export default function LaunchProfilesPanel({
       setError(cause?.message || 'The current Riot login could not be saved.');
       showToast('Could not save Riot session', cause?.message || 'Keep Riot Client open and signed in, then try again.', 'error');
     } finally {
+      accountActionLock.current = false;
       setBusy('');
     }
   };
@@ -232,8 +243,7 @@ export default function LaunchProfilesPanel({
   };
 
   const removeProfile = async (profile: LaunchProfile) => {
-    const profileLabel = streamerMode ? 'selected' : profile.name;
-    if (profiles.length <= 1 || !window.confirm(`Delete the ${profileLabel} profile and its saved Riot session?`)) return;
+    if (profiles.length <= 1 || busy) return;
     setBusy(`delete:${profile.id}`);
     try {
       await deleteLaunchProfile(profile.id);
@@ -248,6 +258,7 @@ export default function LaunchProfilesPanel({
   };
 
   return (
+    <>{deleteConfirmation && <ConfirmModal action={deleteConfirmation} onClose={() => setDeleteConfirmation(null)} />}
     <section className="dashboard-section account-switcher glass-card" aria-labelledby="launch-profiles-title">
       <header className="account-switcher__header">
         <div className="account-switcher__heading">
@@ -318,7 +329,15 @@ export default function LaunchProfilesPanel({
           <div className="account-switcher__editor-actions">
             <button type="submit" className="btn-primary" disabled={busy !== '' || !draft.name.trim() || !draft.region}>{busy === 'add' && <Loader2 className="animate-spin" aria-hidden="true" />}{editingId ? 'Save changes' : 'Add account'}</button>
             <button type="button" className="btn-secondary" onClick={resetDraft} disabled={busy !== ''}>Cancel</button>
-            {editingId && profiles.length > 1 && <button type="button" className="account-switcher__delete" onClick={() => { const profile = profiles.find((item) => item.id === editingId); if (profile) void removeProfile(profile); }} disabled={busy !== ''}><Trash2 aria-hidden="true" /> Delete account</button>}
+            {editingId && profiles.length > 1 && <button type="button" className="account-switcher__delete" onClick={() => {
+              const profile = profiles.find((item) => item.id === editingId);
+              if (!profile) return;
+              setDeleteConfirmation({
+                open: true, danger: true, title: 'Delete account?', actionLabel: 'Delete account',
+                message: `Delete ${streamerMode ? 'this account' : profile.name} and its saved Riot login?`,
+                onConfirm: () => { setDeleteConfirmation(null); void removeProfile(profile); },
+              });
+            }} disabled={busy !== ''}><Trash2 aria-hidden="true" /> Delete account</button>}
           </div>
         </form>
       )}
@@ -360,7 +379,7 @@ export default function LaunchProfilesPanel({
           );
         })}
       </div>
-      <p className="account-switcher__footnote">Old saved logins need one verified re-save. Riot may still ask you to sign in later.</p>
-    </section>
+      <p className="account-switcher__footnote">Enable Stay signed in before saving. The 30-day limit applies to RiftOps's encrypted local save; Riot can require sign-in sooner. Verified saved logins refresh during switches without extending that limit. Fresh sign-in uses native chat to avoid interrupting login.</p>
+    </section></>
   );
 }

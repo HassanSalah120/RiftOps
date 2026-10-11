@@ -37,6 +37,18 @@ func TestProfileVerificationRequiresExpectedAuthorizedAccount(t *testing.T) {
 	}
 }
 
+func TestAccountHandlersRejectOverlappingOperations(t *testing.T) {
+	profileSessionMu.Lock()
+	defer profileSessionMu.Unlock()
+	for _, handler := range []http.HandlerFunc{switchProfile, selectProfile, captureSession, forgetSession, saveProfile, deleteProfile, importProfiles, startEngine} {
+		recorder := httptest.NewRecorder()
+		handler(recorder, httptest.NewRequest(http.MethodPost, "/", nil))
+		if recorder.Code != http.StatusConflict {
+			t.Fatalf("overlapping account operation returned %d", recorder.Code)
+		}
+	}
+}
+
 func TestConnectedServerOnlyMatchesSameAuthorizedRiotAccount(t *testing.T) {
 	league := riotclient.ConnectedLeagueAccount{PUUID: "account-a", Region: "EUW1"}
 	if !connectedAccountMatches(league, riotclient.RiotAccountSession{PUUID: "account-a", Authorized: true}) {

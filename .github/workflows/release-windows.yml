@@ -167,6 +167,8 @@ jobs:
           path: |
             dist/RiftOps-Setup-*-x64*.exe
             dist/RiftOps-Setup-*-x64*.exe.sha256
+            dist/RiftOps-*-win-x64.exe
+            dist/RiftOps-*-win-x64.exe.sha256
           if-no-files-found: error
 
       - name: Attach Windows files to GitHub Release
@@ -181,7 +183,8 @@ jobs:
           }
           $installer = Join-Path $PWD "dist/RiftOps-Setup-${{ steps.release.outputs.version }}-x64.exe"
           $checksum = "$installer.sha256"
-          [string[]]$assets = @($installer, $checksum)
+          $portable = Join-Path $PWD "dist/RiftOps-${{ steps.release.outputs.version }}-win-x64.exe"
+          [string[]]$assets = @($installer, $checksum, $portable, "$portable.sha256")
           $missing = @($assets | Where-Object { -not (Test-Path -LiteralPath $_) })
           if ($missing.Count -gt 0) { throw "Expected Windows installer assets were not produced: $($missing -join ', ')" }
           gh release upload "$tag" @assets --clobber --repo "${{ github.repository }}"

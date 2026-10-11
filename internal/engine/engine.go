@@ -99,6 +99,7 @@ var ErrRiotCloseFailed = errors.New("Riot Client could not be fully closed")
 var ErrRiotIDRequired = errors.New("configure this profile's Riot ID before saving its login")
 var ErrRiotAccountMismatch = errors.New("the signed-in Riot identity did not match the profile or changed while saving")
 var ErrRiotAccountUnverified = errors.New("Riot Client is not signed in with a verifiable account")
+var ErrSavedLoginRefresh = errors.New("could not preserve the current saved login; retry after Riot finishes signing in")
 
 type Engine struct {
 	mu        sync.RWMutex
@@ -459,6 +460,36 @@ func (e *Engine) RiotSessionActive(ctx context.Context) (bool, error) {
 	return len(processes) > 0, err
 }
 
+// RefreshSavedLogin updates only an existing, unexpired, identity-bound save.
+// Riot rotates its remembered-login state; replaying the original snapshot on
+// every launch can resurrect superseded state. Retention is never extended.
+func (e *Engine) RefreshSavedLogin(ctx context.Context) error {
+	e.mu.RLock()
+	vault, profile := e.vault, e.config.ActiveProfile()
+	e.mu.RUnlock()
+	status, err := e.savedLoginStatusForProfile(vault, profile)
+	if err != nil {
+		return err
+	}
+	account, err := riotclient.CurrentRiotAccountSession(ctx)
+	if err != nil || !account.Authorized {
+		return ErrRiotAccountUnverified
+	}
+	if account.PUUID != status.Identity.PUUID || !sameRiotID(account.RiotID, profileExpectedRiotID(profile.RiotID)) {
+		return ErrRiotAccountMismatch
+	}
+	return vault.RefreshVerified(profile.ID, sessionvault.Identity{PUUID: account.PUUID, RiotID: account.RiotID}, func() error {
+		current, err := riotclient.CurrentRiotAccountSession(ctx)
+		if err != nil || !current.Authorized {
+			return ErrRiotAccountUnverified
+		}
+		if current.PUUID != account.PUUID || !sameRiotID(current.RiotID, account.RiotID) {
+			return ErrRiotAccountMismatch
+		}
+		return nil
+	})
+}
+
 func (e *Engine) ForgetSavedLogin() error {
 	e.mu.RLock()
 	vault := e.vault
@@ -481,6 +512,17 @@ func (e *Engine) SwitchLaunchProfile(ctx context.Context, id string) (ProfileSwi
 		return ProfileSwitchResult{}, err
 	}
 	target := updated.ActiveProfile()
+
+	// Capture rotated state while the outgoing account is still running, before
+	// cancelling the runtime or terminating Riot. Never create a new save here.
+	if vault != nil {
+		refreshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		refreshErr := e.RefreshSavedLogin(refreshCtx)
+		cancel()
+		if refreshErr != nil && !errors.Is(refreshErr, sessionvault.ErrNotFound) && !errors.Is(refreshErr, sessionvault.ErrExpired) && !errors.Is(refreshErr, sessionvault.ErrUnverified) && !errors.Is(refreshErr, sessionvault.ErrIdentityMismatch) && !errors.Is(refreshErr, ErrRiotAccountUnverified) && !errors.Is(refreshErr, ErrRiotAccountMismatch) {
+			return ProfileSwitchResult{}, ErrSavedLoginRefresh
+		}
+	}
 
 	result := ProfileSwitchResult{Profile: target}
 	if vault != nil {
@@ -636,6 +678,12 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		return e.fail(game, status, err)
 	}
 
+	// Fresh sign-in can take arbitrarily long (MFA, updates, manual entry).
+	// Native chat avoids the proxy handshake timer restarting Riot mid-login.
+	if options.FreshLogin {
+		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
+	}
+
 	e.emit(e.phaseSnapshot(PhasePreparingProxy, game, "Preparing secure local chat proxy"))
 	e.mu.RLock()
 	domain := strings.TrimSpace(e.config.ProxyHostname)
@@ -761,61 +809,72 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	go func() { processDone <- process.Wait() }()
 	handshakeTimer := time.NewTimer(chatHandshakeTimeout)
 	defer handshakeTimer.Stop()
-	select {
-	case <-ctx.Done():
-		_ = process.Kill()
-		return nil
-	case handshakeErr := <-proxy.TLSFailures():
-		slog.Warn("Riot rejected the local presence proxy; restarting with native Riot chat", "error", handshakeErr)
-		fallback := e.phaseSnapshot(PhaseLaunching, game, "Riot rejected presence proxy; restoring native friends and chat")
-		fallback.Enabled = false
-		e.emit(fallback)
-		stopProxy()
-		_ = configServer.Close(context.Background())
-		stopCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
-		if stopErr := adapter.StopKnownProcesses(stopCtx); stopErr != nil {
+	for {
+		select {
+		case <-ctx.Done():
+			_ = process.Kill()
+			return nil
+		case handshakeErr := <-proxy.TLSFailures():
+			slog.Warn("Riot rejected the local presence proxy; restarting with native Riot chat", "error", handshakeErr)
+			fallback := e.phaseSnapshot(PhaseLaunching, game, "Riot rejected presence proxy; restoring native friends and chat")
+			fallback.Enabled = false
+			e.emit(fallback)
+			stopProxy()
+			_ = configServer.Close(context.Background())
+			stopCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+			if stopErr := adapter.StopKnownProcesses(stopCtx); stopErr != nil {
+				stop()
+				return e.fail(game, status, fmt.Errorf("stop Riot Client for native-chat fallback: %w", stopErr))
+			}
+			if stopErr := waitForNoRiotProcesses(stopCtx, adapter); stopErr != nil {
+				stop()
+				return e.fail(game, status, stopErr)
+			}
 			stop()
-			return e.fail(game, status, fmt.Errorf("stop Riot Client for native-chat fallback: %w", stopErr))
-		}
-		if stopErr := waitForNoRiotProcesses(stopCtx, adapter); stopErr != nil {
+			e.mu.Lock()
+			e.proxy = nil
+			e.policy = nil
+			e.mu.Unlock()
+			return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
+		case <-chatConnected:
+			return waitForRiotShutdown(ctx, adapter)
+		case <-handshakeTimer.C:
+			accountCtx, stopAccountCheck := context.WithTimeout(ctx, 2*time.Second)
+			account, accountErr := riotclient.CurrentRiotAccountSession(accountCtx)
+			stopAccountCheck()
+			if accountErr != nil || !account.Authorized {
+				waiting.Detail = "Waiting for Riot sign-in; chat is not ready yet"
+				e.emit(waiting)
+				handshakeTimer.Reset(chatHandshakeTimeout)
+				continue
+			}
+			slog.Warn("Riot did not establish a chat connection through the presence proxy; restarting with native Riot chat")
+			fallback := e.phaseSnapshot(PhaseLaunching, game, "Riot chat handshake timed out; restoring native friends and chat")
+			fallback.Enabled = false
+			e.emit(fallback)
+			stopProxy()
+			_ = configServer.Close(context.Background())
+			stopCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+			if stopErr := adapter.StopKnownProcesses(stopCtx); stopErr != nil {
+				stop()
+				return e.fail(game, status, fmt.Errorf("stop Riot Client for native-chat fallback: %w", stopErr))
+			}
+			if stopErr := waitForNoRiotProcesses(stopCtx, adapter); stopErr != nil {
+				stop()
+				return e.fail(game, status, stopErr)
+			}
 			stop()
-			return e.fail(game, status, stopErr)
+			e.mu.Lock()
+			e.proxy = nil
+			e.policy = nil
+			e.mu.Unlock()
+			return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
+		case err := <-processDone:
+			if err != nil {
+				slog.Debug("launched Riot process exited", "error", err)
+			}
+			return waitForRiotShutdown(ctx, adapter)
 		}
-		stop()
-		e.mu.Lock()
-		e.proxy = nil
-		e.policy = nil
-		e.mu.Unlock()
-		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
-	case <-chatConnected:
-		return waitForRiotShutdown(ctx, adapter)
-	case <-handshakeTimer.C:
-		slog.Warn("Riot did not establish a chat connection through the presence proxy; restarting with native Riot chat")
-		fallback := e.phaseSnapshot(PhaseLaunching, game, "Riot chat handshake timed out; restoring native friends and chat")
-		fallback.Enabled = false
-		e.emit(fallback)
-		stopProxy()
-		_ = configServer.Close(context.Background())
-		stopCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
-		if stopErr := adapter.StopKnownProcesses(stopCtx); stopErr != nil {
-			stop()
-			return e.fail(game, status, fmt.Errorf("stop Riot Client for native-chat fallback: %w", stopErr))
-		}
-		if stopErr := waitForNoRiotProcesses(stopCtx, adapter); stopErr != nil {
-			stop()
-			return e.fail(game, status, stopErr)
-		}
-		stop()
-		e.mu.Lock()
-		e.proxy = nil
-		e.policy = nil
-		e.mu.Unlock()
-		return e.runWithDirectChat(ctx, cancel, adapter, executable, game, status, options)
-	case err := <-processDone:
-		if err != nil {
-			slog.Debug("launched Riot process exited", "error", err)
-		}
-		return waitForRiotShutdown(ctx, adapter)
 	}
 }
 

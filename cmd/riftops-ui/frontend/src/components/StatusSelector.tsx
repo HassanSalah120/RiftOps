@@ -16,12 +16,14 @@ export default function StatusSelector({
   disabled?: boolean;
 }) {
   return (
-    <div className="flex gap-2">
+    <div className="presence-picker" role="group" aria-label="Chat availability">
       {STATUSES.map((s) => {
         const active = current.toLowerCase() === s.key;
         const Icon = s.icon;
         return (
           <button
+            type="button"
+            aria-pressed={active}
             key={s.key}
             disabled={disabled}
             onClick={() => onChange(s.key)}
@@ -33,7 +35,7 @@ export default function StatusSelector({
             style={{
               background: active ? `${s.color}1e` : 'rgba(18, 18, 30, 0.5)',
               borderColor: active ? s.color : undefined,
-              boxShadow: active ? `0 0 20px ${s.color}35, inset 0 1px 0 rgba(255,255,255,0.2)` : 'none',
+              boxShadow: 'none',
             }}
           >
             <Icon className="w-3.5 h-3.5" style={{ color: active ? s.color : undefined }} />

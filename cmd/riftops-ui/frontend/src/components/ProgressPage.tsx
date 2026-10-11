@@ -1,3 +1,4 @@
+import { runReviewedOperation } from '../reviewedOperation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Award,
@@ -16,12 +17,10 @@ import {
 } from 'lucide-react';
 import {
   acknowledgeProgressMastery,
-  executeReviewedOperation,
   fetchLeagueLoadouts,
   fetchProgressMastery,
   fetchProgressMissions,
   fetchProgressRewards,
-  fetchReviewedOperation,
   previewExpandedReviewedOperation,
   type ProgressMastery,
   type ProgressMissions,
@@ -177,6 +176,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
   const [masterySearch, setMasterySearch] = useState('');
   const [masterySort, setMasterySort] = useState<'points' | 'level' | 'closest' | 'recent'>('points');
   const [masteryLimit, setMasteryLimit] = useState(12);
+  const [progressView, setProgressView] = useState<'missions' | 'mastery' | 'rewards'>('missions');
   const [missionFilter, setMissionFilter] = useState<'active' | 'all'>('active');
 
   const refresh = useCallback(async () => {
@@ -290,12 +290,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
   };
 
   const confirmReview = async (previewID: string, confirmation: string) => {
-    await executeReviewedOperation(previewID, confirmation);
-    let status = await fetchReviewedOperation(previewID);
-    for (let attempt = 0; attempt < 8 && (status.state === 'running' || status.state === 'preview'); attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 250));
-      status = await fetchReviewedOperation(previewID);
-    }
+    const status = await runReviewedOperation(previewID, confirmation);
     if (status.state !== 'complete') throw new Error(`Operation ${status.state}`);
     setFeedback({ tone: 'success', message: 'Reward selection applied.' });
     setSelectedRewards({});
@@ -326,7 +321,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
         <EmptyState
           icon={BookOpen}
           title="Progress is waiting for League"
-          description="Connect the League Client to load missions, mastery, and rewards."
+          description="Connect the League Client to load missions, mastery, and rewards." action={<button type="button" className="btn-primary" onClick={() => window.dispatchEvent(new CustomEvent('riftops:navigate', { detail: 'play' }))}>Open Play &amp; Queue</button>}
         />
       </div>
     );
@@ -342,7 +337,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
         description="Track active missions, champion mastery progression, and pending reward choices."
         meta={
           <StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>
-            {loading ? 'Syncing with League' : 'Synced'}
+            {loading ? 'Syncing with League' : error ? 'Some data unavailable' : 'Synced'}
           </StatusBadge>
         }
         actions={
@@ -363,8 +358,9 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
         <SummaryStat label="League loadouts" value={remoteClient ? '—' : String(loadoutCount)} detail={remoteClient ? 'Desktop only' : 'Saved in your client'} />
       </section>
 
-      <div className="progress-dashboard-grid">
-        <section className="progress-surface">
+      <div className="workflow-tabs" role="group" aria-label="Progress sections"><button type="button" aria-pressed={progressView === 'missions'} onClick={() => setProgressView('missions')}><BookOpen />Missions</button><button type="button" aria-pressed={progressView === 'mastery'} onClick={() => setProgressView('mastery')}><Sparkles />Mastery</button><button type="button" aria-pressed={progressView === 'rewards'} onClick={() => setProgressView('rewards')}><Gem />Rewards{pendingRewards.length > 0 && <b>{pendingRewards.length} waiting</b>}</button></div>
+      <div className="progress-workspace-panel">
+        <section className="progress-surface" hidden={progressView !== "missions"}>
           <header className="progress-surface__header flex items-center justify-between gap-2">
             <div className="progress-section-title">
               <BookOpen aria-hidden="true" />
@@ -377,7 +373,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
               <div className="flex items-center gap-1 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
                 <button
                   type="button"
-                  onClick={() => setMissionFilter('active')}
+                  onClick={() => setMissionFilter('active')} aria-pressed={missionFilter === 'active'}
                   className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition cursor-pointer ${
                     missionFilter === 'active' ? 'bg-white/10 text-white shadow-sm' : 'text-text-dim hover:text-white'
                   }`}
@@ -386,7 +382,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
                 </button>
                 <button
                   type="button"
-                  onClick={() => setMissionFilter('all')}
+                  onClick={() => setMissionFilter('all')} aria-pressed={missionFilter === 'all'}
                   className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition cursor-pointer ${
                     missionFilter === 'all' ? 'bg-white/10 text-white shadow-sm' : 'text-text-dim hover:text-white'
                   }`}
@@ -402,7 +398,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
           </div>
         </section>
 
-        <section className="progress-surface">
+        <section className="progress-surface" hidden={progressView !== "mastery"}>
           <header className="progress-surface__header flex flex-wrap items-center justify-between gap-2">
             <div className="progress-section-title">
               <Award aria-hidden="true" />
@@ -418,7 +414,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
                   type="text"
                   value={masterySearch}
                   onChange={(e) => setMasterySearch(e.target.value)}
-                  placeholder="Find champion..."
+                  placeholder="Find champion..." aria-label="Search champion mastery"
                   className="pl-8 pr-7 py-1 rounded-lg text-xs bg-black/40 border border-white/[0.08] text-white placeholder:text-text-dim focus:outline-none focus:border-primary/50 w-32 sm:w-36"
                 />
                 {masterySearch && (
@@ -426,7 +422,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
                     type="button"
                     onClick={() => setMasterySearch('')}
                     className="absolute right-2 text-text-dim hover:text-white"
-                    title="Clear search"
+                    title="Clear search" aria-label="Clear mastery search"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -467,7 +463,7 @@ export default function ProgressPage({ remoteClient = false }: { remoteClient?: 
         </section>
       </div>
 
-      <section className="progress-surface progress-rewards">
+      <section className="progress-surface progress-rewards" hidden={progressView !== "rewards"}>
         <header className="progress-surface__header"><div className="progress-section-title"><Gem aria-hidden="true" /><div><h2>Rewards</h2><p>Review each choice before sending it to League.</p></div></div><span className="progress-section-count">{pendingRewards.length} pending</span></header>
         <div className="progress-surface__body">
           {pendingRewards.length ? <>

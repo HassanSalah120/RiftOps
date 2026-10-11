@@ -14,14 +14,12 @@ type PageHeaderProps = {
 /** Shared page framing for non-live workspaces. The live dashboard and QoL
  * deck keep their bespoke hero treatment, while catalogue pages use this
  * compact field-brief header so navigation feels like one product. */
-export default function PageHeader({ icon: Icon, eyebrow, title, description, variant = 'workspace', meta, actions }: PageHeaderProps) {
+export default function PageHeader({ icon: Icon, title, description, variant = 'workspace', meta, actions }: PageHeaderProps) {
   return (
     <header className={`page-header page-header--${variant}`}>
-      <span className="page-header__riftline" aria-hidden="true" />
       <div className="page-header__identity">
         <span className="page-header__icon"><Icon /></span>
         <div className="page-header__copy">
-          <span className="page-header__eyebrow">{eyebrow}</span>
           <h1>{title}</h1>
           <p>{description}</p>
         </div>

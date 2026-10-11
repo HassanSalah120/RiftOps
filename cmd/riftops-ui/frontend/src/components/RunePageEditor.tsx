@@ -245,8 +245,8 @@ export default function RunePageEditor({ open, page, onClose, onSaved }: Props) 
 
             <section className="rune-editor__section">
               <div className="rune-editor__section-heading"><span>1</span><div><strong>Primary path</strong><small>Keystone plus one rune from each primary row</small></div></div>
-              <div className="rune-editor__styles" role="radiogroup" aria-label="Primary rune style">
-                {styles.map((style) => <button type="button" key={style.id} className={primaryStyleID === style.id ? 'is-selected' : ''} onClick={() => choosePrimaryStyle(style)} disabled={saving}><span>{style.name.slice(0, 1)}</span>{assetPath(style.iconPath) && <img src={assetPath(style.iconPath)} alt="" width="32" height="32" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}<strong>{style.name}</strong>{primaryStyleID === style.id && <Check />}</button>)}
+              <div className="rune-editor__styles" role="group" aria-label="Primary rune style">
+                {styles.map((style) => <button type="button" key={style.id} aria-pressed={primaryStyleID === style.id} className={primaryStyleID === style.id ? 'is-selected' : ''} onClick={() => choosePrimaryStyle(style)} disabled={saving}><span>{style.name.slice(0, 1)}</span>{assetPath(style.iconPath) && <img src={assetPath(style.iconPath)} alt="" width="32" height="32" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}<strong>{style.name}</strong>{primaryStyleID === style.id && <Check />}</button>)}
               </div>
               <div className="rune-editor__rows">
                 {primaryRows.map((slot, rowIndex) => <div className="rune-editor__row" key={`${slot.slotLabel || 'primary'}-${rowIndex}`}><div><span>{rowIndex === 0 ? 'Keystone' : `Primary row ${rowIndex}`}</span><small>{slot.slotLabel}</small></div><div>{slot.perks.map((id) => <RuneChoice key={id} perk={perkMap.get(id)} selected={primaryChoices[rowIndex] === id} disabled={saving} onClick={() => { setPrimaryChoices((current) => current.map((value, index) => index === rowIndex ? id : value)); setError(''); }} />)}</div></div>)}
@@ -255,8 +255,8 @@ export default function RunePageEditor({ open, page, onClose, onSaved }: Props) 
 
             <section className="rune-editor__section">
               <div className="rune-editor__section-heading"><span>2</span><div><strong>Secondary path</strong><small>Choose exactly two runes from different rows</small></div></div>
-              <div className="rune-editor__styles" role="radiogroup" aria-label="Secondary rune style">
-                {styles.filter((style) => allowedSecondaryIDs.includes(style.id)).map((style) => <button type="button" key={style.id} className={secondaryStyleID === style.id ? 'is-selected' : ''} onClick={() => chooseSecondaryStyle(style)} disabled={saving}><span>{style.name.slice(0, 1)}</span>{assetPath(style.iconPath) && <img src={assetPath(style.iconPath)} alt="" width="32" height="32" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}<strong>{style.name}</strong>{secondaryStyleID === style.id && <Check />}</button>)}
+              <div className="rune-editor__styles" role="group" aria-label="Secondary rune style">
+                {styles.filter((style) => allowedSecondaryIDs.includes(style.id)).map((style) => <button type="button" key={style.id} aria-pressed={secondaryStyleID === style.id} className={secondaryStyleID === style.id ? 'is-selected' : ''} onClick={() => chooseSecondaryStyle(style)} disabled={saving}><span>{style.name.slice(0, 1)}</span>{assetPath(style.iconPath) && <img src={assetPath(style.iconPath)} alt="" width="32" height="32" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}<strong>{style.name}</strong>{secondaryStyleID === style.id && <Check />}</button>)}
               </div>
               <div className="rune-editor__rows">
                 {secondaryRows.map((slot, rowIndex) => <div className="rune-editor__row" key={`${slot.slotLabel || 'secondary'}-${rowIndex}`}><div><span>Secondary row {rowIndex + 1}</span><small>{slot.slotLabel}</small></div><div>{slot.perks.map((id) => <RuneChoice key={id} perk={perkMap.get(id)} selected={secondaryChoices[rowIndex] === id} disabled={saving} onClick={() => chooseSecondaryPerk(rowIndex, id)} />)}</div></div>)}

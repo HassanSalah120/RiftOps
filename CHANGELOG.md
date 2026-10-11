@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.10.17 — 2026-10-11
+
+- Reworked every dashboard workspace with clearer actions, aligned controls, responsive navigation, and improved loading, empty, and error states.
+- Improved keyboard access and dialog focus, notification alignment, settings navigation, and mobile layouts.
+- Prevented duplicate reviewed operations and added status checks and retry feedback for interrupted actions.
+- Refreshed verified saved Riot sessions when switching accounts while preserving their original retention deadline. Existing affected accounts should be saved again after signing in with Stay signed in enabled.
+- Kept fresh sign-in on native Riot chat and prevented the chat handshake timer from restarting Riot while credentials are being entered.
+- Blocked overlapping account changes and launches. Thirty days remains a local retention limit; Riot can require authentication sooner.
+- Enabled macOS packaging on version tags alongside Windows packaging. macOS archives use ad-hoc signing and are not notarized.
+
 ## v2.10.5 — 2026-09-15
 
 - Fixed one-click League launch against Riot Client's current product-launcher endpoint.

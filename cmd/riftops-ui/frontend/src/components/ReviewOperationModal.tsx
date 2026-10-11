@@ -24,14 +24,16 @@ export default function ReviewOperationModal({
 }) {
   const [inputText, setInputText] = useState('');
   const [executing, setExecuting] = useState(false);
+  const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useDialogFocus<HTMLDivElement>(Boolean(operation), onClose, inputRef);
+  const dialogRef = useDialogFocus<HTMLDivElement>(Boolean(operation), () => { if (!executing) onClose(); }, inputRef);
 
   useEffect(() => {
     if (operation) {
       setInputText('');
+      setAttempted(false);
       setExecuting(false);
       setError('');
     }
@@ -44,6 +46,7 @@ export default function ReviewOperationModal({
   const handleExecute = async () => {
     if (!isMatched || executing) return;
     setExecuting(true);
+    setAttempted(true);
     setError('');
     try {
       await onConfirm(operation.previewId, inputText.trim());
@@ -81,7 +84,7 @@ export default function ReviewOperationModal({
               {operation.danger ? <AlertTriangle className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
             </div>
             <div>
-              <h4 id="review-modal-title" className="text-base font-black text-white">{operation.title}</h4>
+              <h2 id="review-modal-title" className="text-base font-black text-white">{operation.title}</h2>
               <p className="text-xs text-text-muted mt-1 leading-relaxed">{operation.description}</p>
             </div>
           </div>
@@ -145,8 +148,10 @@ export default function ReviewOperationModal({
             autoComplete="off"
             className="w-full px-3 py-2 text-sm bg-black/60 border border-white/20 rounded-xl text-white font-mono focus:border-primary focus:outline-none"
           />
-          {error && <p className="text-xs text-danger font-medium mt-1">{error}</p>}
+          {error && <p role="status" className="text-xs text-danger font-medium mt-1">{error}</p>}
         </div>
+
+        {executing && <p role="status" className="text-xs text-text-muted">The operation is running. RiftOps is checking its result; do not repeat it in League.</p>}
 
         {/* Modal Actions */}
         <div className="flex justify-end gap-2.5 pt-2 border-t border-white/[0.06]">
@@ -170,7 +175,7 @@ export default function ReviewOperationModal({
             }`}
           >
             {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            {executing ? 'Processing...' : operation.danger ? 'Confirm Removal' : 'Confirm Operation'}
+            {executing ? 'Waiting for League…' : attempted ? 'Check status' : operation.danger ? 'Confirm removal' : 'Confirm operation'}
           </button>
         </div>
       </div>

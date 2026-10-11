@@ -13,7 +13,7 @@ const messages: Record<Locale, Messages> = {
     'social.search': 'Search friends or Riot ID…', 'social.all': 'All', 'social.online': 'Online', 'social.favorites': 'Favorites',
     'social.invite': 'Invite selected', 'social.remove': 'Remove selected', 'social.requests': 'Friend requests',
     'social.accept': 'Accept', 'social.decline': 'Decline', 'social.empty': 'No friends match this view.', 'social.offline': 'League is offline',
-    'settings.language': 'App language', 'settings.languageHelp': 'Choose English or Arabic. The layout mirrors automatically for Arabic.',
+    'settings.language': 'App language', 'settings.languageHelp': 'Arabic translates navigation and friends; other workflows currently use English. The layout mirrors automatically.',
   },
   ar: {
     'nav.command': 'الرئيسية', 'nav.play': 'الردهة والاختيار', 'nav.live': 'اللعبة المباشرة', 'nav.social': 'الأصدقاء',
@@ -23,7 +23,7 @@ const messages: Record<Locale, Messages> = {
     'social.search': 'ابحث عن صديق أو Riot ID…', 'social.all': 'الكل', 'social.online': 'متصل', 'social.favorites': 'المفضلة',
     'social.invite': 'دعوة المحددين', 'social.remove': 'إزالة المحددين', 'social.requests': 'طلبات الصداقة',
     'social.accept': 'قبول', 'social.decline': 'رفض', 'social.empty': 'لا يوجد أصدقاء يطابقون هذا العرض.', 'social.offline': 'League غير متصل',
-    'settings.language': 'لغة التطبيق', 'settings.languageHelp': 'اختر العربية أو الإنجليزية. سينعكس اتجاه الواجهة تلقائياً للعربية.',
+    'settings.language': 'لغة التطبيق', 'settings.languageHelp': 'تتوفر العربية للتنقل والأصدقاء؛ بقية الأدوات بالإنجليزية حالياً. ينعكس اتجاه الواجهة تلقائياً.',
   },
 };
 

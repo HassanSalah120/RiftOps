@@ -89,6 +89,22 @@ func (v *Vault) Capture(profileID string, lifetime time.Duration, identity Ident
 	return v.CaptureVerified(profileID, lifetime, identity, nil)
 }
 
+// RefreshVerified replaces rotated session files for the same live account
+// without extending retention or creating a save the user did not request.
+func (v *Vault) RefreshVerified(profileID string, identity Identity, verify func() error) error {
+	status, err := v.Status(profileID)
+	if err != nil {
+		return err
+	}
+	if identity.PUUID != status.Identity.PUUID || !strings.EqualFold(strings.TrimSpace(identity.RiotID), strings.TrimSpace(status.Identity.RiotID)) {
+		return ErrIdentityMismatch
+	}
+	if verify == nil {
+		return errors.New("refreshing a saved login requires live identity verification")
+	}
+	return v.captureVerified(profileID, identity, status.CapturedAt, status.ExpiresAt, verify)
+}
+
 // CaptureVerified collects the remembered-login files, then rechecks the live
 // account before replacing any existing vault. A failed check leaves the old
 // encrypted save untouched.
@@ -103,6 +119,11 @@ func (v *Vault) CaptureVerified(profileID string, lifetime time.Duration, identi
 		return errors.New("Riot account identity is unavailable; sign in before saving")
 	}
 
+	now := v.now().UTC()
+	return v.captureVerified(profileID, identity, now, now.Add(lifetime), verify)
+}
+
+func (v *Vault) captureVerified(profileID string, identity Identity, capturedAt, expiresAt time.Time, verify func() error) error {
 	files, err := v.captureFiles()
 	if err != nil {
 		return err
@@ -114,11 +135,10 @@ func (v *Vault) CaptureVerified(profileID string, lifetime time.Duration, identi
 		}
 	}
 
-	now := v.now().UTC()
 	encoded, err := json.Marshal(payload{
 		Version:    2,
-		CapturedAt: now,
-		ExpiresAt:  now.Add(lifetime),
+		CapturedAt: capturedAt,
+		ExpiresAt:  expiresAt,
 		Identity:   identity,
 		Files:      files,
 	})

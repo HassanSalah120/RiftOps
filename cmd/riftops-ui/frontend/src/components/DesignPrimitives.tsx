@@ -37,7 +37,6 @@ export function ActionFeedback({ state, className = '' }: { state: FeedbackState
 }
 
 export function WorkspaceSection({
-  eyebrow,
   title,
   description,
   actions,
@@ -57,7 +56,6 @@ export function WorkspaceSection({
     <section id={id} className={`ro-section ${className}`}>
       <header className="ro-section__header">
         <div>
-          <span>{eyebrow}</span>
           <h2>{title}</h2>
           {description && <p>{description}</p>}
         </div>
@@ -69,7 +67,6 @@ export function WorkspaceSection({
 }
 
 export function ContextPanel({
-  eyebrow,
   title,
   description,
   children,
@@ -86,7 +83,6 @@ export function ContextPanel({
   return (
     <aside className={`ro-inspector ${className}`}>
       <header>
-        <span>{eyebrow}</span>
         <h2>{title}</h2>
         {description && <p>{description}</p>}
       </header>

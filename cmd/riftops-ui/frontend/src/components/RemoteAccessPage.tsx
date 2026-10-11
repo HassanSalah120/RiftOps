@@ -6,8 +6,9 @@ import RemoteAccessCard from './RemoteAccessCard';
 export default function RemoteAccessPage({ showToast }: { showToast: (message: string, type?: 'info' | 'success' | 'error') => void }) {
   return (
     <div className="remote-page">
-      <PageHeader variant="workspace" icon={RadioTower} eyebrow="PHONE CONTROL" title="Remote access" description="Pair, inspect, and revoke phone sessions from one controlled workspace." meta={<StatusBadge tone="gold" icon={ShieldCheck}>Desktop administration</StatusBadge>} />
+      <PageHeader variant="workspace" icon={RadioTower} eyebrow="PHONE CONTROL" title="Phone Companion" description="Pair, inspect, and revoke phone sessions from one controlled workspace." meta={<StatusBadge tone="gold" icon={ShieldCheck}>Desktop administration</StatusBadge>} />
       <div className="remote-page__layout">
+        <RemoteAccessCard showToast={showToast} />
         <WorkspaceSection eyebrow="PAIRING FLOW" title="Desktop to phone, directly" description="RiftOps keeps League access on this computer. Your phone sends actions over the same private Wi-Fi.">
           <ol className="remote-page__steps">
             <li><span>01</span><Wifi /><div><strong>Enable the listener</strong><small>Phone control remains off until you turn it on.</small></div></li>
@@ -16,7 +17,6 @@ export default function RemoteAccessPage({ showToast }: { showToast: (message: s
           </ol>
           <div className="remote-page__boundary"><ShieldCheck /><span><strong>Private network only</strong><small>LAN traffic uses HTTPS with a local certificate. Accept a first-visit warning only on your trusted network; never expose the phone port to the internet or public Wi-Fi.</small></span></div>
         </WorkspaceSection>
-        <RemoteAccessCard showToast={showToast} />
       </div>
     </div>
   );
