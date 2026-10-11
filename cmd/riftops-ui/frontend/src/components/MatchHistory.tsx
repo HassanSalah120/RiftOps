@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchLCUMatchHistory, fetchLCUGameDetail, fetchLCURuneCatalog, fetchLCUProfile, fetchRiotMatchIDs, fetchRiotMatch, fetchReplayStatus, replayAction, type ReplayStatus } from '../api';
-import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Clock, Shield, Eye, Flame, Download, Coins, Copy, Crosshair, Target, Trophy, Users, Search, LayoutList, LayoutGrid, X } from 'lucide-react';
+import { History, Loader2, RefreshCw, Swords, Filter, ChevronDown, ChevronUp, Shield, Eye, Flame, Download, Coins, Copy, Crosshair, Target, Trophy, Users } from 'lucide-react';
 import PageHeader from './PageHeader';
 import { RiotAssetImage } from '../riotAssets';
 import { normalizeArenaMatch } from '../arenaTelemetry';
@@ -250,6 +250,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
   const [matches, setMatches] = useState<any[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [gameDetails, setGameDetails] = useState<Record<number, any>>({});
+  const [detailErrors, setDetailErrors] = useState<Record<number, string>>({});
   const [loadingDetail, setLoadingDetail] = useState<number | null>(null);
   const [queueFilter, setQueueFilter] = useState<number | 'all'>(() => {
     try { return JSON.parse(localStorage.getItem('riftops.history.queue') || '"all"'); } catch { return 'all'; }
@@ -354,14 +355,15 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
     } catch { /* Optional preference. */ }
   }, [queueFilter, periodFilter, gameCount, resultFilter, density]);
 
-  const handleExpand = useCallback(async (gameId: number) => {
-    if (expandedId === gameId) {
+  const handleExpand = useCallback(async (gameId: number, retry = false) => {
+    if (expandedId === gameId && !retry) {
       setExpandedId(null);
       return;
     }
     setExpandedId(gameId);
     if (gameDetails[gameId]) return; // already fetched
     setLoadingDetail(gameId);
+    setDetailErrors((current) => ({ ...current, [gameId]: "" }));
     try {
       let detail = await fetchLCUGameDetail(gameId);
       // Normalize: some LCU versions wrap response in a root key
@@ -373,7 +375,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
       }
       setGameDetails((prev) => ({ ...prev, [gameId]: detail }));
     } catch {
-      // detail fetch failed, scoreboard will show summary data only
+      setDetailErrors((current) => ({ ...current, [gameId]: "Full match details could not be loaded. Summary data is still available." }));
     } finally {
       setLoadingDetail(null);
     }
@@ -463,8 +465,12 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
   let totalCs = 0;
   let totalGold = 0;
   let totalVis = 0;
+  let damageGames = 0;
+  let goldGames = 0;
+  let visionGames = 0;
   let streak = 0;
   let streakDirection = 0;
+  let streakEnded = false;
 
   filteredMatches.forEach((m) => {
     const p = m.participants?.[0] || m.participantIdentities?.[0] || {};
@@ -478,23 +484,26 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
     totalDmg += s.totalDamageDealtToChampions || 0;
     totalGold += s.goldEarned || 0;
     totalVis += s.visionScore || 0;
+    if (typeof s.totalDamageDealtToChampions === 'number') damageGames++;
+    if (typeof s.goldEarned === 'number') goldGames++;
+    if (typeof s.visionScore === 'number') visionGames++;
     totalCs += (s.totalMinionsKilled || 0) + (s.neutralMinionsKilled || 0);
 
     // Calculate streak
     if (streakDirection === 0) {
       streakDirection = isWin ? 1 : -1;
       streak = 1;
-    } else if ((isWin && streakDirection > 0) || (!isWin && streakDirection < 0)) {
+    } else if (!streakEnded && ((isWin && streakDirection > 0) || (!isWin && streakDirection < 0))) {
       streak++;
-    }
+    } else { streakEnded = true; }
   });
 
   const totalGames = filteredMatches.length;
   const wrPct = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
   const avgKda = totalDeaths > 0 ? ((totalKills + totalAssists) / totalDeaths).toFixed(2) : 'Perfect';
-  const avgDmg = totalGames > 0 ? Math.round(totalDmg / totalGames) : 0;
-  const avgGold = totalGames > 0 ? Math.round(totalGold / totalGames) : 0;
-  const avgVis = totalGames > 0 ? (totalVis / totalGames).toFixed(1) : '0';
+  const avgDmg = damageGames > 0 ? Math.round(totalDmg / damageGames).toLocaleString() : '—';
+  const avgGold = goldGames > 0 ? Math.round(totalGold / goldGames).toLocaleString() : '—';
+  const avgVis = visionGames > 0 ? (totalVis / visionGames).toFixed(1) : '—';
   const streakText = streakDirection > 0 ? `W${streak}` : streakDirection < 0 ? `L${streak}` : '-';
   const arenaMatches = filteredMatches.filter(isArenaMatch);
   const arenaTelemetry = arenaMatches.map((match) => normalizeArenaMatch(match));
@@ -546,37 +555,37 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
         eyebrow="MATCH INTELLIGENCE"
         title="Match history"
         description="Review the last games, spot trends, and open a match for the full scoreboard."
-        meta={<span className="page-header__badge">{filteredMatches.length} matches · {dataSource}</span>}
+        meta={<span className="page-header__badge">{loading ? "Loading history" : error ? "History unavailable" : `${filteredMatches.length} matches · ${dataSource}`}</span>}
         actions={headerActions}
       />
 
       {/* Summary Statistics Bar */}
       {!loading && !error && filteredMatches.length > 0 && (
-        <div className="glass-card p-4 space-y-3 border border-white/[0.08]">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center">
-            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+        <section className="history-overview space-y-3" aria-label="Match history summary">
+          <div className="history-overview__metrics">
+            <div>
               <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Winrate</p>
               <p className={`text-base font-black ${wrPct >= 50 ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {wrPct}% <span className="text-[11px] text-text-muted font-bold font-mono">({wins}W {totalGames - wins}L)</span>
               </p>
             </div>
-            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+            <div>
               <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Avg KDA</p>
               <p className="text-base font-black text-primary font-mono">{avgKda}</p>
             </div>
-            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+            <div>
               <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Streak</p>
               <p className={`text-base font-black ${streakDirection > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{streakText}</p>
             </div>
-            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+            <div>
               <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Avg Damage</p>
-              <p className="text-base font-black text-amber-400 font-mono">{avgDmg.toLocaleString()}</p>
+              <p className="text-base font-black text-amber-400 font-mono">{avgDmg}</p>
             </div>
-            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+            <div>
               <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Avg Gold</p>
-              <p className="text-base font-black text-yellow-400 font-mono">{avgGold.toLocaleString()}</p>
+              <p className="text-base font-black text-yellow-400 font-mono">{avgGold}</p>
             </div>
-            <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05]">
+            <div>
               <p className="text-[10px] text-text-dim font-bold uppercase tracking-wider">Avg Vision</p>
               <p className="text-base font-black text-cyan-400 font-mono">{avgVis}</p>
             </div>
@@ -599,7 +608,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
             </div>
             <span className="text-[9px] text-text-dim font-mono">oldest → newest</span>
           </div>
-        </div>
+        </section>
       )}
       {!loading && !error && arenaMatches.length > 0 && (
         <section className="arena-history-summary" aria-label="Arena history summary">
@@ -610,130 +619,12 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
         </section>
       )}
 
-      {/* Filter Toolbar */}
-      <div className="page-toolbar page-toolbar--history flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-black/40 border border-white/[0.08]">
-        {/* Queue Filters */}
-        <div className="flex items-center gap-1 shrink-0 flex-wrap">
-          <Filter className="w-3.5 h-3.5 text-primary mr-1" />
-          {[
-            { id: 'all', label: 'All Modes' },
-            { id: 420, label: 'Ranked Solo' },
-            { id: 440, label: 'Ranked Flex' },
-            { id: 450, label: 'ARAM' },
-            { id: 400, label: 'Draft' },
-            { id: 1700, label: 'Arena' },
-          ].map((q) => (
-            <button
-              key={q.id.toString()}
-              type="button"
-              onClick={() => setQueueFilter(q.id as any)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 border cursor-pointer ${
-                queueFilter === q.id
-                  ? 'bg-primary/20 text-primary border-primary/40 shadow-[0_0_12px_rgba(200,170,110,0.25)]'
-                  : 'text-text-muted border-transparent hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              {q.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Result Filters, Search, Period & Density */}
-        <div className="flex items-center gap-2 flex-wrap shrink-0">
-          {/* Result Filter */}
-          <div className="flex items-center gap-1 shrink-0 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
-            {[
-              { id: 'all', label: 'All' },
-              { id: 'win', label: 'Wins' },
-              { id: 'loss', label: 'Losses' },
-            ].map((res) => (
-              <button
-                key={res.id}
-                type="button"
-                onClick={() => setResultFilter(res.id as any)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition shrink-0 cursor-pointer ${
-                  resultFilter === res.id
-                    ? res.id === 'win'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                      : res.id === 'loss'
-                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                      : 'bg-white/10 text-white shadow-sm'
-                    : 'text-text-dim hover:text-white'
-                }`}
-              >
-                {res.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Champion Search */}
-          <div className="relative flex items-center">
-            <Search className="w-3.5 h-3.5 text-text-dim absolute left-2.5 pointer-events-none" />
-            <input
-              type="text"
-              value={champSearch}
-              onChange={(e) => setChampSearch(e.target.value)}
-              placeholder="Filter champion..."
-              className="pl-8 pr-7 py-1 rounded-lg text-xs bg-black/40 border border-white/[0.08] text-white placeholder:text-text-dim focus:outline-none focus:border-primary/50 w-36"
-            />
-            {champSearch && (
-              <button
-                type="button"
-                onClick={() => setChampSearch('')}
-                className="absolute right-2 text-text-dim hover:text-white"
-                title="Clear search"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-
-          {/* Period Filters */}
-          <div className="flex items-center gap-1 shrink-0 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
-            <Clock className="w-3.5 h-3.5 text-text-dim mx-1.5" />
-            {Object.entries(PERIODS).map(([k, p]) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setPeriodFilter(k)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition shrink-0 cursor-pointer ${
-                  periodFilter === k
-                    ? 'bg-white/10 text-white shadow-sm'
-                    : 'text-text-dim hover:text-white'
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Density Toggle */}
-          <div className="flex items-center gap-1 shrink-0 bg-black/40 p-0.5 rounded-lg border border-white/[0.06]">
-            <button
-              type="button"
-              onClick={() => setDensity('comfortable')}
-              className={`p-1 rounded-md text-xs transition cursor-pointer ${
-                density === 'comfortable' ? 'bg-white/10 text-white' : 'text-text-dim hover:text-white'
-              }`}
-              title="Comfortable view"
-              aria-label="Comfortable view"
-            >
-              <LayoutList className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setDensity('compact')}
-              className={`p-1 rounded-md text-xs transition cursor-pointer ${
-                density === 'compact' ? 'bg-white/10 text-white' : 'text-text-dim hover:text-white'
-              }`}
-              title="Compact view"
-              aria-label="Compact view"
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      </div>
+      {!loading && !error && <div className="history-controls">
+        <label>Queue<select aria-label="Filter match queue" value={String(queueFilter)} onChange={(event) => setQueueFilter(event.target.value === 'all' ? 'all' : Number(event.target.value))}>{[{id:'all',label:'All queues'},{id:420,label:'Ranked Solo'},{id:440,label:'Ranked Flex'},{id:450,label:'ARAM'},{id:400,label:'Draft'},{id:1700,label:'Arena'}].map(queue => <option key={queue.id} value={String(queue.id)}>{queue.label}</option>)}</select></label>
+        <label>Time range<select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)}>{Object.entries(PERIODS).map(([key,period]) => <option key={key} value={key}>{period.label}</option>)}</select></label>
+        <label className="history-controls__search">Champion<input aria-label="Filter by champion" value={champSearch} onChange={(event) => setChampSearch(event.target.value)} placeholder="Search champion…" /></label>
+        <details className="history-controls__more"><summary><Filter />More filters</summary><div><label>Result<select value={resultFilter} onChange={(event) => setResultFilter(event.target.value as 'all' | 'win' | 'loss')}><option value="all">All results</option><option value="win">Wins</option><option value="loss">Losses</option></select></label><label>Row density<select value={density} onChange={(event) => setDensity(event.target.value as 'comfortable' | 'compact')}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label><button type="button" className="btn-secondary" onClick={() => { setQueueFilter('all'); setResultFilter('all'); setPeriodFilter('all'); setChampSearch(''); }}>Reset filters</button></div></details>
+      </div>}
 
       {/* Loading state */}
       {loading && (
@@ -763,7 +654,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
           {filteredMatches.length === 0 ? (
             <div className="glass-card p-8 text-center text-text-dim space-y-1">
               <History className="w-8 h-8 opacity-20 mx-auto" />
-              <p className="text-xs font-bold text-text-muted">No matches found for this filter</p>
+              <p className="text-xs font-bold text-text-muted">No matches found</p><p className="text-xs">Change the filters or refresh your League history.</p><button type="button" className="btn-secondary" onClick={() => { setQueueFilter("all"); setResultFilter("all"); setPeriodFilter("all"); setChampSearch(""); }}>Clear filters</button>
             </div>
           ) : (
             filteredMatches.map((m: any, idx: number) => {
@@ -803,11 +694,7 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
                 >
                   {/* Summary Card Header */}
                   <div
-                    onClick={() => void handleExpand(gameId)}
                     className={`history-match__summary ${density === 'compact' ? 'p-2' : 'p-3.5'} flex items-center justify-between gap-3 cursor-pointer select-none`}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void handleExpand(gameId); } }}
                   >
                     <div className="history-match__identity flex items-center gap-3 min-w-0">
                       <div className={`history-result-crest ${density === 'compact' ? 'scale-90' : ''}`} aria-hidden="true"><span>{isWin ? 'W' : 'L'}</span></div>
@@ -887,18 +774,18 @@ export default function MatchHistory({ remoteClient = false }: { remoteClient?: 
                           const busy = replayBusy === Number(gameId);
                           if (status.status === 'ready') return <button type="button" className="btn-secondary" onClick={() => void handleReplay(Number(gameId), 'watch')} disabled={busy}>{busy ? <Loader2 className="animate-spin" /> : <Eye />}Watch</button>;
                           if (status.status === 'downloading') return <button type="button" className="btn-secondary" disabled><Loader2 className="animate-spin" />{Math.round(Number(status.progress || 0))}%</button>;
-                          if (['expired', 'unavailable', 'failed'].includes(status.status)) return <button type="button" className="btn-secondary" disabled title={status.detail || status.error || 'Replay unavailable'}>{status.status === 'expired' ? 'Expired' : 'Unavailable'}</button>;
+                          if (['expired', 'unavailable', 'failed'].includes(status.status)) return <span className="history-replay-unavailable"><button type="button" className="btn-secondary" disabled={busy || status.status === 'expired'} onClick={() => void handleReplay(Number(gameId))}>{busy ? <Loader2 className="animate-spin" /> : <RefreshCw />}{status.status === 'expired' ? 'Expired' : 'Check replay status'}</button><small>{status.detail || status.error || 'Replay unavailable for this match'}</small></span>;
                           return <button type="button" className="btn-secondary" onClick={() => void handleReplay(Number(gameId), 'download')} disabled={busy}>{busy ? <Loader2 className="animate-spin" /> : <Download />}Replay</button>;
                         })()}
                       </div>
 
-                      <button className="text-text-dim hover:text-white transition">
+                      <button type="button" className="history-match__expand btn-secondary" aria-expanded={isExpanded} aria-controls={`match-details-${gameId}`} aria-label={`${isExpanded ? "Hide" : "Show"} ${championName} match details`} onClick={() => void handleExpand(gameId)}><span>Details</span>
                         {isExpanded ? <ChevronUp className="w-4 h-4 text-primary" /> : <ChevronDown className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
 
-                  {isExpanded && <MatchDetails match={m} detail={gameDetails[gameId]} loading={loadingDetail === gameId} player={participant} queueName={queueName} championName={championName} championNames={championNames} assets={assets} streamerMode={streamerMode} />}
+                  {isExpanded && <div id={`match-details-${gameId}`}>{detailErrors[gameId] && <div className="history-detail-error" role="status"><span>{detailErrors[gameId]}</span><button type="button" className="btn-secondary" onClick={() => void handleExpand(gameId, true)}>Retry details</button></div>}<MatchDetails match={m} detail={gameDetails[gameId]} loading={loadingDetail === gameId} player={participant} queueName={queueName} championName={championName} championNames={championNames} assets={assets} streamerMode={streamerMode} /></div>}
 
                   {/* Previous detail renderer retained unreachable for one migration release. */}
                   {showLegacyMatchDetails && isExpanded && (

@@ -17,13 +17,13 @@ export default function NotificationCenter({
   onRead: (id: number) => void;
   onClear: () => void;
 }) {
-  const dialogRef = useDialogFocus<HTMLElement>(open, onClose);
+  const dialogRef = useDialogFocus<HTMLDivElement>(open, onClose);
   if (!open) return null;
   return (
     <div className="notification-center__backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <aside ref={dialogRef} tabIndex={-1} className="notification-center" role="dialog" aria-modal="true" aria-label="RiftOps notifications">
+      <div ref={dialogRef} tabIndex={-1} className="notification-center" role="dialog" aria-modal="true" aria-label="RiftOps notifications">
         <div className="notification-center__header">
           <div><span className="notification-center__eyebrow">ACTIVITY LOG</span><h2><Bell /> Notifications</h2></div>
           <div className="notification-center__tools">
@@ -43,7 +43,7 @@ export default function NotificationCenter({
             </button>
           ))}
         </div>
-      </aside>
+      </div>
     </div>
   );
 }

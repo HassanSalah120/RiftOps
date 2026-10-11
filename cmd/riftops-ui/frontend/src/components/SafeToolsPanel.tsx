@@ -19,6 +19,7 @@ import {
   type LCUStatus,
 } from '../api';
 import ConfirmModal from './ConfirmModal';
+import { useDialogFocus } from './useDialogFocus';
 import type { ConfirmAction } from '../types';
 
 type Notice = { tone: 'success' | 'error' | 'info'; message: string } | null;
@@ -55,6 +56,7 @@ export default function SafeToolsPanel() {
   const [notice, setNotice] = useState<Notice>(null);
 
   const [restoreDialog, setRestoreDialog] = useState<RestoreDialogState | null>(null);
+  const restoreDialogRef = useDialogFocus<HTMLDivElement>(Boolean(restoreDialog), () => setRestoreDialog(null));
   const [confirmInput, setConfirmInput] = useState('');
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [utility, setUtility] = useState<UtilityState>({ phase: '', queueID: 0, queueName: '', mode: '', mapID: 0, status: null });
@@ -224,6 +226,9 @@ export default function SafeToolsPanel() {
         <div
           className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fadeIn"
           role="dialog"
+          ref={restoreDialogRef}
+          tabIndex={-1}
+          aria-labelledby="restore-snapshot-title"
           aria-modal="true"
           onClick={() => setRestoreDialog(null)}
         >
@@ -239,7 +244,7 @@ export default function SafeToolsPanel() {
                   <RotateCcw className="w-4 h-4" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-black text-white">Restore Settings Snapshot</h4>
+                  <h2 id="restore-snapshot-title" className="text-sm font-black text-white">Restore Settings Snapshot</h2>
                   <p className="text-xs text-text-muted">{restoreDialog.backup.name}</p>
                 </div>
               </div>

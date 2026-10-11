@@ -1,8 +1,9 @@
-import { Activity, BookOpen, Command, Gem, History, PanelLeftClose, PanelLeftOpen, Radar, RadioTower, Settings, Sparkles, Swords, Wand2, Users } from 'lucide-react';
+import { Activity, BookOpen, Command, Gem, History, PanelLeftClose, PanelLeftOpen, MoreHorizontal, X, Radar, RadioTower, Settings, Sparkles, Swords, Wand2, Users } from 'lucide-react';
 import { useState } from 'react';
 import type { Tab } from '../types';
 import { tabAvailable } from '../clientCapabilities';
 import HealthIndicator from './HealthIndicator';
+import { useDialogFocus } from './useDialogFocus';
 import { livePhaseLabel, normalizeLivePhase } from '../liveSession';
 import { useLCUConnection } from './lcuConnectionContext';
 import { useLocale } from '../localeContext';
@@ -24,7 +25,6 @@ const NAV = [
 export default function Sidebar({
   activeTab,
   onTabChange,
-  phase,
   onOpenCommandPalette,
   remoteClient = false,
 }: {
@@ -37,10 +37,12 @@ export default function Sidebar({
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('riftops.sidebarCollapsed') === 'true'; } catch { return false; }
   });
-  const { qol, stale } = useLCUConnection();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useDialogFocus<HTMLDivElement>(moreOpen, () => setMoreOpen(false));
+  const { qol, stale, connected } = useLCUConnection();
   const { t } = useLocale();
   const sessionPhase = normalizeLivePhase(qol?.phase, qol?.queueState);
-  const isLive = sessionPhase !== 'IDLE' || (phase !== 'idle' && phase !== 'error');
+  const isLive = connected && ['IN_GAME', 'LOADING', 'RECONNECTING'].includes(sessionPhase);
   const visibleNav = NAV.filter((item) => tabAvailable(item.key, remoteClient));
 
   const toggleCollapsed = () => setCollapsed((value) => {
@@ -60,8 +62,10 @@ export default function Sidebar({
       <button
         type="button"
         key={item.key}
-        className={`app-sidebar__item ${['loot', 'qol', 'remote', 'settings'].includes(item.key) ? 'is-mobile-hidden' : ''} ${active ? 'is-active' : ''}`}
+        className={`app-sidebar__item ${['dashboard', 'play', 'live', 'social'].includes(item.key) ? 'is-mobile-primary' : 'is-mobile-hidden'} ${active ? 'is-active' : ''}`}
         onClick={() => onTabChange(item.key)}
+        aria-label={translatedLabel(item.key, item.label)}
+        title={translatedLabel(item.key, item.label)}
         aria-current={active ? 'page' : undefined}
       >
         <span className="app-sidebar__item-icon"><Icon /></span>
@@ -70,13 +74,14 @@ export default function Sidebar({
           <span className="app-sidebar__item-mobile-label" aria-hidden="true">{item.mobileLabel}</span>
           <small>{item.key === 'social' ? t('nav.socialHint') : item.hint}</small>
         </span>
-        {item.key === 'live' && <span className={`app-sidebar__live-badge ${stale ? 'is-stale' : ''}`}>{stale ? 'Retrying' : livePhaseLabel(sessionPhase)}</span>}
+        {item.key === 'live' && <span className={`app-sidebar__live-badge ${!connected ? 'is-offline' : stale ? 'is-stale' : ''}`}>{!connected ? 'Offline' : stale ? 'Retrying' : livePhaseLabel(sessionPhase)}</span>}
         {active && <span className="app-sidebar__active-dot" />}
       </button>
     );
   };
 
   return (
+    <>
     <nav className={`app-sidebar ${collapsed ? 'is-collapsed' : ''}`} aria-label="RiftOps workspaces">
       <div className="app-sidebar__brand">
         <img className="app-sidebar__mark app-sidebar__mark--image" src="/branding/riftops-logo.png" alt="RiftOps" width="44" height="44" />
@@ -90,23 +95,27 @@ export default function Sidebar({
         {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}<span>{collapsed ? 'Expand' : 'Collapse'}</span>
       </button>
 
-      <div className="app-sidebar__section-label">Game</div>
-      <button type="button" className="app-sidebar__command" onClick={onOpenCommandPalette} aria-label="Search RiftOps commands">
-        <span className="app-sidebar__command-icon"><Command /></span>
-        <span>Search commands</span>
-        <kbd>⌘K</kbd>
-      </button>
-      <div className="app-sidebar__nav">
-        {visibleNav.filter((item) => item.group === 'game').map(renderNavItem)}
+      <div className="app-sidebar__navigation">
+        <div className="app-sidebar__section-label">Game</div>
+        <button type="button" className="app-sidebar__command" onClick={onOpenCommandPalette} aria-label="Search RiftOps commands">
+          <span className="app-sidebar__command-icon"><Command /></span>
+          <span>Search commands</span>
+          <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
+        </button>
+        <div className="app-sidebar__nav">
+          {visibleNav.filter((item) => item.group === 'game').map(renderNavItem)}
+        </div>
+        <div className="app-sidebar__group-divider"><span>Collection</span></div>
+        <div className="app-sidebar__nav">
+          {visibleNav.filter((item) => item.group === 'collection').map(renderNavItem)}
+        </div>
+        <div className="app-sidebar__group-divider"><span>Tools</span></div>
+        <div className="app-sidebar__nav">
+          {visibleNav.filter((item) => item.group === 'tools').map(renderNavItem)}
+        </div>
       </div>
-      <div className="app-sidebar__group-divider"><span>Collection</span></div>
-      <div className="app-sidebar__nav">
-        {visibleNav.filter((item) => item.group === 'collection').map(renderNavItem)}
-      </div>
-      <div className="app-sidebar__group-divider"><span>Tools</span></div>
-      <div className="app-sidebar__nav">
-        {visibleNav.filter((item) => item.group === 'tools').map(renderNavItem)}
-      </div>
+
+      <button type="button" className={`app-sidebar__more ${!["dashboard", "play", "live", "social"].includes(activeTab) ? "is-active" : ""}`} aria-label="More workspaces" aria-haspopup="dialog" aria-expanded={moreOpen} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>More</span></button>
 
       <div className="app-sidebar__health-wrap">
         <HealthIndicator />
@@ -116,9 +125,11 @@ export default function Sidebar({
         <span className={`app-sidebar__status-dot ${isLive ? 'is-live' : ''}`} />
         <span>
           <small>League Client</small>
-          <strong>{isLive ? 'In Match' : (qol?.phase ? 'Connected' : 'Standing by')}</strong>
+          <strong>{!connected ? 'Offline' : isLive ? 'In match' : livePhaseLabel(sessionPhase)}</strong>
         </span>
       </div>
     </nav>
+    {moreOpen && <div className="workspace-menu-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setMoreOpen(false); }}><div ref={moreRef} tabIndex={-1} className="workspace-menu" role="dialog" aria-modal="true" aria-labelledby="workspace-menu-title"><header><h2 id="workspace-menu-title">Workspaces</h2><button type="button" aria-label="Close workspaces" onClick={() => setMoreOpen(false)}><X /></button></header><div>{visibleNav.map((item) => { const Icon = item.icon; return <button type="button" key={item.key} aria-current={item.key === activeTab ? 'page' : undefined} onClick={() => { setMoreOpen(false); onTabChange(item.key); }}><Icon /><span><strong>{translatedLabel(item.key, item.label)}</strong><small>{item.hint}</small></span></button>; })}</div></div></div>}
+    </>
   );
 }

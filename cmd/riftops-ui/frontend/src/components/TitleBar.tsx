@@ -96,11 +96,11 @@ export default function TitleBar({ remoteClient = false, phase = 'idle', isLive 
   }
 
   return (
-    <header
+    <div
       className="riftops-titlebar"
       onMouseDown={handleMouseDown}
       onDoubleClick={handleMaximizeToggle}
-      role="banner"
+      role="group"
       aria-label="Window header"
     >
       {/* Left: Brand Identity */}
@@ -167,6 +167,6 @@ export default function TitleBar({ remoteClient = false, phase = 'idle', isLive 
           <X className="w-3.5 h-3.5 stroke-[1.5]" />
         </button>
       </div>
-    </header>
+    </div>
   );
 }

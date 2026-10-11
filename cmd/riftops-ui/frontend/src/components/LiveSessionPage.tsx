@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Check,
   ChevronRight,
+  ChevronDown,
   CircleStop,
   Clipboard,
   Clock3,
@@ -177,7 +178,7 @@ function ArenaLiveCard({ data }: { data: GameClientData }) {
       <div className="active-game-dashboard__arena-heading">
         <div>
           <span className="live-session__eyebrow">ARENA TELEMETRY</span>
-          <h3>Round-by-round status</h3>
+          <h2>Round-by-round status</h2>
           <p>Read-only values directly exposed by League client. Augments and placements stay honest.</p>
         </div>
         <span className="active-game-dashboard__arena-pill">
@@ -235,7 +236,7 @@ function ActiveGameDashboard({ data }: { data: GameClientData }) {
       <div className="active-game-dashboard__head">
         <div>
           <span className="live-session__eyebrow">GAME CLIENT TELEMETRY</span>
-          <h3>Live match dashboard</h3>
+          <h2>Live match dashboard</h2>
           <p>Read-only data from League’s local game client. RiftOps never sends gameplay input.</p>
         </div>
         <div className="active-game-dashboard__status">
@@ -554,7 +555,7 @@ export default function LiveSessionPage({
       <PageHeader
         icon={PhaseIcon({ phase })}
         eyebrow="LIVE SESSION MONITOR"
-        title={livePhaseLabel(phase)}
+        title="Live Game"
         description={`${livePhaseDescription(phase)}${qol?.statusMessage ? ` · ${qol.statusMessage}` : ''}`}
         meta={
           <div className="flex items-center gap-2">
@@ -590,7 +591,7 @@ export default function LiveSessionPage({
               onClick={onOpenCommandCenter}
             >
               <Compass className="w-3.5 h-3.5" />
-              <span>Command Center</span>
+              <span>Home</span>
             </button>
           </div>
         }
@@ -602,7 +603,7 @@ export default function LiveSessionPage({
       {/* Main Container */}
       <div className="live-session__body">
         {/* Matchflow Pipeline Stepper */}
-        <nav className="live-pipeline-bar" aria-label="League matchflow pipeline">
+        {!unavailable && <nav className="live-pipeline-bar" aria-label="League matchflow pipeline">
           <div className="live-pipeline-bar__header">
             <span className="live-pipeline-bar__tag">
               <Sparkles className="w-3 h-3 text-amber-300" />
@@ -610,7 +611,7 @@ export default function LiveSessionPage({
             </span>
           </div>
 
-          <div className="live-pipeline-bar__steps">
+          <div className="live-pipeline-bar__steps" tabIndex={0} role="region" aria-label="Match phase progression">
             {STAGES.map((stage, index) => {
               const isCurrent = stage === phase;
               const isPassed = stageIndex >= 0 && index < stageIndex;
@@ -646,7 +647,7 @@ export default function LiveSessionPage({
               {livePhaseLabel(phase)} {isActiveLivePhase(phase) ? `(${formatElapsed(elapsed)})` : ''}
             </span>
           </div>
-        </nav>
+        </nav>}
 
         {/* Stale or Reconnecting Banner */}
         {(stale || error || livePayloadLost) && (
@@ -676,7 +677,7 @@ export default function LiveSessionPage({
            1. IDLE STATE: Pre-Flight Mission Control
            ───────────────────────────────────────────────────────────── */}
         {phase === 'IDLE' && (
-          <section className="live-idle-cockpit grid grid-cols-1 md:grid-cols-2 gap-4">
+          <section className="live-idle-cockpit">
             {/* Launchpad Card */}
             <div className="glass-card flex flex-col gap-3 p-4 md:p-5 rounded-2xl">
               <div className="flex items-start gap-3 border-b border-white/[0.06] pb-3">
@@ -684,8 +685,8 @@ export default function LiveSessionPage({
                   <Gamepad2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <small className="text-[9px] font-black tracking-widest text-text-muted uppercase block">PRE-FLIGHT LAUNCHPAD</small>
-                  <h3 className="text-base font-bold text-white leading-tight">{unavailable ? 'Connect League to follow match' : 'Standby for Match'}</h3>
+
+                  <h2 className="text-base font-bold text-white leading-tight">{unavailable ? 'Connect League to follow your match' : 'Standby for Match'}</h2>
                   <p className="text-[11px] text-text-muted mt-0.5">
                     {unavailable
                       ? 'Launch the League Client and sign in. RiftOps will bind to the session automatically.'
@@ -732,21 +733,21 @@ export default function LiveSessionPage({
                     onClick={onOpenCommandCenter}
                     tone="quiet"
                   >
-                    Command Center
+                    Home
                   </ActionButton>
                 </div>
               </div>
             </div>
 
             {/* Connection Diagnostics Card */}
-            <div className="glass-card flex flex-col gap-3 p-4 md:p-5 rounded-2xl">
+            <details className="live-diagnostics workflow-disclosure"><summary><span><ShieldCheck /><strong>Connection details</strong><small>Listener status, latency, and last reported phase</small></span><ChevronDown /></summary><div>
               <div className="flex items-start gap-3 border-b border-white/[0.06] pb-3">
                 <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-cyan-500/10 border border-cyan-500/25 text-cyan-400">
                   <ShieldCheck className="w-4 h-4" />
                 </div>
                 <div>
-                  <small className="text-[9px] font-black tracking-widest text-text-muted uppercase block">LCU TELEMETRY STATUS</small>
-                  <h3 className="text-base font-bold text-white leading-tight">Connection Health</h3>
+
+                  <h2 className="text-base font-bold text-white leading-tight">Connection Health</h2>
                   <p className="text-[11px] text-text-muted mt-0.5">Read-only listener status and response latency.</p>
                 </div>
               </div>
@@ -774,12 +775,12 @@ export default function LiveSessionPage({
                   <div className="settings-specs-item">
                     <span className="settings-specs-item__label">PRESENCE</span>
                     <strong className="settings-specs-item__val">
-                      {qol?.availability || 'Online'}
+                      {connected ? qol?.availability || '—' : 'Unavailable'}
                     </strong>
                   </div>
                 </div>
               </div>
-            </div>
+            </div></details>
           </section>
         )}
 
@@ -899,6 +900,7 @@ export default function LiveSessionPage({
             <div className="flex items-center justify-center gap-3 pt-2">
               <ActionButton
                 busy={busy === 'accept'}
+                disabled={busy !== ''}
                 icon={Check}
                 onClick={() => void run('accept', 'Ready check accepted.', lcuAutoAccept)}
               >
@@ -906,6 +908,7 @@ export default function LiveSessionPage({
               </ActionButton>
               <ActionButton
                 busy={busy === 'decline'}
+                disabled={busy !== ''}
                 icon={X}
                 tone="quiet"
                 onClick={() => void run('decline', 'Ready check declined.', lcuDeclineReady)}
@@ -1093,7 +1096,7 @@ export default function LiveSessionPage({
               ? `Updated ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
               : 'Waiting for update'}
           </span>
-          <span>{health?.latencyMs ? `${health.latencyMs}ms latency` : 'Latency normal'}</span>
+          <span>{health?.latencyMs ? `${health.latencyMs}ms latency` : 'Latency unavailable'}</span>
         </footer>
       </div>
     </div>

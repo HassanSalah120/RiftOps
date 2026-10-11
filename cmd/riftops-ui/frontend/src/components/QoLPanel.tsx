@@ -37,7 +37,7 @@ import {
 import PageHeader from './PageHeader';
 import ConfirmModal from './ConfirmModal';
 import SafeToolsPanel from './SafeToolsPanel';
-import { StatusBadge } from './DesignPrimitives';
+import { StatusBadge, ActionFeedback } from './DesignPrimitives';
 import { useLCUConnection } from './lcuConnectionContext';
 import type { ConfirmAction } from '../types';
 
@@ -117,7 +117,7 @@ function SwitchRow({
         <strong>{title}</strong>
         <span>{description}</span>
       </div>
-      <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={onChange} className="qol-switch">
+      <button type="button" role="switch" aria-label={title} aria-checked={checked} disabled={disabled} onClick={onChange} className="qol-switch">
         <span className="qol-switch__track"><span /></span>
         <b>{checked ? 'On' : 'Off'}</b>
       </button>
@@ -133,6 +133,9 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
   const [preferences, setPreferences] = useState<QoLPreferences>(DEFAULT_PREFERENCES);
   const [preferencesLoading, setPreferencesLoading] = useState(true);
   const [activeAction, setActiveAction] = useState('');
+  const actionLock = useRef(false);
+  const preferencesLock = useRef(false);
+  const [savingPreferences, setSavingPreferences] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
@@ -180,6 +183,8 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
   }, [showToast]);
 
   const runAction = useCallback(async (key: string, successMessage: string, action: () => Promise<unknown>) => {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setActiveAction(key);
     try {
       await action();
@@ -188,11 +193,15 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
     } catch (error: any) {
       showToast(error.message || 'The action could not be completed.', false);
     } finally {
+      actionLock.current = false;
       setActiveAction('');
     }
   }, [refreshState, showToast]);
 
   const updatePreferences = async (next: QoLPreferences) => {
+    if (preferencesLock.current) return;
+    preferencesLock.current = true;
+    setSavingPreferences(true);
     const previous = preferences;
     setPreferences(next);
     try {
@@ -201,6 +210,9 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
     } catch (error: any) {
       setPreferences(previous);
       showToast(error.message || 'Could not save automation preferences.', false);
+    } finally {
+      preferencesLock.current = false;
+      setSavingPreferences(false);
     }
   };
 
@@ -254,7 +266,7 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
       <PageHeader
         icon={Sparkles}
         eyebrow="AUTOMATIONS & UTILITIES"
-        title="Quality of Life"
+        title="Automations"
         description="Keep the routine parts of a League session quiet, visible, and under your control."
         meta={<StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>{connected ? formatPhaseLabel(phase) : 'League offline'}</StatusBadge>}
         actions={<button type="button" className="page-header__button" onClick={() => void refreshState(true)} disabled={refreshing}><RefreshCw className={refreshing ? 'animate-spin' : ''} /> Refresh</button>}
@@ -282,6 +294,9 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
         </button>
       </section>
 
+      <nav className="workflow-anchor-nav" aria-label="Automation sections"><a href="#qol-match-heading">Match routines</a><a href="#qol-presence-heading">Presence</a><a href="#qol-safety-heading">Session tools</a></nav>
+      {savingPreferences && <ActionFeedback state={{ tone: 'working', message: 'Saving automation rules…' }} />}
+      {activeAction && <ActionFeedback state={{ tone: 'working', message: 'Applying the selected action in League…' }} />}
       <div className="qol-task-list">
         <section className="qol-task-group qol-task-group--match" aria-labelledby="qol-match-heading">
           <header className="qol-task-group__header">
@@ -291,7 +306,7 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
           </header>
 
           <div className="qol-task-group__body">
-            <SwitchRow title="Grind mode" description="Run the full post-game loop: return, honor, requeue, and claim rewards." checked={preferences.grindMode} disabled={preferencesLoading} accent="gold" onChange={() => void updatePreferences({ ...preferences, grindMode: !preferences.grindMode })} />
+            <SwitchRow title="Grind mode" description="Run the full post-game loop: return, honor, requeue, and claim rewards." checked={preferences.grindMode} disabled={preferencesLoading || savingPreferences} accent="gold" onChange={() => preferences.grindMode ? void updatePreferences({ ...preferences, grindMode: false }) : setConfirmAction({ open: true, title: 'Enable Grind mode?', message: 'After each match, this mode returns to the lobby, honors a teammate, requeues, and claims rewards. Review queue and draft rules in Play & Queue first.', actionLabel: 'Enable Grind mode', danger: false, onConfirm: () => { setConfirmAction(null); void updatePreferences({ ...preferences, grindMode: true }); } })} />
 
             <div className="qol-owner-link">
               <div><strong>Queue automation lives in Play & Queue</strong><span>Auto-accept, roles, picks, bans, and full auto stay beside your queue choices.</span></div>
@@ -299,9 +314,9 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
             </div>
 
             <div className="qol-rule-list" aria-label="Post-game automation rules">
-              <SwitchRow title="Return to lobby" description="Use Play Again when the post-game summary is ready." checked={preferences.autoPlayAgain} disabled={preferencesLoading} accent="teal" onChange={() => void updatePreferences({ ...preferences, autoPlayAgain: !preferences.autoPlayAgain })} />
-              <SwitchRow title="Honor first teammate" description="Honor the first eligible ally after each completed match." checked={preferences.autoHonor} disabled={preferencesLoading} accent="rose" onChange={() => void updatePreferences({ ...preferences, autoHonor: !preferences.autoHonor })} />
-              <SwitchRow title="Claim event rewards" description="Claim unlocked battle-pass and event-track rewards after a game." checked={preferences.autoClaimRewards} disabled={preferencesLoading} accent="violet" onChange={() => void updatePreferences({ ...preferences, autoClaimRewards: !preferences.autoClaimRewards })} />
+              <SwitchRow title="Return to lobby" description="Use Play Again when the post-game summary is ready." checked={preferences.autoPlayAgain} disabled={preferencesLoading || savingPreferences} accent="teal" onChange={() => void updatePreferences({ ...preferences, autoPlayAgain: !preferences.autoPlayAgain })} />
+              <SwitchRow title="Honor first teammate" description="Honor the first eligible ally after each completed match." checked={preferences.autoHonor} disabled={preferencesLoading || savingPreferences} accent="rose" onChange={() => void updatePreferences({ ...preferences, autoHonor: !preferences.autoHonor })} />
+              <SwitchRow title="Claim event rewards" description="Claim unlocked battle-pass and event-track rewards after a game." checked={preferences.autoClaimRewards} disabled={preferencesLoading || savingPreferences} accent="violet" onChange={() => void updatePreferences({ ...preferences, autoClaimRewards: !preferences.autoClaimRewards })} />
             </div>
 
           </div>
@@ -333,7 +348,7 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
           <div className="qol-task-group__body">
             {inChampSelect && <div className="qol-context-callout is-rose"><div><strong>Champion select is live</strong><span>Open the live draft workspace or apply a standard queue dodge.</span></div><div className="qol-context-callout__actions">{onOpenLive && <button type="button" className="btn-primary" onClick={onOpenLive}><Swords /> Open live draft</button>}<button type="button" className="btn-danger" onClick={() => setConfirmAction({ open: true, title: 'Dodge this champion select?', message: 'League will apply standard queue dodge penalties. This action cannot be undone.', actionLabel: 'Dodge game', danger: true, onConfirm: () => { setConfirmAction(null); void runAction('dodge', 'Dodge request sent to League.', lcuDodge); } })}><CircleStop /> Dodge game</button></div></div>}
             {customSession && customQuitAvailable && !inChampSelect && <div className="qol-context-callout is-gold"><div><strong>Custom or practice session</strong><span>Leave the custom lobby without sending a dodge penalty.</span></div><button type="button" className="btn-danger" disabled={activeAction === 'quit-custom'} onClick={() => void runAction('quit-custom', 'Custom session closed.', lcuQuitCustomSession)}><CircleStop /> Quit custom</button></div>}
-            {postGame && <div className="qol-postgame"><div className="qol-subsection__heading"><strong>Post-game actions</strong><span>Match finished</span></div><div className="qol-action-grid"><button type="button" className="btn-primary" onClick={() => void runAction('play-again', 'Returning to lobby.', lcuPlayAgain)}><Play /> Play again</button><button type="button" className="btn-secondary" onClick={() => void loadHonorBallot()}><Heart /> Load honor ballot</button><button type="button" className="btn-secondary" onClick={() => void runAction('rewards', 'Event rewards checked.', lcuClaimEventRewards)}><Gift /> Claim rewards</button></div>{honorBallot && <div className="qol-honor-grid">{[...(honorBallot.eligibleAllies || []), ...(honorBallot.eligibleOpponents || [])].map((player) => <button type="button" key={player.puuid} disabled={activeAction === `honor-${player.puuid}`} onClick={() => void honorPlayerAction(player)}><span><small>{player.championName}</small><strong>{player.summonerName}</strong></span><Heart /></button>)}</div>}</div>}
+            {postGame && <div className="qol-postgame"><div className="qol-subsection__heading"><strong>Post-game actions</strong><span>Match finished</span></div><div className="qol-action-grid"><button type="button" className="btn-primary" disabled={activeAction !== ""} onClick={() => void runAction('play-again', 'Returning to lobby.', lcuPlayAgain)}><Play /> Play again</button><button type="button" className="btn-secondary" disabled={activeAction !== ""} onClick={() => void loadHonorBallot()}><Heart /> Load honor ballot</button><button type="button" className="btn-secondary" disabled={activeAction !== ""} onClick={() => void runAction('rewards', 'Event rewards checked.', lcuClaimEventRewards)}><Gift /> Claim rewards</button></div>{honorBallot && <div className="qol-honor-grid">{[...(honorBallot.eligibleAllies || []), ...(honorBallot.eligibleOpponents || [])].map((player) => <button type="button" key={player.puuid} disabled={activeAction !== ""} onClick={() => void honorPlayerAction(player)}><span><small>{player.championName}</small><strong>{player.summonerName}</strong></span><Heart /></button>)}</div>}</div>}
             {!inChampSelect && !customSession && !postGame && <div className="qol-standby"><span className="qol-status-dot is-live" /><div><strong>{connected ? 'Client standing by' : 'Connect League to unlock actions'}</strong><small>{connected ? `Current phase: ${formatPhaseLabel(phase)}` : 'Open Riot Client and sign in.'}</small></div></div>}
             <details className="qol-disclosure">
               <summary><span><ShieldCheck /> Reviewed client utilities</span><small>Snapshots, rewards, capabilities, and identifiers</small></summary>

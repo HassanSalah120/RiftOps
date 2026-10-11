@@ -714,18 +714,18 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   );
 
   return (
-    <div className="page-content page-content--skins skin-vault-page">
+    <div className={`page-content page-content--skins skin-vault-page ${loading || error ? 'is-unavailable' : ''}`}>
       <PageHeader
         variant="collection"
         icon={Sparkles}
         eyebrow="COSMETIC VAULT"
         title="Collection"
         description="Every skin on your account, and the ones still missing."
-        meta={headerMeta}
+        meta={loading ? <span className="page-header__badge">Loading collection</span> : error ? <span className="page-header__badge">Collection unavailable</span> : headerMeta}
         actions={headerActions}
       />
 
-      <section className="skin-vault-summary" aria-label="Collection progress">
+      {!loading && !error && <section className="skin-vault-summary" aria-label="Collection progress">
         <button
           type="button"
           className={`skin-vault-summary__progress skin-vault-summary__clickable ${statusFilter === 'all' && smartFilter === 'all' ? 'is-active' : ''}`}
@@ -767,7 +767,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
           <strong>{championPct}%</strong>
           <span>Coverage ({champsWithOwned}/{categoryChamps.length})</span>
         </div>
-      </section>
+      </section>}
 
       <div className={`skin-vault ${filtersOpen ? 'is-filters-open' : ''}`}>
         <button type="button" className="skin-vault__scrim" onClick={() => setFiltersOpen(false)} aria-label="Close filters" />
@@ -802,6 +802,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
             ))}
           </div>
 
+          <details className="skin-facets"><summary>More collection filters</summary><div>
           <div className="skin-vault-filter-group">
             <span>Collection</span>
             <div className="skin-vault-filters__collection-toggle">
@@ -812,6 +813,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
                   <button
                     type="button"
                     key={category}
+                    aria-pressed={skinCategory === category}
                     className={skinCategory === category ? 'is-selected' : ''}
                     onClick={() => {
                       setSkinCategory(category);
@@ -830,6 +832,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
             <span>Champion</span>
             <label className="skin-vault-filter-group__select">
               <select
+                aria-label="Champion"
                 value={selectedChampId ?? ''}
                 onChange={(event) => setSelectedChampId(event.target.value ? Number(event.target.value) : null)}
               >
@@ -847,7 +850,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
           <div className="skin-vault-filter-group">
             <span>Focus</span>
             <label className="skin-vault-filter-group__select">
-              <select value={smartFilter} onChange={(event) => setSmartFilter(event.target.value as SmartFilter)}>
+              <select aria-label="Collection focus" value={smartFilter} onChange={(event) => setSmartFilter(event.target.value as SmartFilter)}>
                 <option value="all">Every collection</option>
                 <option value="zero-skins">No skins owned (0 skins)</option>
                 <option value="near-complete">Near complete (75%+)</option>
@@ -862,7 +865,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
           <div className="skin-vault-filter-group">
             <span>Tier</span>
             <label className="skin-vault-filter-group__select">
-              <select value={tierFilter} onChange={(event) => setTierFilter(event.target.value)}>
+              <select aria-label="Skin tier" value={tierFilter} onChange={(event) => setTierFilter(event.target.value)}>
                 <option value="all">Every tier ({totalOwned}/{categorySkins.length})</option>
                 {tierOptions.map(([tier, info]) => {
                   const skins = categorySkins.filter((skin) => skin.rarity === tier);
@@ -893,7 +896,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
               <button
                 type="button"
                 className={`skin-vault-filter-chip ${favsOnly ? 'is-selected' : ''}`}
-                onClick={() => setFavsOnly((value) => !value)}
+                onClick={() => setFavsOnly((value) => !value)} aria-pressed={favsOnly}
               >
                 <Heart className={`w-3 h-3 ${favsOnly ? 'fill-current text-rose-400' : 'text-rose-400'}`} />
                 <span>Favorites</span>
@@ -918,6 +921,8 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
               </button>
             </div>
           </div>
+
+          </div></details>
 
           {activeFilterCount > 0 && (
             <button type="button" className="skin-vault-filters__clear" onClick={clearFilters}>

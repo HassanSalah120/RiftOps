@@ -265,7 +265,7 @@ export default function ClientControlRoom({ onOpenQoL, onOpenLive, onOpenHistory
       <div className="control-room__focus">
         <div className="control-room__next-copy">
           <div className="control-room__eyebrow"><TimerReset /> ACTION READY</div>
-          <h3>{primaryAction.label}</h3>
+          <h2>{primaryAction.label}</h2>
           <p>{primaryAction.detail}</p>
         </div>
         <button type="button" className="control-room__primary" onClick={runPrimary} disabled={busy !== ''}>

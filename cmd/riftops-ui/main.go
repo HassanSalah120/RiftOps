@@ -667,7 +667,14 @@ func connectedAccountMatches(league riotclient.ConnectedLeagueAccount, riot riot
 	return riot.Authorized && league.PUUID != "" && league.PUUID == riot.PUUID
 }
 
+var profileSessionMu sync.Mutex
+
 func selectProfile(w http.ResponseWriter, r *http.Request) {
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is still running. Wait for it to finish before retrying.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
 	var body struct{ ID string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
@@ -686,6 +693,11 @@ func selectProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func switchProfile(w http.ResponseWriter, r *http.Request) {
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is still running. Wait for it to finish before retrying.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
 	var body struct {
 		ID         string `json:"id"`
 		ForceLogin bool   `json:"forceLogin"`
@@ -702,6 +714,9 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 		message := "Failed to switch profile"
 		if errors.Is(err, engine.ErrRiotCloseFailed) {
 			message = "Riot Client or League could not be closed. Close both apps manually, then retry the switch."
+		}
+		if errors.Is(err, engine.ErrSavedLoginRefresh) {
+			message = err.Error()
 		}
 		httpError(w, message, http.StatusConflict)
 		slog.Error("switchProfile", "error", err)
@@ -734,6 +749,12 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 		slog.Error("switchProfile launch", "error", verifyErr)
 		return
 	}
+	sessionRefreshed := false
+	if verification == "verified" {
+		refreshCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		sessionRefreshed = backendEngine.RefreshSavedLogin(refreshCtx) == nil
+		stop()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"profile":                 profile,
@@ -741,6 +762,7 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 		"targetSessionExpired":    result.TargetSessionExpired,
 		"targetSessionUnverified": result.TargetSessionUnverified,
 		"verification":            verification,
+		"sessionRefreshed":        sessionRefreshed,
 	})
 }
 
@@ -793,6 +815,11 @@ func profileVerification(expectedPUUID string, account riotclient.RiotAccountSes
 }
 
 func saveProfile(w http.ResponseWriter, r *http.Request) {
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is still running. Wait before editing accounts.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
 	var profile settings.LaunchProfile
 	if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
@@ -838,6 +865,11 @@ func saveProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func deleteProfile(w http.ResponseWriter, r *http.Request) {
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is still running. Wait before deleting accounts.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
 	var body struct{ ID string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
@@ -858,6 +890,11 @@ func exportProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func importProfiles(w http.ResponseWriter, r *http.Request) {
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is still running. Wait before importing accounts.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
 	var profiles []settings.LaunchProfile
 	if err := json.NewDecoder(r.Body).Decode(&profiles); err != nil {
 		httpError(w, "Invalid request body", http.StatusBadRequest)
@@ -1103,6 +1140,11 @@ func setStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func startEngine(w http.ResponseWriter, r *http.Request) {
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is still running. Wait before launching Riot.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
 	var body struct {
 		StopExisting bool   `json:"stopExisting"`
 		Game         string `json:"game"`
@@ -1205,6 +1247,11 @@ func stopEngine(w http.ResponseWriter, r *http.Request) {
 
 // Saved Riot login profile endpoints.
 func captureSession(w http.ResponseWriter, r *http.Request) {
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is still running. Wait for it to finish before saving.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	if err := backendEngine.CaptureSavedLogin(ctx, 30*24*time.Hour); err != nil {
@@ -1229,6 +1276,11 @@ func captureSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func forgetSession(w http.ResponseWriter, r *http.Request) {
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is still running. Wait for it to finish before forgetting the login.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
 	if err := backendEngine.ForgetSavedLogin(); err != nil {
 		httpError(w, "Failed to forget saved login", http.StatusInternalServerError)
 		slog.Error("forgetSession", "error", err)

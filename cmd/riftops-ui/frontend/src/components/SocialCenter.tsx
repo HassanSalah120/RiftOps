@@ -1,15 +1,14 @@
+import { runReviewedOperation } from '../reviewedOperation';
 import { Award, Check, ExternalLink, Eye, History, Loader2, Mail, RefreshCw, Search, Send, Star, Trash2, Users, VolumeX, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   actOnLCUFriendRequest,
   clearReviewedOperationReceipts,
-  executeReviewedOperation,
   fetchLCUSocial,
   fetchLCUChatPrivacy,
   launchLCUSpectator,
   scoutProgressMastery,
   updateLCUChatMutes,
-  fetchReviewedOperation,
   fetchReviewedOperationReceipts,
   inviteLCUFriends,
   previewReviewedOperation,
@@ -237,18 +236,13 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
   };
 
   const executePendingReview = async (previewId: string, confirmationText: string) => {
-    await executeReviewedOperation(previewId, confirmationText);
-    for (;;) {
-      const status = await fetchReviewedOperation(previewId);
-      if (status.state === 'complete' || status.state === 'cancelled' || status.state === 'expired') {
-        if (status.state === 'complete') {
-          if (pendingReview?.clear === 'friends') setSelected(new Set());
-          if (pendingReview?.clear === 'requests') setSelectedRequests(new Set());
-          setFeedback({ tone: 'success', message: `${status.completed}/${status.total} operations processed successfully.` });
-        } else setFeedback({ tone: 'error', message: `Operation ${status.state}: ${status.completed}/${status.total} processed.` });
-        break;
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 450));
+    const status = await runReviewedOperation(previewId, confirmationText);
+    if (status.state === 'complete') {
+      if (pendingReview?.clear === 'friends') setSelected(new Set());
+      if (pendingReview?.clear === 'requests') setSelectedRequests(new Set());
+      setFeedback({ tone: 'success', message: `${status.completed}/${status.total} operations processed.` });
+    } else {
+      throw new Error(`Operation ${status.state}: ${status.completed}/${status.total} processed. Review the operation history before trying a new operation.`);
     }
     setPendingReview(null); await refresh();
   };
@@ -286,24 +280,24 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
     <div className="social-command-page">
       <PageHeader variant="workspace" icon={Users} eyebrow="SOCIAL WORKSPACE" title={t('social.title')} description="Friends, requests, and lobby invitations from the local League client." meta={<StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>{connected ? `${onlineCount} online` : t('social.offline')}</StatusBadge>} />
 
-      <div className="social-command-summary" aria-label="Friends summary">
+      {connected && <div className="social-command-summary" aria-label="Friends summary">
         <span><b>{friends.length}</b> friends</span><span><b>{onlineCount}</b> online</span><span><b>{requests.length}</b> requests</span><span><b>{selected.size}</b> selected</span>
-      </div>
+      </div>}
 
       <ActionFeedback state={feedback} />
       {snapshot?.warnings?.map((warning) => <ActionFeedback key={warning} state={{ tone: 'info', message: warning }} />)}
-      {!connected && <EmptyState tone="neutral" icon={Users} title="Connect League Client" description="Open Riot Client and sign in to load your friends and invitations." />}
+      {!connected && <EmptyState tone="neutral" icon={Users} title="Connect League Client" description="Open Riot Client and sign in to load your friends and invitations." action={<button type="button" className="btn-primary" onClick={() => window.dispatchEvent(new CustomEvent('riftops:navigate', { detail: 'play' }))}>Open Play &amp; Queue</button>} />}
 
       {connected && <div className="social-command-layout">
         <div className="social-command-directory">
           <section className="social-directory-surface" aria-labelledby="friends-directory-heading">
             <header className="social-directory-heading"><div><span className="social-command-kicker">FRIENDS DIRECTORY</span><h2 id="friends-directory-heading">Your League friends</h2><p>Select people for a reviewed lobby invitation or keep the list tidy.</p></div><button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : ''} /> Refresh</button></header>
-            <div className="social-filter-bar" role="tablist" aria-label="Friend filters">{filterButtons.map((button) => <button key={button.id} type="button" role="tab" aria-selected={filter === button.id} className={filter === button.id ? 'is-active' : ''} onClick={() => setFilter(button.id)}><span>{button.label}</span><b>{button.count}</b></button>)}</div>
+            <div className="social-filter-bar" role="group" aria-label="Friend filters">{filterButtons.map((button) => <button key={button.id} type="button" aria-pressed={filter === button.id} className={filter === button.id ? 'is-active' : ''} onClick={() => setFilter(button.id)}><span>{button.label}</span><b>{button.count}</b></button>)}</div>
             <div className="social-directory-toolbar">
               <label className="social-directory-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('social.search')} aria-label={t('social.search')} /></label>
-              <label>Group<select value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}><option value="folder">League folder</option><option value="availability">Availability</option><option value="mode">Current mode</option></select></label>
+              <details className="social-directory-options"><summary>Directory options</summary><div><label>Group<select value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}><option value="folder">League folder</option><option value="availability">Availability</option><option value="mode">Current mode</option></select></label>
               <label>Profile link<select value={provider} onChange={(event) => setProvider(event.target.value as typeof provider)}><option value="opgg">OP.GG</option><option value="u.gg">U.GG</option><option value="poro">Poro</option><option value="aramgg">ARAM.GG</option></select></label>
-              <small>{lastRefreshAt ? `Updated ${Math.max(0, Math.floor((now - lastRefreshAt) / 60000))}m ago` : 'Waiting for live update'}</small>
+              </div></details><small>{lastRefreshAt ? `Updated ${Math.max(0, Math.floor((now - lastRefreshAt) / 60000))}m ago` : 'Waiting for live update'}</small>
             </div>
 
             {loading && friends.length === 0 && <div className="social-command-empty"><Loader2 className="animate-spin" /> Loading social data…</div>}
@@ -325,7 +319,7 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
               </section>)}
             </div>
             {pagedFriends.length < visibleFriends.length && <button type="button" className="social-load-more" onClick={() => setFriendLimit((value) => value + 100)}><Users /> Load 100 more friends</button>}
-            <footer className="social-bulk-bar"><span>{selected.size ? `${selected.size} selected` : 'Select friends to invite'}</span><div>{selected.size > 0 && <button type="button" className="btn-secondary" onClick={() => setSelected(new Set())}>Clear</button>}<button type="button" className="btn-danger" disabled={remoteClient || selected.size === 0 || busy !== '' || selected.size > 20} onClick={() => void removeSelected()}><Trash2 /> {busy === 'remove' ? 'Removing…' : t('social.remove')}</button><button type="button" className="btn-primary" disabled={selected.size === 0 || busy !== '' || selected.size > (remoteClient ? 1 : 20)} onClick={() => void inviteSelected()}><Send /> {busy === 'invite' ? 'Inviting…' : t('social.invite')}</button></div></footer>
+            {selected.size > 0 && <footer className="social-bulk-bar"><span>{selected.size ? `${selected.size} selected` : 'Select friends to invite'}</span><div>{selected.size > 0 && <button type="button" className="btn-secondary" onClick={() => setSelected(new Set())}>Clear</button>}<button type="button" className="btn-danger" disabled={remoteClient || selected.size === 0 || busy !== '' || selected.size > 20} onClick={() => void removeSelected()}><Trash2 /> {busy === 'remove' ? 'Removing…' : t('social.remove')}</button><button type="button" className="btn-primary" disabled={selected.size === 0 || busy !== '' || selected.size > (remoteClient ? 1 : 20)} onClick={() => void inviteSelected()}><Send /> {busy === 'invite' ? 'Inviting…' : t('social.invite')}</button></div></footer>}
           </section>
         </div>
 

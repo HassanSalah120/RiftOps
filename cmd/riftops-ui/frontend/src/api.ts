@@ -154,6 +154,7 @@ export async function switchLaunchProfile(id: string, forceLogin = false): Promi
   targetSessionExpired: boolean;
   targetSessionUnverified: boolean;
   verification: 'verified' | 'login-required' | 'wrong-account' | 'not-verified';
+  sessionRefreshed?: boolean;
 }> {
   const res = await fetch('/api/switch-profile', {
     method: 'POST',
