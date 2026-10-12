@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchLCUSkins, fetchLCULoot, fetchLCUProfile } from '../api';
-import { loadChampionCatalog, loadSkinCatalog } from '../leagueCatalog';
+import { clearLeagueCatalogCache, loadChampionCatalog, loadSkinCatalog } from '../leagueCatalog';
 import {
   Sparkles,
   Loader2,
@@ -21,6 +21,9 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import PageHeader from './PageHeader';
+import ChampionCollectionPortrait from './ChampionCollectionPortrait';
+import { buildChampionTotals, completeSkinInventory, skinShardIds, uniqueCollectionSkins } from '../collectionProgress';
+import './collection.css';
 import { useDialogFocus } from './useDialogFocus';
 import {
   type SkinView,
@@ -48,7 +51,7 @@ type SkinSort = 'rarity' | 'name';
 type ChampionSort = 'completion' | 'least-owned' | 'owned' | 'total' | 'name';
 type SkinStatusFilter = 'all' | 'owned' | 'missing' | 'zero-owned' | 'available' | 'shard' | 'rental' | 'wishlist' | 'unavailable';
 type SmartFilter = 'all' | 'zero-skins' | 'near-complete' | 'missing-one' | 'rarest' | 'shard-candidates';
-type ViewLayout = 'roster' | 'gallery';
+type ChampionFilter = 'all' | 'owned' | 'incomplete' | 'complete';
 
 function readPreference<T>(key: string, fallback: T): T {
   try {
@@ -158,11 +161,11 @@ function skinOwnership(raw: any) {
   return { isOwned, isRental };
 }
 
-const SKIN_CACHE_PREFIX = 'riftops-skin-cache-v3:';
+const SKIN_CACHE_PREFIX = 'riftops-skin-cache-v4:';
 
 function skinCacheKeys(puuid: string) {
   const suffix = encodeURIComponent(puuid);
-  return { data: `${SKIN_CACHE_PREFIX}${suffix}`, updated: `${SKIN_CACHE_PREFIX}${suffix}:updated` };
+  return { data: `${SKIN_CACHE_PREFIX}${suffix}`, updated: `${SKIN_CACHE_PREFIX}${suffix}:updated`, shardsAvailable: `${SKIN_CACHE_PREFIX}${suffix}:shards-available` };
 }
 
 function skinKey(skin: any) {
@@ -175,36 +178,6 @@ function legacySkinKey(skin: any) {
 
 function isSkinFavorite(favs: Set<string>, skin: any) {
   return favs.has(skinKey(skin)) || favs.has(legacySkinKey(skin));
-}
-
-function buildChampionTotals(skins: any[]) {
-  const totals = new Map<number, {
-    id: number;
-    name: string;
-    total: number;
-    owned: number;
-    shards: number;
-    rentals: number;
-    unavailable: number;
-  }>();
-  skins.forEach((skin) => {
-    const current = totals.get(skin.championId) || {
-      id: skin.championId,
-      name: skin.championName,
-      total: 0,
-      owned: 0,
-      shards: 0,
-      rentals: 0,
-      unavailable: 0,
-    };
-    current.total++;
-    if (skin.owned) current.owned++;
-    if (skin.shard) current.shards++;
-    if (skin.rental) current.rentals++;
-    if (skin.unavailable) current.unavailable++;
-    totals.set(skin.championId, current);
-  });
-  return Array.from(totals.values());
 }
 
 function SkinCardArt({
@@ -251,25 +224,23 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   const [allSkins, setAllSkins] = useState<any[]>([]);
   const [search, setSearch] = useState(() => readPreference('riftops-skin-search', ''));
   const [tierFilter, setTierFilter] = useState<string>(() => readPreference('riftops-skin-tier', 'all'));
-  const [championSort, setChampionSort] = useState<ChampionSort>(() => readPreference('riftops-skin-sort', 'completion'));
+  const [championSort, setChampionSort] = useState<ChampionSort>(() => readPreference('riftops-collection-champion-sort', 'name'));
   const [skinCategory, setSkinCategory] = useState<SkinCategory>(() => readPreference('riftops-skin-category', 'normal'));
   const [shardsOnly, setShardsOnly] = useState(() => readPreference('riftops-skin-shards-only', false));
   const [selectedChampId, setSelectedChampId] = useState<number | null>(null);
   const [favsOnly, setFavsOnly] = useState(() => readPreference('riftops-skin-favs-only', false));
   const [statusFilter, setStatusFilter] = useState<SkinStatusFilter>(() => readPreference('riftops-skin-status', 'all'));
   const [smartFilter, setSmartFilter] = useState<SmartFilter>(() => readPreference('riftops-skin-smart-filter', 'all'));
-  const [viewLayout, setViewLayout] = useState<ViewLayout>(() => readPreference('riftops-skin-layout', 'gallery'));
-  const [collapsedChamps, setCollapsedChamps] = useState<Set<number>>(new Set());
+  const [championFilter, setChampionFilter] = useState<ChampionFilter>('all');
+  const [shardsAvailable, setShardsAvailable] = useState(false);
   const [viewMode, setViewMode] = useState<SkinView>(() => readPreference('riftops-skin-view', 'grid'));
   const [density, setDensity] = useState<SkinDensity>(() => readPreference('riftops-skin-density', 'comfortable'));
   const [skinSort, setSkinSort] = useState<SkinSort>(() => readPreference('riftops-skin-item-sort', 'rarity'));
-  const [filtersOpen, setFiltersOpen] = useState(() => readPreference('riftops-skin-filters-open', false));
   const [previewSkin, setPreviewSkin] = useState<any | null>(null);
   const [copyStatus, setCopyStatus] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [ownedDelta, setOwnedDelta] = useState<number | null>(null);
   const [usingCachedCatalog, setUsingCachedCatalog] = useState(false);
-  const [championLimit, setChampionLimit] = useState(12);
   const previousOwnedRef = useRef<number | null>(null);
   const warmedFromCacheRef = useRef(false);
   const previewDialogRef = useDialogFocus<HTMLDivElement>(previewSkin !== null, () => setPreviewSkin(null));
@@ -293,18 +264,16 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   useEffect(() => {
     localStorage.setItem('riftops-skin-search', JSON.stringify(search));
     localStorage.setItem('riftops-skin-tier', JSON.stringify(tierFilter));
-    localStorage.setItem('riftops-skin-sort', JSON.stringify(championSort));
+    localStorage.setItem('riftops-collection-champion-sort', JSON.stringify(championSort));
     localStorage.setItem('riftops-skin-category', JSON.stringify(skinCategory));
     localStorage.setItem('riftops-skin-shards-only', JSON.stringify(shardsOnly));
     localStorage.setItem('riftops-skin-favs-only', JSON.stringify(favsOnly));
     localStorage.setItem('riftops-skin-status', JSON.stringify(statusFilter));
     localStorage.setItem('riftops-skin-smart-filter', JSON.stringify(smartFilter));
-    localStorage.setItem('riftops-skin-layout', JSON.stringify(viewLayout));
     localStorage.setItem('riftops-skin-view', JSON.stringify(viewMode));
     localStorage.setItem('riftops-skin-density', JSON.stringify(density));
     localStorage.setItem('riftops-skin-item-sort', JSON.stringify(skinSort));
-    localStorage.setItem('riftops-skin-filters-open', JSON.stringify(filtersOpen));
-  }, [search, tierFilter, championSort, skinCategory, shardsOnly, favsOnly, statusFilter, smartFilter, viewLayout, viewMode, density, skinSort, filtersOpen]);
+  }, [search, tierFilter, championSort, skinCategory, shardsOnly, favsOnly, statusFilter, smartFilter, viewMode, density, skinSort]);
 
   const toggleFav = (skinOrId: any) => {
     setFavs((prev) => {
@@ -347,29 +316,26 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
           warmedFromCacheRef.current = true;
           setAllSkins(cached);
           setUsingCachedCatalog(true);
+          setShardsAvailable(readPreference(cacheKeys.shardsAvailable, false));
           const cachedAt = readPreference<string | null>(cacheKeys.updated, null);
           setLastUpdated(cachedAt ? new Date(cachedAt) : null);
         }
       }
-      const [ownedRaw, lootRaw, skinCatalog, championCatalog] = await Promise.all([
+      const [ownedRaw, lootResult, skinCatalog, championCatalog] = await Promise.all([
         fetchLCUSkins(),
-        remoteReadOnly ? Promise.resolve([]) : fetchLCULoot().catch(() => []),
+        remoteReadOnly ? Promise.resolve({ data: [], available: false }) : fetchLCULoot().then((data) => ({ data, available: Array.isArray(data) })).catch(() => ({ data: [], available: false })),
         loadSkinCatalog(),
         loadChampionCatalog(),
       ]);
 
-      const shardSkinIds = new Set<number>();
-      if (Array.isArray(lootRaw)) {
-        lootRaw.forEach((item: any) => {
-          if (item.lootId && (item.lootId.startsWith('CHAMPION_SKIN_RENTAL_') || item.lootId.startsWith('CHAMPION_SKIN_'))) {
-            const idStr = item.lootId.replace(/^CHAMPION_SKIN_RENTAL_|^CHAMPION_SKIN_/, '');
-            const id = parseInt(idStr, 10);
-            if (id > 0) shardSkinIds.add(id);
-          }
-        });
-      }
+      setShardsAvailable(lootResult.available);
+      const shardSkinIds = skinShardIds(lootResult.data);
 
       const skinDbMap = new Map<number, any>(Object.values(skinCatalog).map((skin) => [skin.id, skin]));
+      if (skinDbMap.size === 0) {
+        clearLeagueCatalogCache();
+        throw new Error('Skin catalogue unavailable. Refresh to load complete champion collections.');
+      }
 
       const champNames = new Map<number, string>();
       const champAliases = new Map<number, string>();
@@ -382,13 +348,13 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
       });
 
       const ownedArr = flattenSkinRecords(ownedRaw);
-      if (ownedArr.length === 0) {
+      if (ownedArr.length === 0 && !(puuid && Array.isArray(ownedRaw) && ownedRaw.length === 0)) {
         throw new Error('League returned no skin records. Open League and refresh the collection.');
       }
 
       const parsedSkins: any[] = [];
 
-      ownedArr.forEach((s: any) => {
+      completeSkinInventory(ownedArr, Object.values(skinCatalog)).forEach((s: any) => {
         const sourceChampionId = numberField(s.championId, s.assetChampionId);
         const skinId = numberField(s.id, s.skinId, s.championSkinId);
         if (sourceChampionId === null || skinId === null) return;
@@ -396,7 +362,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
         if (s.isBase === true || skinNum === 0) return; // skip base skin
 
         const { isOwned, isRental } = skinOwnership(s);
-        const hasShard = !isOwned && !isRental && shardSkinIds.has(skinId);
+        const hasShard = !isOwned && shardSkinIds.has(skinId);
         const dbEntry = skinDbMap.get(skinId) || {};
         const skinName = s.name || dbEntry.name || `Skin #${skinNum}`;
         const isClassic = /^classic(?:\s|$)/i.test(String(skinName)) || (sourceChampionId >= 60000 && skinId >= 60000000);
@@ -441,7 +407,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
         throw new Error('League returned no usable skin records. Refresh after the client reaches the home screen.');
       }
 
-      const ownedCount = parsedSkins.filter((skin) => skin.owned).length;
+      const ownedCount = uniqueCollectionSkins(parsedSkins).filter((skin) => skin.owned).length;
       setOwnedDelta(previousOwnedRef.current == null ? null : ownedCount - previousOwnedRef.current);
       previousOwnedRef.current = ownedCount;
       setLastUpdated(new Date());
@@ -451,6 +417,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
         if (cacheKeys) {
           localStorage.setItem(cacheKeys.data, JSON.stringify(parsedSkins));
           localStorage.setItem(cacheKeys.updated, new Date().toISOString());
+          localStorage.setItem(cacheKeys.shardsAvailable, JSON.stringify(lootResult.available));
         }
       } catch {
         // A full localStorage quota should not make the LCU refresh fail.
@@ -459,6 +426,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
       if (cached.length > 0) {
         setAllSkins(cached);
         setUsingCachedCatalog(true);
+        setShardsAvailable(cacheKeys ? readPreference(cacheKeys.shardsAvailable, false) : false);
         const cachedAt = cacheKeys ? readPreference<string | null>(cacheKeys.updated, null) : null;
         setLastUpdated(cachedAt ? new Date(cachedAt) : null);
         setError(null);
@@ -474,23 +442,9 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     void loadData();
   }, [loadData]);
 
-  useEffect(() => {
-    if (!filtersOpen) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setFiltersOpen(false);
-    };
-    document.addEventListener('keydown', onKeyDown);
-    const compact = window.matchMedia('(max-width: 900px)').matches;
-    const previousOverflow = document.body.style.overflow;
-    if (compact) document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      if (compact) document.body.style.overflow = previousOverflow;
-    };
-  }, [filtersOpen]);
-
-  const normalSkins = useMemo(() => allSkins.filter((skin) => !skin.isClassic), [allSkins]);
-  const classicSkins = useMemo(() => allSkins.filter((skin) => skin.isClassic), [allSkins]);
+  const uniqueSkins = useMemo(() => uniqueCollectionSkins(allSkins), [allSkins]);
+  const normalSkins = useMemo(() => uniqueSkins.filter((skin) => !skin.isClassic), [uniqueSkins]);
+  const classicSkins = useMemo(() => uniqueSkins.filter((skin) => skin.isClassic), [uniqueSkins]);
   const categorySkins = useMemo(
     () => (skinCategory === 'classic' ? classicSkins : normalSkins),
     [skinCategory, classicSkins, normalSkins],
@@ -498,15 +452,10 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
   const categoryChamps = useMemo(() => buildChampionTotals(categorySkins), [categorySkins]);
   const champById = useMemo(() => new Map(categoryChamps.map((champ) => [champ.id, champ])), [categoryChamps]);
 
-  // Derived statistics for the selected category. Skin completion is kept separate
-  // from champion coverage so both numbers describe something meaningful.
+  // Totals use distinct skins and always describe the whole selected category.
   const totalOwned = categorySkins.filter((s) => s.owned).length;
   const totalShards = categorySkins.filter((s) => s.shard).length;
   const totalUnavailable = categorySkins.filter((s) => s.unavailable).length;
-  const champsWithOwned = categoryChamps.filter((c) => c.owned > 0).length;
-  const champsWithZeroOwned = categoryChamps.filter((c) => c.owned === 0).length;
-  const pct = categorySkins.length ? Math.round((totalOwned / categorySkins.length) * 100) : 0;
-  const championPct = categoryChamps.length ? Math.round((champsWithOwned / categoryChamps.length) * 100) : 0;
   const activeFilterCount = [
     search.trim().length > 0,
     tierFilter !== 'all',
@@ -514,7 +463,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     smartFilter !== 'all',
     shardsOnly,
     favsOnly,
-    selectedChampId !== null,
+    championFilter !== 'all',
   ].filter(Boolean).length;
 
   const clearFilters = () => {
@@ -525,33 +474,16 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     setShardsOnly(false);
     setFavsOnly(false);
     setSelectedChampId(null);
+    setChampionFilter('all');
   };
 
   const chooseStatus = (next: SkinStatusFilter) => {
     setStatusFilter(next);
     setShardsOnly(false);
-    setChampionLimit(12);
   };
 
   const toggleStatus = (next: SkinStatusFilter) => {
     chooseStatus(statusFilter === next && !shardsOnly ? 'all' : next);
-  };
-
-  const toggleCollapse = (champId: number) => {
-    setCollapsedChamps((prev) => {
-      const next = new Set(prev);
-      if (next.has(champId)) next.delete(champId);
-      else next.add(champId);
-      return next;
-    });
-  };
-
-  const toggleAllCollapse = () => {
-    if (collapsedChamps.size >= displayedChamps.length) {
-      setCollapsedChamps(new Set());
-    } else {
-      setCollapsedChamps(new Set(displayedChamps.map((c) => c.id)));
-    }
   };
 
   const visibleSkins = useMemo(() => {
@@ -560,7 +492,6 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
 
     return categorySkins.filter((skin) => {
       const champ = champById.get(skin.championId);
-      if (selectedChampId !== null && skin.championId !== selectedChampId) return false;
       const matchesQuery = !query ||
         skin.championName.toLowerCase().includes(query) ||
         skin.name.toLowerCase().includes(query);
@@ -583,15 +514,19 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
       if (smartFilter === 'missing-one' && (!champ || champ.total - champ.owned !== 1)) return false;
       return true;
     });
-  }, [categorySkins, champById, selectedChampId, search, tierFilter, shardsOnly, favsOnly, favs, statusFilter, wishlist, smartFilter]);
+  }, [categorySkins, champById, search, tierFilter, shardsOnly, favsOnly, favs, statusFilter, wishlist, smartFilter]);
 
-  // Filtered champions grid. Cards retain full totals, while their drawer obeys
+  // Filtered champions grid. Portraits retain full totals, while their panel obeys
   // the active skin-level filters.
-  const filteredChamps = categoryChamps.filter((champ) => visibleSkins.some((skin) => skin.championId === champ.id));
+  const visibleChampionIds = new Set(visibleSkins.map((skin) => skin.championId));
+  const filteredChamps = categoryChamps.filter((champ) => visibleChampionIds.has(champ.id) && (
+    championFilter === 'all' ||
+    (championFilter === 'owned' && champ.owned > 0) ||
+    (championFilter === 'incomplete' && champ.owned < champ.total) ||
+    (championFilter === 'complete' && champ.total > 0 && champ.owned === champ.total)
+  ));
 
-  // Completion is the default because it surfaces the champions closest to
-  // being finished. Tie-break with owned count, then total size, so the order
-  // remains useful and stable when several champions share the same percent.
+  // Start alphabetically; optional progress sorts keep stable name tie-breaks.
   const sortedChamps = [...filteredChamps].sort((a, b) => {
     const completion = (champ: any) => champ.total > 0 ? champ.owned / champ.total : 0;
     if (championSort === 'least-owned') {
@@ -609,7 +544,18 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     return a.name.localeCompare(b.name);
   });
 
-  const displayedChamps = sortedChamps.slice(0, championLimit);
+  const displayedChamps = sortedChamps;
+  const selectedChampion = selectedChampId === null ? null : champById.get(selectedChampId);
+  useEffect(() => {
+    if (selectedChampId === null) return;
+    document.getElementById('collection-detail-title')?.focus();
+    document.getElementById('collection-champion-skins')?.scrollIntoView({ block: 'nearest' });
+  }, [selectedChampId]);
+  const closeChampion = () => {
+    const id = selectedChampId;
+    setSelectedChampId(null);
+    requestAnimationFrame(() => document.getElementById(`collection-champion-${id}`)?.focus());
+  };
   const visibleSkinsByChampion = useMemo(() => {
     const rarityRank = (skin: any) => (TIER_MAP[skin.rarity] || TIER_MAP.standard).rank;
     const sorted = [...visibleSkins].sort((a, b) => {
@@ -621,7 +567,7 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     return groups;
   }, [skinSort, visibleSkins]);
   const tierOptions = Object.entries(TIER_MAP).filter(([tier]) => categorySkins.some((skin) => skin.rarity === tier));
-  const missingCount = categorySkins.filter((skin) => !skin.owned && !skin.rental && !skin.shard).length;
+
 
   const renderSkinCard = (skin: any) => {
     const isFav = isSkinFavorite(favs, skin);
@@ -633,17 +579,8 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
       <article
         key={skin.id}
         className={`skin-vault-card ${skin.owned ? 'is-owned' : skin.rental ? 'is-rental' : skin.shard ? 'is-shard' : 'is-missing'} ${skin.unavailable ? 'is-unavailable' : ''}`}
-        role="button"
-        tabIndex={0}
-        aria-label={`Preview ${skin.name}, ${status}`}
-        onClick={() => setPreviewSkin(skin)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            setPreviewSkin(skin);
-          }
-        }}
       >
+        <button type="button" className="collection-skin-preview" aria-label={`Preview ${skin.name}, ${status}`} onClick={() => setPreviewSkin(skin)} />
         <div className="skin-vault-card__media">
           <SkinCardArt
             key={`${viewMode}-${skin.id}`}
@@ -696,113 +633,27 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
     );
   };
 
-  const headerMeta = (
-    <>
-      <span className="page-header__badge">{totalOwned} {skinCategory === 'classic' ? 'classic' : 'normal'} owned</span>
-      {usingCachedCatalog && <span className="page-header__badge page-header__badge--warning">Offline catalogue</span>}
-      {totalShards > 0 && <span className="page-header__badge page-header__badge--success">◆ {totalShards} shards</span>}
-      {ownedDelta !== null && ownedDelta !== 0 && <span className={`page-header__badge ${ownedDelta > 0 ? 'page-header__badge--success' : 'page-header__badge--danger'}`}>{ownedDelta > 0 ? '+' : ''}{ownedDelta} since refresh</span>}
-    </>
-  );
-  const headerActions = (
-    <>
-      {lastUpdated && <span className="page-header__updated"><Clock3 /> {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
-      <button type="button" onClick={() => void loadData()} disabled={loading} className="page-header__icon-action" title="Refresh skin collection" aria-label="Refresh skin collection">
-        <RefreshCw className={loading ? 'animate-spin' : ''} />
-      </button>
-    </>
-  );
-
+  const completeChampions = categoryChamps.filter((champ) => champ.total > 0 && champ.owned === champ.total).length;
   return (
-    <div className={`page-content page-content--skins skin-vault-page ${loading || error ? 'is-unavailable' : ''}`}>
-      <PageHeader
-        variant="collection"
-        icon={Sparkles}
-        eyebrow="COSMETIC VAULT"
-        title="Collection"
-        description="Every skin on your account, and the ones still missing."
-        meta={loading ? <span className="page-header__badge">Loading collection</span> : error ? <span className="page-header__badge">Collection unavailable</span> : headerMeta}
-        actions={headerActions}
+    <div className="page-content page-content--skins collection-page">
+      <PageHeader icon={Sparkles} eyebrow="COLLECTION" title="Collection" description="Your champions. Your skins. Your collection."
+        meta={loading ? <span className="page-header__badge">Loading collection</span> : error ? <span className="page-header__badge">Collection unavailable</span> : <span className="collection-totals"><b>{categoryChamps.length}</b> champions <span>·</span> <b>{totalOwned}</b> skins <span>·</span> <b>{completeChampions}</b> complete</span>}
+        actions={<>{lastUpdated && <span className="page-header__updated"><Clock3 /> {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}<button type="button" onClick={() => void loadData()} disabled={loading} className="page-header__icon-action" aria-label="Refresh skin collection"><RefreshCw className={loading ? 'animate-spin' : ''} /></button></>}
       />
-
-      {!loading && !error && <section className="skin-vault-summary" aria-label="Collection progress">
-        <button
-          type="button"
-          className={`skin-vault-summary__progress skin-vault-summary__clickable ${statusFilter === 'all' && smartFilter === 'all' ? 'is-active' : ''}`}
-          onClick={() => { chooseStatus('all'); setSmartFilter('all'); }}
-          title="Reset to all skins"
-        >
-          <div><strong>{totalOwned}</strong><span>/ {categorySkins.length}</span></div>
-          <div className="skin-vault-summary__bar"><span style={{ width: `${pct}%` }} /></div>
-          <small>{skinCategory === 'classic' ? 'Classic collection' : 'Normal skins'} · {pct}% complete</small>
-        </button>
-        <button
-          type="button"
-          className={`skin-vault-summary__stat skin-vault-summary__clickable ${statusFilter === 'missing' ? 'is-active' : ''}`}
-          onClick={() => chooseStatus(statusFilter === 'missing' ? 'all' : 'missing')}
-          title="Filter to missing skins"
-        >
-          <strong>{missingCount}</strong>
-          <span>Still missing</span>
-        </button>
-        <button
-          type="button"
-          className={`skin-vault-summary__stat skin-vault-summary__clickable is-zero-stat ${statusFilter === 'zero-owned' ? 'is-active' : ''}`}
-          onClick={() => chooseStatus(statusFilter === 'zero-owned' ? 'all' : 'zero-owned')}
-          title="Filter to champions with 0 skins owned"
-        >
-          <strong>{champsWithZeroOwned}</strong>
-          <span>0 skins owned</span>
-        </button>
-        <button
-          type="button"
-          className={`skin-vault-summary__stat skin-vault-summary__clickable is-shard ${statusFilter === 'shard' ? 'is-active' : ''}`}
-          onClick={() => chooseStatus(statusFilter === 'shard' ? 'all' : 'shard')}
-          title="Filter to skins with loot shards"
-        >
-          <strong>◆ {totalShards}</strong>
-          <span>Shards ready</span>
-        </button>
-        <div className="skin-vault-summary__stat">
-          <strong>{championPct}%</strong>
-          <span>Coverage ({champsWithOwned}/{categoryChamps.length})</span>
+      {usingCachedCatalog && <p className="collection-notice" role="status">Showing this account's saved collection. Refresh when League reconnects.</p>}
+      {ownedDelta !== null && ownedDelta !== 0 && <p className="collection-notice" role="status">{ownedDelta > 0 ? '+' : ''}{ownedDelta} owned skins since the previous refresh.</p>}
+      {!loading && !error && <>
+        <div className="collection-toolbar">
+          <label className="collection-search"><Search aria-hidden="true" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search champions or skins…" aria-label="Search champions or skins" />{search && <button type="button" onClick={() => setSearch('')} aria-label="Clear collection search"><X /></button>}</label>
+          <div className="collection-tabs" role="group" aria-label="Champion collection filter">
+            {(['all', 'owned', 'incomplete', 'complete'] as ChampionFilter[]).map((filter) => <button type="button" key={filter} onClick={() => setChampionFilter(filter)} aria-pressed={championFilter === filter}>{filter[0].toUpperCase() + filter.slice(1)}</button>)}
+          </div>
+          <label className="collection-sort"><span className="sr-only">Sort champions</span><select value={championSort} onChange={(event) => setChampionSort(event.target.value as ChampionSort)}><option value="name">Name A–Z</option><option value="completion">Most complete</option><option value="least-owned">Least owned</option><option value="owned">Most owned</option><option value="total">Most skins</option></select><ChevronDown aria-hidden="true" /></label>
         </div>
-      </section>}
+        <details className="collection-advanced"><summary><SlidersHorizontal aria-hidden="true" /> More filters{activeFilterCount > 0 && <span>{activeFilterCount} active</span>}</summary><div className="collection-advanced__body">
+          <div className="skin-vault-filter-group"><span>Skin card size</span><label className="skin-vault-filter-group__select"><select aria-label="Skin card size" value={density} onChange={(event) => setDensity(event.target.value as SkinDensity)}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select><ChevronDown aria-hidden="true" /></label></div>
+          <div className="skin-vault-filter-group"><span>Skin status</span><label className="skin-vault-filter-group__select"><select aria-label="Skin status" value={statusFilter} onChange={(event) => chooseStatus(event.target.value as SkinStatusFilter)}><option value="all">All skins</option><option value="owned">Owned skins</option><option value="missing">Missing without shards</option><option value="zero-owned">Champions with no owned skins</option><option value="available">Available in store</option><option value="shard">Shard available</option><option value="rental">Temporary rentals</option><option value="wishlist">Wishlisted</option><option value="unavailable">Legacy / unavailable</option></select><ChevronDown aria-hidden="true" /></label></div>
 
-      <div className={`skin-vault ${filtersOpen ? 'is-filters-open' : ''}`}>
-        <button type="button" className="skin-vault__scrim" onClick={() => setFiltersOpen(false)} aria-label="Close filters" />
-        <aside className="skin-vault-filters" aria-label="Collection filters">
-          <div className="skin-vault-filters__title">
-            <span><SlidersHorizontal /> Filters</span>
-            <button type="button" onClick={() => setFiltersOpen(false)} aria-label="Close filters"><X /></button>
-          </div>
-          <label className="skin-vault-filters__search">
-            <Search />
-            <input
-              type="text"
-              name="skin-search"
-              autoComplete="off"
-              placeholder="Search skin or champion..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              aria-label="Search skins and champions"
-            />
-          </label>
-          <div className="skin-vault-filters__segments" role="group" aria-label="Ownership filter">
-            {(['all', 'owned', 'missing', 'zero-owned'] as SkinStatusFilter[]).map((filter) => (
-              <button
-                type="button"
-                key={filter}
-                onClick={() => chooseStatus(filter)}
-                className={statusFilter === filter && !shardsOnly ? 'is-selected' : ''}
-                aria-pressed={statusFilter === filter && !shardsOnly}
-              >
-                {filter === 'all' ? 'All' : filter === 'zero-owned' ? '0 Skins' : filter[0].toUpperCase() + filter.slice(1)}
-              </button>
-            ))}
-          </div>
-
-          <details className="skin-facets"><summary>More collection filters</summary><div>
           <div className="skin-vault-filter-group">
             <span>Collection</span>
             <div className="skin-vault-filters__collection-toggle">
@@ -826,25 +677,6 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
                 );
               })}
             </div>
-          </div>
-
-          <div className="skin-vault-filter-group">
-            <span>Champion</span>
-            <label className="skin-vault-filter-group__select">
-              <select
-                aria-label="Champion"
-                value={selectedChampId ?? ''}
-                onChange={(event) => setSelectedChampId(event.target.value ? Number(event.target.value) : null)}
-              >
-                <option value="">Every champion ({categoryChamps.length})</option>
-                {[...categoryChamps].sort((a, b) => a.name.localeCompare(b.name)).map((champ) => (
-                  <option key={champ.id} value={champ.id}>
-                    {champ.name} ({champ.owned}/{champ.total})
-                  </option>
-                ))}
-              </select>
-              <ChevronDown />
-            </label>
           </div>
 
           <div className="skin-vault-filter-group">
@@ -888,6 +720,8 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
                 type="button"
                 className={`skin-vault-filter-chip ${statusFilter === 'shard' || shardsOnly ? 'is-selected' : ''}`}
                 onClick={() => toggleStatus('shard')}
+                aria-pressed={statusFilter === 'shard' || shardsOnly}
+                disabled={!shardsAvailable}
               >
                 <Gem className="w-3 h-3 text-emerald-400" />
                 <span>Shards</span>
@@ -922,312 +756,22 @@ export default function SkinShowcase({ remoteReadOnly = false }: { remoteReadOnl
             </div>
           </div>
 
-          </div></details>
 
-          {activeFilterCount > 0 && (
-            <button type="button" className="skin-vault-filters__clear" onClick={clearFilters}>
-              <RotateCcw /> Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'}
-            </button>
-          )}
-        </aside>
-
-        <section className="skin-vault-results">
-          <div className="skin-vault-toolbar">
-            <div className="skin-vault-toolbar__counts">
-              {statusFilter === 'zero-owned' ? (
-                <><strong>{filteredChamps.length}</strong><span> champions with 0 skins</span></>
-              ) : (
-                <><strong>{visibleSkins.length}</strong><span> skins · {filteredChamps.length} champions</span></>
-              )}
-            </div>
-
-            <button type="button" className="skin-vault-toolbar__mobile-filter" onClick={() => setFiltersOpen(true)}>
-              <SlidersHorizontal /> Filters {activeFilterCount > 0 && <b>{activeFilterCount}</b>}
-            </button>
-
-            <div className="skin-vault-toolbar__layout-switch" role="group" aria-label="Layout mode">
-              <button
-                type="button"
-                className={viewLayout === 'roster' ? 'is-selected' : ''}
-                onClick={() => setViewLayout('roster')}
-                title="Roster view (compact champions overview)"
-              >
-                Roster
-              </button>
-              <button
-                type="button"
-                className={viewLayout === 'gallery' ? 'is-selected' : ''}
-                onClick={() => setViewLayout('gallery')}
-                title="Gallery view (skins grouped by champion)"
-              >
-                Gallery
-              </button>
-            </div>
-
-            {viewLayout === 'gallery' && (
-              <button
-                type="button"
-                className="skin-vault-toolbar__collapse-btn"
-                onClick={toggleAllCollapse}
-                title={collapsedChamps.size >= displayedChamps.length ? 'Expand all champions' : 'Collapse all champions'}
-              >
-                {collapsedChamps.size >= displayedChamps.length ? 'Expand All' : 'Collapse All'}
-              </button>
-            )}
-
-            <label>
-              <span>Champions</span>
-              <select value={championSort} onChange={(event) => setChampionSort(event.target.value as ChampionSort)}>
-                <option value="completion">Most complete</option>
-                <option value="least-owned">Least owned (0 first)</option>
-                <option value="owned">Most owned</option>
-                <option value="total">Most skins</option>
-                <option value="name">Name A–Z</option>
-              </select>
-              <ChevronDown />
-            </label>
-
-            {viewLayout === 'gallery' && (
-              <>
-                <label>
-                  <span>Sort</span>
-                  <select value={skinSort} onChange={(event) => setSkinSort(event.target.value as SkinSort)}>
-                    <option value="rarity">Highest tier</option>
-                    <option value="name">Name A–Z</option>
-                  </select>
-                  <ChevronDown />
-                </label>
-
-                <label>
-                  <span>Size</span>
-                  <select value={density} onChange={(event) => setDensity(event.target.value as SkinDensity)}>
-                    <option value="comfortable">Comfortable</option>
-                    <option value="compact">Compact</option>
-                  </select>
-                  <ChevronDown />
-                </label>
-
-                <div className="skin-vault-toolbar__view">
-                  <button
-                    type="button"
-                    className={viewMode === 'grid' ? 'is-selected' : ''}
-                    onClick={() => setViewMode('grid')}
-                    aria-label="Grid view"
-                  >
-                    <LayoutGrid />
-                  </button>
-                  <button
-                    type="button"
-                    className={viewMode === 'list' ? 'is-selected' : ''}
-                    onClick={() => setViewMode('list')}
-                    aria-label="List view"
-                  >
-                    <List />
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {loading && (
-            <div className="skin-vault-state">
-              <Loader2 className="animate-spin" />
-              <strong>Loading your collection</strong>
-              <span>Reading skins and ownership from League Client…</span>
-            </div>
-          )}
-          {error && !loading && (
-            <div className="skin-vault-state is-error">
-              <Shield />
-              <strong>Collection unavailable</strong>
-              <span>{error}</span>
-              <button type="button" onClick={() => void loadData()}>Retry connection</button>
-            </div>
-          )}
-          {!loading && !error && displayedChamps.length === 0 && (
-            <div className="skin-vault-state">
-              <Sparkles />
-              <strong>No skins match these filters</strong>
-              <span>Clear a filter or search for another champion.</span>
-              {activeFilterCount > 0 && <button type="button" onClick={clearFilters}>Clear filters</button>}
-            </div>
-          )}
-
-          {/* Roster View */}
-          {!loading && !error && viewLayout === 'roster' && (
-            <div className="skin-roster-view">
-              <div className="skin-roster-grid">
-                {displayedChamps.map((champ) => {
-                  const isSelected = selectedChampId === champ.id;
-                  const completion = champ.total ? Math.round((champ.owned / champ.total) * 100) : 0;
-                  const isZero = champ.owned === 0;
-                  return (
-                    <article
-                      key={champ.id}
-                      className={`skin-roster-card ${isSelected ? 'is-selected' : ''} ${isZero ? 'is-zero' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setSelectedChampId(isSelected ? null : champ.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setSelectedChampId(isSelected ? null : champ.id);
-                        }
-                      }}
-                      aria-expanded={isSelected}
-                      aria-label={`${champ.name}, ${isZero ? '0 skins owned' : `${champ.owned} of ${champ.total} skins`}`}
-                    >
-                      <img
-                        src={`/lol-game-data/assets/v1/champion-icons/${champ.id}.png`}
-                        alt=""
-                        width="34"
-                        height="34"
-                        loading="lazy"
-                        onError={(e: any) => { e.currentTarget.style.display = 'none'; }}
-                      />
-                      <div className="skin-roster-card__info">
-                        <div className="skin-roster-card__header">
-                          <strong>{champ.name}</strong>
-                          <span className={`skin-roster-card__badge ${isZero ? 'is-zero' : completion === 100 ? 'is-complete' : ''}`}>
-                            {isZero ? '0 skins' : `${champ.owned}/${champ.total}`}
-                          </span>
-                        </div>
-                        <div className="skin-roster-card__progress">
-                          <span style={{ width: `${completion}%` }} />
-                        </div>
-                        <div className="skin-roster-card__meta">
-                          <span className="skin-roster-card__hint">{isZero ? 'No skins owned' : completion === 100 ? 'Complete' : `${champ.total - champ.owned} missing`}</span>
-                          {champ.shards > 0 && <span className="skin-roster-card__shard">◆ {champ.shards}</span>}
-                        </div>
-                      </div>
-                      <ChevronDown className={`skin-roster-card__chevron ${isSelected ? 'rotate-180' : ''}`} />
-                    </article>
-                  );
-                })}
-              </div>
-
-              {/* Drawer when a champion is selected in roster view */}
-              {selectedChampId !== null && (
-                <div className="skin-roster-drawer">
-                  {(() => {
-                    const selectedChamp = categoryChamps.find((c) => c.id === selectedChampId);
-                    const skins = visibleSkinsByChampion.get(selectedChampId) || [];
-                    const shownOwned = skins.filter((s) => s.owned).length;
-                    if (!selectedChamp) return null;
-                    return (
-                      <>
-                        <div className="skin-roster-drawer__header">
-                          <div className="skin-roster-drawer__title">
-                            <img
-                              src={`/lol-game-data/assets/v1/champion-icons/${selectedChamp.id}.png`}
-                              alt=""
-                              width="28"
-                              height="28"
-                              loading="lazy"
-                            />
-                            <div>
-                              <h3>{selectedChamp.name} Skins</h3>
-                              <span>{shownOwned} owned shown · {selectedChamp.owned}/{selectedChamp.total} total</span>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedChampId(null)}
-                            className="skin-roster-drawer__close"
-                            aria-label="Close skins drawer"
-                          >
-                            <X />
-                          </button>
-                        </div>
-
-                        {skins.length === 0 ? (
-                          <div className="skin-vault-state is-empty-inline">
-                            <Sparkles />
-                            <strong>No skins match the active filter</strong>
-                            <span>Try clearing filters to see this champion's skins.</span>
-                          </div>
-                        ) : (
-                          <div className={`skin-vault-cards is-grid is-${density}`}>
-                            {skins.map((skin) => renderSkinCard(skin))}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Gallery View */}
-          {!loading && !error && viewLayout === 'gallery' && displayedChamps.map((champ) => {
-            const skins = visibleSkinsByChampion.get(champ.id) || [];
-            const shownOwned = skins.filter((skin) => skin.owned).length;
-            const completion = champ.total ? Math.round((champ.owned / champ.total) * 100) : 0;
-            const isCollapsed = collapsedChamps.has(champ.id);
-            const isZero = champ.owned === 0;
-
-            return (
-              <section className="skin-vault-group" key={champ.id}>
-                <header
-                  className="skin-vault-group__header is-clickable"
-                  onClick={() => toggleCollapse(champ.id)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      toggleCollapse(champ.id);
-                    }
-                  }}
-                  aria-expanded={!isCollapsed}
-                >
-                  <img
-                    src={`/lol-game-data/assets/v1/champion-icons/${champ.id}.png`}
-                    alt=""
-                    width="26"
-                    height="26"
-                    loading="lazy"
-                    onError={(event) => { event.currentTarget.style.display = 'none'; }}
-                  />
-                  <strong>{champ.name}</strong>
-                  <span className={`skin-vault-group__badge ${isZero ? 'is-zero' : ''}`}>
-                    {isZero ? '0 skins owned' : `${shownOwned} shown · ${champ.owned}/${champ.total} owned`}
-                  </span>
-                  {champ.shards > 0 && <em>◆ {champ.shards} shard{champ.shards === 1 ? '' : 's'}</em>}
-                  <div className="skin-vault-group__bar"><span style={{ width: `${completion}%` }} /></div>
-                  <ChevronDown className={`skin-vault-group__chevron ${isCollapsed ? '' : 'rotate-180'}`} />
-                </header>
-
-                {!isCollapsed && (
-                  <div className={`skin-vault-cards is-${viewMode} is-${density}`}>
-                    {skins.map((skin) => renderSkinCard(skin))}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-
-          {!loading && !error && displayedChamps.length < sortedChamps.length && (
-            <div className="incremental-actions">
-              <button
-                type="button"
-                className="skin-vault-results__more"
-                onClick={() => setChampionLimit((limit) => Math.min(limit + 12, sortedChamps.length))}
-              >
-                Load {Math.min(12, sortedChamps.length - displayedChamps.length)} more champions <span>{sortedChamps.length - displayedChamps.length} remaining</span>
-              </button>
-              <button
-                type="button"
-                className="skin-vault-results__more"
-                onClick={() => setChampionLimit(sortedChamps.length)}
-              >
-                Load all {sortedChamps.length} champions
-              </button>
-            </div>
-          )}
-        </section>
-      </div>
+        </div></details>
+        {activeFilterCount > 0 && <div className="collection-filter-summary"><span>{filteredChamps.length} champions match your filters</span><button type="button" onClick={clearFilters}><RotateCcw aria-hidden="true" /> Clear filters</button></div>}
+        {!shardsAvailable && <p className="collection-notice" role="status">{remoteReadOnly ? 'Shard inventory is available on the desktop.' : 'Shard inventory unavailable. Owned skins are shown; refresh to check your shards.'}</p>}
+        <div className="collection-legend" aria-label="Collection ring colors"><span><i className="is-owned" />Owned skins</span><span><i className="is-shard" />Shards to unlock</span><span><i className="is-missing" />Missing skins</span><small>Shards do not count as owned skins.</small></div>
+        {selectedChampion && <section className="collection-detail" id="collection-champion-skins" aria-labelledby="collection-detail-title">
+          <header><div><h2 id="collection-detail-title" tabIndex={-1}>{selectedChampion.name} skins</h2><p>{selectedChampion.owned} / {selectedChampion.total} owned{selectedChampion.shards > 0 ? ` · ${selectedChampion.shards} shards to unlock` : ''}</p></div><div className="collection-detail__actions"><label><span className="sr-only">Sort skins</span><select value={skinSort} onChange={(event) => setSkinSort(event.target.value as SkinSort)}><option value="rarity">Highest tier</option><option value="name">Name A–Z</option></select></label><button type="button" onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} aria-label={viewMode === 'grid' ? 'Show skins in a list' : 'Show skins in a grid'}>{viewMode === 'grid' ? <List /> : <LayoutGrid />}</button><button type="button" onClick={closeChampion} aria-label="Close champion skins"><X /></button></div></header>
+          <div className="collection-detail__body">{(visibleSkinsByChampion.get(selectedChampion.id) || []).length > 0 ? <div className={`skin-vault-cards is-${viewMode} is-${density}`}>{(visibleSkinsByChampion.get(selectedChampion.id) || []).map(renderSkinCard)}</div> : <p>No skins match the active filters for this champion. Clear filters to see every skin.</p>}</div>
+        </section>}
+        <div className="collection-champion-grid" aria-label="Champion skin collections">
+          {displayedChamps.map((champion) => <ChampionCollectionPortrait key={champion.id} champion={champion} shardsKnown={shardsAvailable} selected={selectedChampId === champion.id} onSelect={() => selectedChampId === champion.id ? closeChampion() : setSelectedChampId(champion.id)} />)}
+        </div>
+        {displayedChamps.length === 0 && <div className="skin-vault-state"><Search aria-hidden="true" /><strong>No champions match these filters</strong><span>Try another search or clear your filters.</span><button type="button" onClick={clearFilters}>Clear filters</button></div>}
+      </>}
+      {loading && <div className="skin-vault-state" role="status"><Loader2 className="animate-spin" /><strong>Loading your collection</strong><span>Reading skins and ownership from League Client…</span></div>}
+      {error && !loading && <div className="skin-vault-state is-error" role="status"><Shield /><strong>Collection unavailable</strong><span>{error}</span><button type="button" onClick={() => void loadData()}>Retry connection</button></div>}
 
       {/* Fullsplash Modal Preview */}
       {previewSkin && (

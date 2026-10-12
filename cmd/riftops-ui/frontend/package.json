@@ -20,7 +20,9 @@
   "name": "frontend",
   "overrides": {
     "nanoid": "3.3.18",
-    "postcss": "8.5.26"
+    "postcss": "8.5.26",
+    "source-map-js": "1.2.2",
+    "postcss-selector-parser": "7.1.6"
   },
   "private": true,
   "scripts": {
@@ -28,7 +30,7 @@
     "dev": "vite",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --test tests/champSelectFlow.test.ts tests/liveSession.test.ts tests/clientCapabilities.test.ts tests/externalURL.test.ts tests/playFlowQueue.test.ts tests/roleQuest.test.ts tests/buildPlanner.test.ts tests/lootActions.test.ts tests/arenaBravery.test.ts tests/arenaTelemetry.test.ts tests/skinAssets.test.ts tests/leagueCatalog.test.ts tests/reviewedOperation.test.ts"
+    "test": "node --test tests/champSelectFlow.test.ts tests/liveSession.test.ts tests/clientCapabilities.test.ts tests/externalURL.test.ts tests/playFlowQueue.test.ts tests/roleQuest.test.ts tests/buildPlanner.test.ts tests/lootActions.test.ts tests/arenaBravery.test.ts tests/arenaTelemetry.test.ts tests/skinAssets.test.ts tests/leagueCatalog.test.ts tests/reviewedOperation.test.ts tests/collectionProgress.test.ts"
   },
   "type": "module"
 }

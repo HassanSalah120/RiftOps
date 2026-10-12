@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.10.18 — 2026-10-12
+
+- Replaced the Collection gallery with champion portraits and completion rings: gold for owned skins, green for distinct shard-only skins, and a dark track for missing skins.
+- Joined account ownership with the full skin catalogue so unowned champions remain visible and completion totals stay accurate. Duplicate shards and temporary rentals do not count as permanent ownership.
+- Added champion search, completion filters, expandable advanced filters, and an inline skin browser with keyboard focus restoration.
+- Added optional first-launch setup for preferred game, launch presence, and background activity. Saving or skipping opens Home; returning users keep their existing workspace and preferences.
+- Kept setup recoverable after interrupted or failed saves, and prevented unloaded preferences from being overwritten. Phone access bypasses desktop setup.
+- Updated the GitHub Pages showcase and downloads with the new Collection design, first-launch setup, and portable Windows download.
+- Updated the CSS parser and source-map build dependencies to patched versions; the frontend dependency audit reports no known vulnerabilities.
+
 ## v2.10.17 — 2026-10-11
 
 - Reworked every dashboard workspace with clearer actions, aligned controls, responsive navigation, and improved loading, empty, and error states.
