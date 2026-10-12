@@ -8,6 +8,7 @@
 - Added optional first-launch setup for preferred game, launch presence, and background activity. Saving or skipping opens Home; returning users keep their existing workspace and preferences.
 - Kept setup recoverable after interrupted or failed saves, and prevented unloaded preferences from being overwritten. Phone access bypasses desktop setup.
 - Updated the GitHub Pages showcase and downloads with the new Collection design, first-launch setup, and portable Windows download.
+- Corrected macOS download labels to Apple Silicon (ARM64), matching the architecture in the packaged archive.
 - Updated the CSS parser and source-map build dependencies to patched versions; the frontend dependency audit reports no known vulnerabilities.
 
 ## v2.10.17 — 2026-10-11

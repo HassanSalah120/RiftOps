@@ -239,7 +239,7 @@ RiftOps was engineered from the ground up to ensure complete compliance with Rio
 
 ### macOS (12+)
 
-1. Download `RiftOps-macOS.zip` from [Releases](https://github.com/HassanSalah120/RiftOps/releases).
+1. On an Apple Silicon Mac, download `RiftOps-macOS.zip` from [Releases](https://github.com/HassanSalah120/RiftOps/releases). The current archive is ARM64 and does not include an Intel build.
 2. Extract the archive and move `RiftOps.app` to your `/Applications` directory.
 3. Control-click `RiftOps.app` and select **Open** on first launch.
 4. If macOS flags the download quarantine, run this in Terminal:

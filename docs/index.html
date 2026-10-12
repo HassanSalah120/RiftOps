@@ -95,7 +95,7 @@
           </div>
           <div class="btn-text-wrap">
             <span class="btn-main-title">Download for macOS</span>
-            <span class="btn-sub-title">Universal • Apple Silicon & Intel (.zip)</span>
+            <span class="btn-sub-title">Apple Silicon • ARM64 (.zip)</span>
           </div>
         </a>
       </div>
@@ -807,7 +807,7 @@
       <div class="section-header text-center">
         <span class="kicker">INSTALL NOW</span>
         <h2 class="section-title">Download RiftOps for Windows & macOS</h2>
-        <p class="section-desc">100% Free, open source, and ban-safe. Clean user-mode setup installer for Windows and universal app archive for macOS.</p>
+        <p class="section-desc">100% Free, open source, and ban-safe. Clean user-mode setup installer for Windows and an Apple Silicon app archive for macOS.</p>
       </div>
 
       <div class="download-grid">
@@ -836,12 +836,12 @@
           <div class="dl-tags">
             <span class="dl-version-tag">v2.10.18</span>
             <span>WebKit Native</span>
-            <span>Universal (.zip)</span>
+            <span>Apple Silicon (.zip)</span>
           </div>
           <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn-outline-gold btn-block" id="dl-btn-macos">
             Download for macOS (.zip)
           </a>
-          <p class="dl-note">Apple Silicon (M1/M2/M3/M4) and Intel 64-bit supported natively.</p>
+          <p class="dl-note">For Apple Silicon Macs. This archive does not include an Intel build.</p>
         </div>
       </div>
     </div>
@@ -956,7 +956,7 @@
         const assets = release.assets || [];
         const winSetup = assets.find(function (a) { return /^RiftOps-Setup-.*-x64\.exe$/i.test(a.name); });
         const winPortable = assets.find(function (a) { return /^RiftOps-.*-win-x64\.exe$/i.test(a.name); });
-        const macUniversal = assets.find(function (a) { return a.name === 'RiftOps-macOS.zip'; });
+        const macArchive = assets.find(function (a) { return a.name === 'RiftOps-macOS.zip'; });
 
         function formatSize(bytes) {
           if (!bytes) return '';
@@ -976,14 +976,14 @@
         }
 
         const macBtn = document.getElementById('dl-btn-macos');
-        if (macBtn && macUniversal) {
-          macBtn.href = macUniversal.browser_download_url;
-          macBtn.textContent = 'Download for macOS (.zip)' + formatSize(macUniversal.size);
+        if (macBtn && macArchive) {
+          macBtn.href = macArchive.browser_download_url;
+          macBtn.textContent = 'Download for macOS (.zip)' + formatSize(macArchive.size);
         }
 
         const heroMacBtn = document.getElementById('hero-download-macos');
-        if (heroMacBtn && macUniversal) {
-          heroMacBtn.href = macUniversal.browser_download_url;
+        if (heroMacBtn && macArchive) {
+          heroMacBtn.href = macArchive.browser_download_url;
         }
       }
 
