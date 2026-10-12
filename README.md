@@ -50,13 +50,15 @@
 ## 📸 Feature Showcase
 
 ### 1. Cosmetic Vault & Skin Collection
-Browse every skin on your account alongside the ones still missing with instant multi-filtering, splash artwork, and craftable shard indicators.
+Browse champions as circular portraits with completion rings: gold for owned skins, green for distinct shard-only skins, and a dark track for missing skins. Search champions or skins, filter completion, then open a champion’s skin browser.
 
 <div align="center">
   <img src="assets/screenshots/skins-vault.png" alt="Cosmetic Vault" width="100%" style="border-radius: 8px;" />
 </div>
 
-- **Authentic Collection Stats**: Live counts for owned normal skins, champion coverage percentage, and shard readiness.
+*Collection preview uses sample inventory to illustrate owned, shard-only, and missing skins.*
+
+- **Full Catalogue Totals**: Ownership is joined with the full skin catalogue, including unowned champions. Duplicate shards and temporary rentals do not inflate permanent ownership.
 - **Deep Filtering**: Filter by champion, ownership status (All / Owned / Missing), tier (Epic, Legendary, Mythic, Standard, Legacy), and chromas.
 - **Splash Art Resolution**: Instant high-resolution artwork loaded from Riot Data Dragon and CommunityDragon caching.
 

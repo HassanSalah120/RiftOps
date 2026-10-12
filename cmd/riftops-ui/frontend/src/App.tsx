@@ -27,6 +27,7 @@ import FriendsPanel from './components/FriendsPanel';
 import LaunchProfilesPanel from './components/LaunchProfilesPanel';
 import { useLocale } from './localeContext';
 import { normalizeLivePhase, livePhaseLabel } from './liveSession';
+import FirstRunSetup from './components/FirstRunSetup';
 
 const MatchHistory = lazy(() => import('./components/MatchHistory'));
 const PlayFlowPage = lazy(() => import('./components/PlayFlowPage'));
@@ -72,6 +73,13 @@ const GAME_IMGS: Record<string, string> = {
 
 export default function App() {
   const { locale, setLocale, t } = useLocale();
+  const [showFirstRun, setShowFirstRun] = useState(() => {
+    try {
+      return !localStorage.getItem('riftops.setupComplete') && !localStorage.getItem('riftops.activeTab');
+    } catch { return false; }
+  });
+  const [preferencesLoading, setPreferencesLoading] = useState(true);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     try {
       const saved = localStorage.getItem('riftops.activeTab');
@@ -129,8 +137,9 @@ export default function App() {
   const toastTimer = useRef<number | null>(null);
 
   useEffect(() => {
+    if (showFirstRun && !remoteClient) return;
     try { localStorage.setItem('riftops.activeTab', activeTab); } catch { /* Preferences are optional. */ }
-  }, [activeTab]);
+  }, [activeTab, showFirstRun, remoteClient]);
 
   useEffect(() => {
     try {
@@ -254,6 +263,7 @@ export default function App() {
 
   // Keep navigation discoverable for keyboard users without hijacking text inputs.
   useEffect(() => {
+    if (showFirstRun && !remoteClient) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT' || target?.isContentEditable;
@@ -276,7 +286,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [remoteClient]);
+  }, [remoteClient, showFirstRun]);
 
   useEffect(() => {
     if (clientMode !== 'desktop') return;
@@ -297,8 +307,11 @@ export default function App() {
         setPrefUpdates(preferences.checkUpdates);
         setRiotClientPath(preferences.riotClientPath || location.path || '');
         setAutostartEnabled(autostart.enabled);
+        setPreferencesReady(true);
       } catch (err: any) {
         showToast('Preferences unavailable', err.message || 'Using safe defaults until settings can be loaded.', 'error');
+      } finally {
+        setPreferencesLoading(false);
       }
     };
     void loadPreferences();
@@ -545,6 +558,32 @@ export default function App() {
         <strong>Securing RiftOps…</strong>
         <span>Loading the permissions for this device.</span>
       </main>
+    );
+  }
+
+  if (showFirstRun && !remoteClient) {
+    const finishSetup = () => {
+      try { localStorage.setItem('riftops.setupComplete', 'true'); } catch { /* Session remains usable without storage. */ }
+      setActiveTab('dashboard');
+      setShowFirstRun(false);
+      window.requestAnimationFrame(() => document.getElementById('riftops-main')?.focus());
+    };
+    return (
+      <div className="riftops-window flex flex-col h-screen bg-base text-text overflow-hidden">
+        <TitleBar />
+        <FirstRunSetup
+          key={preferencesReady ? 'loaded' : 'loading'}
+          game={prefGame} startupStatus={prefStartup} performance={performanceMode}
+          preferencesReady={preferencesReady} preferencesLoading={preferencesLoading}
+          onSkip={finishSetup}
+          onApply={async (choices) => {
+            await persistPreferences({ game: choices.game, startupStatus: choices.startupStatus });
+            setSelectedGame(choices.game);
+            setPerformanceMode(choices.performance);
+            finishSetup();
+          }}
+        />
+      </div>
     );
   }
 

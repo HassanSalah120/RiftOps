@@ -64,6 +64,7 @@ body {
 /* Atmospheric Ambient Lights */
 .bg-glow {
   position: absolute;
+  max-width: 100%;
   border-radius: 50%;
   filter: blur(140px);
   pointer-events: none;
@@ -74,7 +75,7 @@ body {
   width: 600px;
   height: 500px;
   top: -150px;
-  left: -100px;
+  left: 0;
   background: radial-gradient(circle, rgba(10, 200, 185, 0.2) 0%, transparent 70%);
 }
 
@@ -82,7 +83,7 @@ body {
   width: 700px;
   height: 600px;
   top: -100px;
-  right: -150px;
+  right: 0;
   background: radial-gradient(circle, rgba(200, 170, 110, 0.18) 0%, transparent 70%);
 }
 
@@ -1145,7 +1146,16 @@ h1, h2, h3, h4 {
 /* ==========================================================================
    Responsive Breakpoints
    ========================================================================== */
+.release-update .section-desc { max-width: 65ch; margin: 18px 0 32px; }
+.release-update__layout { display: grid; grid-template-columns: 1fr 1.4fr; gap: 40px; align-items: center; margin-bottom: 24px; }
+.release-update__layout h3 { font-size: 1.35rem; margin-bottom: 16px; }
+.release-update__layout p { color: var(--text-muted); margin-bottom: 18px; line-height: 1.7; }
+.release-update__layout img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.release-update__layout figcaption, .release-update__caption { color: var(--text-muted); font-size: .8rem; line-height: 1.6; margin-top: 12px; }
+.release-update__caption { padding: 0 24px; }
+#dl-btn-win-portable { display: inline-block; margin-top: 18px; text-decoration: underline; text-underline-offset: 4px; }
 @media (max-width: 960px) {
+  .release-update__layout { grid-template-columns: 1fr; gap: 24px; }
   .nav-links {
     display: none;
   }

@@ -38,7 +38,7 @@
       <a href="#" class="brand">
         <img src="assets/branding/riftops-logo.png" alt="RiftOps Logo" class="brand-crest" width="36" height="36" />
         <span class="brand-title">RiftOps</span>
-        <span class="brand-version">Latest release</span>
+        <span class="brand-version">v2.10.18</span>
       </a>
 
       <nav class="nav-links">
@@ -129,6 +129,26 @@
   </section>
 
   <!-- Interactive 12-Deck Showcase Section -->
+  <section class="section release-update" aria-labelledby="release-update-title">
+    <div class="container">
+      <h2 class="section-title" id="release-update-title">A clearer collection. A simpler start.</h2>
+      <p class="section-desc">New in v2.10.18: see your skin progress by champion and choose your starting settings in one optional step.</p>
+      <div class="release-update__layout">
+        <div>
+          <h3>Every champion, at a glance</h3>
+          <p>Gold marks owned skins, green marks skins available as shards, and the dark ring shows what’s missing. Full catalogue totals keep completion accurate, even for champions you don’t own.</p>
+          <p>Search a champion or skin, filter by completion, and open a portrait to explore that champion’s skins.</p>
+          <a href="#showcase" class="btn-outline-gold" data-show-collection>Explore Collection</a>
+        </div>
+        <figure>
+          <img src="assets/screenshots/first-run-setup.png" alt="Optional RiftOps setup with starting settings, customization, Save and Skip actions" loading="lazy" width="1440" height="900" />
+          <figcaption>First launch: choose your preferred game, launch presence, and background activity, or skip straight to Home. Existing users keep their settings.</figcaption>
+        </figure>
+      </div>
+      <a href="https://github.com/HassanSalah120/RiftOps/releases/tag/v2.10.18">Read the v2.10.18 release notes</a>
+    </div>
+  </section>
+
   <section id="showcase" class="section showcase-section">
     <div class="container">
       <div class="section-header text-center">
@@ -193,28 +213,29 @@
         <div class="deck-panel" id="tab-skins">
           <div class="deck-preview-card">
             <div class="preview-img-container">
-              <img src="assets/screenshots/skins-vault.png" alt="Cosmetic Vault Deck" />
+              <img src="assets/screenshots/skins-vault.png" alt="Champion portraits with gold owned-skin rings, green shard-only segments, and dark missing-skin tracks" />
             </div>
+            <p class="release-update__caption">Collection preview uses sample inventory to illustrate the ring states.</p>
             <div class="deck-highlights">
               <div class="highlight-item">
                 <div class="hl-icon">🎨</div>
                 <div>
-                  <h4>1,940+ Skins Catalog</h4>
-                  <p>Explore your entire skin library with official splash art and ownership filters.</p>
+                  <h4>Full Champion Collection</h4>
+                  <p>See every champion’s owned skins against the full catalogue, including unowned champions.</p>
                 </div>
               </div>
               <div class="highlight-item">
                 <div class="hl-icon">✨</div>
                 <div>
-                  <h4>Craftable Shard Alerts</h4>
-                  <p>Instant visual cues when you own uncrafted skin shards in your hextech loot.</p>
+                  <h4>Gold Owned, Green Shards</h4>
+                  <p>Green ring segments represent distinct shard-only skins. Duplicate shards never inflate your progress.</p>
                 </div>
               </div>
               <div class="highlight-item">
                 <div class="hl-icon">⚡</div>
                 <div>
-                  <h4>Fast DDragon Caching</h4>
-                  <p>Ultra-fast local caching mirrors high-res Riot CDN artwork instantly.</p>
+                  <h4>Find Your Next Skin</h4>
+                  <p>Search champions or skins, filter completed collections, and browse each champion’s skin artwork.</p>
                 </div>
               </div>
             </div>
@@ -797,13 +818,14 @@
           <h3>Windows Desktop</h3>
           <p class="dl-os-desc">For Windows 10 and Windows 11 (64-bit)</p>
           <div class="dl-tags">
-            <span class="dl-version-tag">Latest release</span>
+            <span class="dl-version-tag">v2.10.18</span>
             <span>Setup Installer</span>
           </div>
           <a href="https://github.com/HassanSalah120/RiftOps/releases" class="btn-gold btn-block" id="dl-btn-win-setup">
             Download Setup Installer (.exe)
           </a>
           <p class="dl-note">Setup installer configures Start Menu and Desktop shortcuts with a one-click uninstaller.</p>
+          <a href="https://github.com/HassanSalah120/RiftOps/releases/latest" id="dl-btn-win-portable">Download portable Windows app (.exe)</a>
         </div>
 
         <!-- macOS Card -->
@@ -812,7 +834,7 @@
           <h3>macOS Desktop</h3>
           <p class="dl-os-desc">For macOS 12 Monterey and newer</p>
           <div class="dl-tags">
-            <span class="dl-version-tag">Latest release</span>
+            <span class="dl-version-tag">v2.10.18</span>
             <span>WebKit Native</span>
             <span>Universal (.zip)</span>
           </div>
@@ -905,6 +927,9 @@
           }
         });
       });
+      document.querySelector('[data-show-collection]')?.addEventListener('click', () => {
+        document.querySelector('[data-target="tab-skins"]')?.click();
+      });
     });
   </script>
 
@@ -929,8 +954,9 @@
         }
 
         const assets = release.assets || [];
-        const winSetup = assets.find(function (a) { const name = a.name.toLowerCase(); return name.endsWith('-setup.exe') || name.includes('setup'); });
-        const macUniversal = assets.find(function (a) { return a.name.endsWith('.zip') || a.name.includes('darwin') || a.name.includes('mac'); });
+        const winSetup = assets.find(function (a) { return /^RiftOps-Setup-.*-x64\.exe$/i.test(a.name); });
+        const winPortable = assets.find(function (a) { return /^RiftOps-.*-win-x64\.exe$/i.test(a.name); });
+        const macUniversal = assets.find(function (a) { return a.name === 'RiftOps-macOS.zip'; });
 
         function formatSize(bytes) {
           if (!bytes) return '';
@@ -941,6 +967,12 @@
         if (winSetupBtn && winSetup) {
           winSetupBtn.href = winSetup.browser_download_url;
           winSetupBtn.textContent = 'Download Setup Installer (.exe)' + formatSize(winSetup.size);
+        }
+
+        const portableBtn = document.getElementById('dl-btn-win-portable');
+        if (portableBtn && winPortable) {
+          portableBtn.href = winPortable.browser_download_url;
+          portableBtn.textContent = 'Download portable Windows app (.exe)' + formatSize(winPortable.size);
         }
 
         const macBtn = document.getElementById('dl-btn-macos');
@@ -961,7 +993,6 @@
           const parsed = JSON.parse(cached);
           if (Date.now() - parsed.timestamp < CACHE_TTL) {
             updateUI(parsed.data);
-            return;
           }
         }
       } catch (e) {}
