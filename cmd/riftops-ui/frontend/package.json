@@ -30,7 +30,7 @@
     "dev": "vite",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --test tests/champSelectFlow.test.ts tests/liveSession.test.ts tests/clientCapabilities.test.ts tests/externalURL.test.ts tests/playFlowQueue.test.ts tests/roleQuest.test.ts tests/buildPlanner.test.ts tests/lootActions.test.ts tests/arenaBravery.test.ts tests/arenaTelemetry.test.ts tests/skinAssets.test.ts tests/leagueCatalog.test.ts tests/reviewedOperation.test.ts tests/collectionProgress.test.ts tests/accountRank.test.ts"
+    "test": "node --test tests/champSelectFlow.test.ts tests/liveSession.test.ts tests/clientCapabilities.test.ts tests/externalURL.test.ts tests/playFlowQueue.test.ts tests/roleQuest.test.ts tests/buildPlanner.test.ts tests/lootActions.test.ts tests/arenaBravery.test.ts tests/arenaTelemetry.test.ts tests/skinAssets.test.ts tests/leagueCatalog.test.ts tests/reviewedOperation.test.ts tests/collectionProgress.test.ts tests/accountRank.test.ts tests/presenceStatus.test.ts"
   },
   "type": "module"
 }

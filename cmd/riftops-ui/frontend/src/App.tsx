@@ -4,6 +4,7 @@ import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
 import GameSelector from './components/GameSelector';
 import StatusSelector from './components/StatusSelector';
+import { displayedPresence, presenceRuntimeLabel } from './presenceStatus';
 import Toast from './components/Toast';
 import Sidebar from './components/Sidebar';
 import QuickActions from './components/QuickActions';
@@ -39,16 +40,6 @@ const LootDashboard = lazy(() => import('./components/LootDashboard'));
 const RemoteAccessPage = lazy(() => import('./components/RemoteAccessPage'));
 const SocialCenter = lazy(() => import('./components/SocialCenter'));
 const SettingsPage = lazy(() => import('./components/SettingsPage'));
-
-function phaseLabel(phase: string): string {
-  switch (phase) {
-    case 'idle': return 'Idle';
-    case 'running': return 'Running';
-    case 'error': return 'Error';
-    case 'connecting': return 'Connecting';
-    default: return phase.charAt(0).toUpperCase() + phase.slice(1);
-  }
-}
 
 function timeAgo(startedAt: string): string {
   if (!startedAt) return '';
@@ -460,6 +451,10 @@ export default function App() {
   };
 
   const handleSetStatus = async (status: string) => {
+    if (status === 'offline' && !offlineAvailable) {
+      showToast('Offline masking unavailable', 'Close Riot normally, then launch from Home using the published Windows release. Native chat cannot mask your presence.', 'info');
+      return;
+    }
     if (!presenceStatusAvailable) {
       showToast('League unavailable', 'League availability cannot be changed until the client is connected.', 'info');
       return;
@@ -547,7 +542,9 @@ export default function App() {
   const leagueStatus = !lcuConnected ? 'League offline' : livePhaseLabel(leaguePhase);
   const presenceControlsAvailable = isIdle || snapshot.ChatPort > 0;
   const presenceStatusAvailable = presenceControlsAvailable || lcuConnected;
-  const leagueAvailability = lcuQol?.availability || snapshot.Status;
+  const offlineAvailable = snapshot.ChatPort > 0 || (isIdle && !lcuConnected);
+  const leagueAvailability = displayedPresence(snapshot, lcuQol?.availability);
+  const presenceLabel = presenceRuntimeLabel(snapshot);
   const gameInfo = GAMES.find((g) => g.value === selectedGame);
   const gameImg = GAME_IMGS[selectedGame];
 
@@ -626,7 +623,7 @@ export default function App() {
       <div className="flex-1 min-h-0 flex flex-col min-w-0 bg-base/50 relative">
         <WorkspaceHeader
           activeTab={activeTab}
-          phase={phaseLabel(snapshot.Phase)}
+          presenceLabel={presenceLabel}
           notificationCenterOpen={notificationCenterOpen}
           detail={snapshot.Detail === 'Choose a game and launch with presence masking.' ? '' : snapshot.Detail}
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
@@ -655,7 +652,7 @@ export default function App() {
                 {!remoteClient && <section className="home-launch" aria-labelledby="home-launch-title">
                   <div className="home-launch__art">
                     {!gameImgError && <img src={gameImg} alt="" width="1600" height="900" fetchPriority="high" onError={() => setGameImgError(true)} />}
-                    <div className="home-launch__identity"><h2 id="home-launch-title">{gameInfo?.label || 'Choose your game'}</h2><span>Proxy {phaseLabel(snapshot.Phase).toLowerCase()}</span></div>
+                    <div className="home-launch__identity"><h2 id="home-launch-title">{gameInfo?.label || 'Choose your game'}</h2><span>{presenceLabel}</span></div>
                   </div>
                   <div className="home-launch__body">
                     <GameSelector value={selectedGame} onChange={handleSetGame} disabled={!isIdle} />
@@ -675,9 +672,9 @@ export default function App() {
                   <AccountSummary />
                   {!remoteClient && <section className="home-presence" aria-labelledby="home-presence-title">
                     <header><div><h2 id="home-presence-title">Chat presence</h2><p>Choose how friends see you.</p></div><Shield aria-hidden="true" /></header>
-                    <StatusSelector current={leagueAvailability} onChange={handleSetStatus} disabled={!presenceStatusAvailable || homeAction !== ''} />
+                    <StatusSelector current={leagueAvailability} onChange={handleSetStatus} disabled={!presenceStatusAvailable || homeAction !== ''} offlineUnavailable={!offlineAvailable} />
                     <div className="home-presence__mask"><span><strong>Presence masking</strong><small>{snapshot.Enabled ? 'Masking is enabled' : 'Masking is disabled'}</small></span><label className="toggle"><input type="checkbox" role="switch" aria-label="Presence masking" checked={snapshot.Enabled} disabled={!presenceControlsAvailable || homeAction !== ''} onChange={(e) => handleToggleMasking(e.target.checked)} /><span className="slider" /></label></div>
-                    {!presenceControlsAvailable && lcuConnected && <p>Native Riot friends and chat are active. Availability is applied directly through League; secure masking is unavailable for this run.</p>}
+                    {!presenceControlsAvailable && <p>Offline masking is unavailable in native chat. Close Riot normally, then launch from Home using the <a href="https://github.com/HassanSalah120/RiftOps/releases/latest" target="_blank" rel="noopener noreferrer">published Windows release</a>. Fresh sign-in uses native chat until you relaunch.</p>}
                     {!presenceStatusAvailable && <p>Launch League and sign in to change availability.</p>}
                   </section>}
                   {remoteClient && <PhoneCompanionPanel showToast={(message, type = 'info') => showToast('League Client', message, type)} />}

@@ -34,7 +34,7 @@ const TAB_LOCALE_MAP: Partial<Record<Tab, string>> = {
 
 export default function WorkspaceHeader({
   activeTab,
-  phase,
+  presenceLabel,
   detail,
   onOpenCommandPalette,
   onOpenNotifications,
@@ -42,7 +42,7 @@ export default function WorkspaceHeader({
   notificationCenterOpen = false,
 }: {
   activeTab: Tab;
-  phase: string;
+  presenceLabel: string;
   detail: string;
   onOpenCommandPalette: () => void;
   onOpenNotifications?: () => void;
@@ -75,7 +75,7 @@ export default function WorkspaceHeader({
           <Bell aria-hidden="true" />
           {unreadNotifications > 0 && <span>{unreadNotifications > 9 ? '9+' : unreadNotifications}</span>}
         </button>
-        <span className="workspace-header__system"><i />{phase.toLowerCase() === 'running' || phase.toLowerCase() === 'active' ? 'Proxy active' : 'Proxy idle'}</span>
+        <span className="workspace-header__system"><i />{presenceLabel}</span>
       </div>
     </header>
   );

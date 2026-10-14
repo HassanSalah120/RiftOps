@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.10.20 — 2026-10-15
+
+- Stopped reporting successful Offline masking through native Riot chat. Offline requires the secure chat proxy; native mode now rejects the request before writing League availability.
+- Disabled Offline controls when a connected client has no masking proxy and added recovery guidance for relaunching with the published Windows build.
+- Corrected the Home launch card and workspace header to distinguish native chat, proxy startup, and an active proxy.
+- Kept the selected masked Offline status visible even when League's local availability reports Online, and normalized native Online selection.
+- Added regression tests for false native Offline success and the distinction between local availability and outgoing masked presence.
+- Windows release packaging includes the validated trusted chat certificate; local development previews are not a replacement for that release when using Offline masking.
+
 ## v2.10.19 — 2026-10-14
 
 - Added Solo/Duo and Flex rank, division, LP, and last-checked date to Riot account rows. Verified ranks refresh while League is connected and remain available after switching or closing League.

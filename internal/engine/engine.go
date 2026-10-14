@@ -1009,6 +1009,9 @@ func setNativeAvailability(ctx context.Context, status model.Status) error {
 }
 
 func setNativeAvailabilityWithLockfile(ctx context.Context, lockfile *riotclient.Lockfile, status model.Status) error {
+	if status == model.StatusOffline {
+		return errors.New("Offline requires the secure chat proxy; native Riot chat cannot mask your presence. Close Riot normally and relaunch from Home using the published Windows release")
+	}
 	if lockfile == nil || lockfile.Source != "league" {
 		return errors.New("League LCU is not available")
 	}
@@ -1026,7 +1029,7 @@ func (e *Engine) syncNativeAvailability(ctx context.Context, status model.Status
 	e.mu.RLock()
 	wantsPresence := e.config.Enabled
 	e.mu.RUnlock()
-	if !wantsPresence || !status.Valid() {
+	if !wantsPresence || !status.Valid() || status == model.StatusOffline {
 		return
 	}
 
