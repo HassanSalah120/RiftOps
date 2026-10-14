@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -132,6 +134,22 @@ func TestNativeAvailabilityRejectsRiotClientLockfile(t *testing.T) {
 	lockfile := &riotclient.Lockfile{Source: "riot-client"}
 	if err := setNativeAvailabilityWithLockfile(context.Background(), lockfile, model.StatusOffline); err == nil {
 		t.Fatal("Riot Client lockfile was accepted for a League chat endpoint")
+	}
+}
+
+func TestNativeOfflineCannotReportMaskingSuccess(t *testing.T) {
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write([]byte(`{"availability":"chat"}`))
+	}))
+	defer server.Close()
+	lf := &riotclient.Lockfile{Source: "league", BaseURL: server.URL, Password: "synthetic-password"}
+	if err := setNativeAvailabilityWithLockfile(context.Background(), lf, model.StatusOffline); err == nil {
+		t.Fatal("reported Offline success without a masking proxy")
+	}
+	if requests != 0 {
+		t.Fatal("tried to implement masking with native availability")
 	}
 }
 

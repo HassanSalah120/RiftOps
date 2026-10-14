@@ -10,10 +10,12 @@ export default function StatusSelector({
   current,
   onChange,
   disabled = false,
+  offlineUnavailable = false,
 }: {
   current: string;
   onChange: (status: string) => void;
   disabled?: boolean;
+  offlineUnavailable?: boolean;
 }) {
   return (
     <div className="presence-picker" role="group" aria-label="Chat availability">
@@ -25,7 +27,8 @@ export default function StatusSelector({
             type="button"
             aria-pressed={active}
             key={s.key}
-            disabled={disabled}
+            disabled={disabled || (offlineUnavailable && s.key === 'offline')}
+            title={offlineUnavailable && s.key === 'offline' ? 'Offline requires the secure chat proxy. Close Riot and relaunch using the published Windows release.' : undefined}
             onClick={() => onChange(s.key)}
             className={`relative flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition duration-200 cursor-pointer border disabled:opacity-40 disabled:cursor-not-allowed ${
               active
