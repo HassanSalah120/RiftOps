@@ -25,7 +25,8 @@ func TestRefreshPreservesRetentionAndLatestRotatedSession(t *testing.T) {
 	original, _ := vault.Status("rotating")
 	for _, rotated := range []string{"rotation-one", "rotation-two", "rotation-three"} {
 		now = now.Add(time.Hour)
-		if err := os.WriteFile(path, []byte(rotated), 0o600); err != nil {
+		rotatedData := rememberedFixture(testIdentity.PUUID, "rotation-trust", rotated)
+		if err := os.WriteFile(path, rotatedData, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := vault.RefreshVerified("rotating", testIdentity, func() error { return nil }); err != nil {
@@ -38,7 +39,7 @@ func TestRefreshPreservesRetentionAndLatestRotatedSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, _ := os.ReadFile(path)
-		if string(got) != rotated {
+		if !bytes.Equal(got, rotatedData) {
 			t.Fatal("restored an obsolete remembered-login session")
 		}
 	}

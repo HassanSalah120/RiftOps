@@ -163,6 +163,8 @@ Granular workspace control, Riot Client executable auto-detection, and DPAPI-sec
 </div>
 
 - **One-Click Account Switching**: Save remembered Riot logins to named launch profiles. Swap accounts without typing passwords.
+- **Account Ranks**: See Solo/Duo and Flex rank, division, LP, and last-checked date beside each account. Open League on each account to load ranks; cached values remain visible offline.
+- **Remembered Login Preservation**: Ordinary launches keep newer Riot session files. Switching and Stop preserve settled state, and incomplete saves offer a confirmed Close Riot & save action. Stay signed in and Riot's separate Remember this app option are still required; local retention does not extend Riot's authentication or device-trust expiry.
 - **Operating System Protection**: Sessions are encrypted with **Windows DPAPI** on Windows and the **macOS Keychain** on macOS. RiftOps never stores plaintext passwords.
 - **Auto-Detection**: Scans the Windows Registry and macOS `/Applications` to automatically locate Riot Client and League executables on any drive.
 

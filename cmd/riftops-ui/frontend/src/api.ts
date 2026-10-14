@@ -77,6 +77,7 @@ export async function fetchSnapshot(): Promise<Snapshot> {
 }
 
 export interface LaunchProfile {
+  rank?: AccountRank;
   id: string;
   name: string;
   accountLabel?: string;
@@ -95,7 +96,20 @@ export interface LaunchProfile {
   gameStatuses?: Record<string, 'chat' | 'offline' | 'mobile'>;
 }
 
+export interface QueueRank {
+  tier: string;
+  division?: string;
+  leaguePoints: number;
+}
+
+export interface AccountRank {
+  solo: QueueRank;
+  flex: QueueRank;
+  updatedAt: string;
+}
+
 export interface ProfileSessionStatus {
+  incomplete?: boolean;
   saved: boolean;
   expired: boolean;
   needsRecapture?: boolean;
@@ -165,9 +179,9 @@ export async function switchLaunchProfile(id: string, forceLogin = false): Promi
   return res.json();
 }
 
-export async function captureSavedLogin(): Promise<{ profileId: string; profileName: string }> {
-  const res = await fetch('/api/capture-session', { method: 'POST', cache: 'no-store' });
-  if (!res.ok) throw new Error((await res.text()).trim() || 'Could not save the current Riot login');
+export async function captureSavedLogin(closeClient = false): Promise<{ profileId: string; profileName: string }> {
+  const res = await fetch('/api/capture-session', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closeClient }) });
+  if (!res.ok) throw Object.assign(new Error((await res.text()).trim() || 'Could not save the current Riot login'), { code: res.headers.get('X-RiftOps-Error-Code') });
   return res.json();
 }
 

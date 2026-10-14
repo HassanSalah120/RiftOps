@@ -71,8 +71,11 @@ type RunOptions struct {
 	// RiftOps; no launch profile or presence proxy is injected in that mode.
 	AttachExisting bool
 	FreshLogin     bool
-	RiotClientArgs []string
-	GameArgs       []string
+	// Restoring belongs to an explicit account switch. Normal launches leave
+	// Riot's latest native session in place.
+	RestoreSavedLogin bool
+	RiotClientArgs    []string
+	GameArgs          []string
 }
 
 type ProfileSwitchResult struct {
@@ -102,19 +105,23 @@ var ErrRiotAccountUnverified = errors.New("Riot Client is not signed in with a v
 var ErrSavedLoginRefresh = errors.New("could not preserve the current saved login; retry after Riot finishes signing in")
 
 type Engine struct {
-	mu        sync.RWMutex
-	store     settings.Store
-	config    settings.Settings
-	policy    *runtimePolicy
-	proxy     *chatproxy.Proxy
-	adapter   platform.Adapter
-	vault     *sessionvault.Vault
-	cancel    context.CancelFunc
-	running   bool
-	snapshot  Snapshot
-	events    chan Snapshot
-	commandMu sync.Mutex
-	saveMu    sync.Mutex
+	mu              sync.RWMutex
+	store           settings.Store
+	config          settings.Settings
+	policy          *runtimePolicy
+	proxy           *chatproxy.Proxy
+	adapter         platform.Adapter
+	vault           *sessionvault.Vault
+	cancel          context.CancelFunc
+	running         bool
+	snapshot        Snapshot
+	events          chan Snapshot
+	commandMu       sync.Mutex
+	saveMu          sync.Mutex
+	lifecycleMu     sync.Mutex
+	newPlatform     func() platform.Adapter
+	readRiotAccount func(context.Context) (riotclient.RiotAccountSession, error)
+	requestRiotQuit func(context.Context) error
 }
 
 func New(store settings.Store) (*Engine, error) {
@@ -126,7 +133,8 @@ func New(store settings.Store) (*Engine, error) {
 	if vaultErr != nil {
 		slog.Debug("saved-login vault unavailable", "error", vaultErr)
 	}
-	e := &Engine{store: store, config: config, events: make(chan Snapshot, 32), vault: vault}
+	e := &Engine{store: store, config: config, events: make(chan Snapshot, 32), vault: vault,
+		newPlatform: platform.New, readRiotAccount: riotclient.CurrentRiotAccountSession, requestRiotQuit: riotclient.QuitRiotClient}
 	e.snapshot = Snapshot{Phase: PhaseIdle, Status: config.Status, Enabled: config.Enabled, Game: config.DefaultGame}
 	return e, nil
 }
@@ -247,7 +255,7 @@ func (e *Engine) ResolveRiotClientExecutable() (string, error) {
 	e.mu.RLock()
 	configured := e.config.RiotClientPath
 	e.mu.RUnlock()
-	return resolveRiotClientExecutable(platform.New(), configured)
+	return resolveRiotClientExecutable(e.newPlatform(), configured)
 }
 
 func resolveRiotClientExecutable(adapter platform.Adapter, configured string) (string, error) {
@@ -384,7 +392,7 @@ func (e *Engine) savedLoginStatusForProfile(vault *sessionvault.Vault, profile s
 	if vault == nil {
 		return sessionvault.Status{}, errors.New("saved Riot logins are unavailable on this platform")
 	}
-	status, err := vault.Status(profile.ID)
+	status, err := vault.LoginStatus(profile.ID)
 	if err != nil {
 		return status, err
 	}
@@ -415,6 +423,18 @@ func profileExpectedRiotID(value string) string {
 }
 
 func (e *Engine) CaptureSavedLogin(ctx context.Context, lifetime time.Duration) error {
+	return e.captureSavedLogin(ctx, lifetime, false)
+}
+
+// CaptureAndCloseSavedLogin is used only after the user confirms closing
+// Riot. Some client versions persist their remembered login only on exit.
+func (e *Engine) CaptureAndCloseSavedLogin(ctx context.Context, lifetime time.Duration) error {
+	return e.captureSavedLogin(ctx, lifetime, true)
+}
+
+func (e *Engine) captureSavedLogin(ctx context.Context, lifetime time.Duration, closeClient bool) error {
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
 	e.mu.RLock()
 	vault := e.vault
 	profile := e.config.ActiveProfile()
@@ -422,7 +442,7 @@ func (e *Engine) CaptureSavedLogin(ctx context.Context, lifetime time.Duration) 
 	if vault == nil {
 		return errors.New("saved Riot logins are unavailable on this platform")
 	}
-	processes, err := platform.New().KnownProcesses(ctx)
+	processes, err := e.newPlatform().KnownProcesses(ctx)
 	if err != nil {
 		return fmt.Errorf("inspect Riot Client before saving its session: %w", err)
 	}
@@ -433,15 +453,15 @@ func (e *Engine) CaptureSavedLogin(ctx context.Context, lifetime time.Duration) 
 	if expectedRiotID == "" {
 		return ErrRiotIDRequired
 	}
-	account, err := riotclient.CurrentRiotAccountSession(ctx)
+	account, err := e.readRiotAccount(ctx)
 	if err != nil || !account.Authorized {
 		return ErrRiotAccountUnverified
 	}
 	if !sameRiotID(account.RiotID, expectedRiotID) {
 		return ErrRiotAccountMismatch
 	}
-	if err := vault.CaptureVerified(profile.ID, lifetime, sessionvault.Identity{PUUID: account.PUUID, RiotID: account.RiotID}, func() error {
-		current, err := riotclient.CurrentRiotAccountSession(ctx)
+	verify := func() error {
+		current, err := e.readRiotAccount(ctx)
 		if err != nil || !current.Authorized {
 			return ErrRiotAccountUnverified
 		}
@@ -449,14 +469,43 @@ func (e *Engine) CaptureSavedLogin(ctx context.Context, lifetime time.Duration) 
 			return ErrRiotAccountMismatch
 		}
 		return nil
-	}); err != nil {
-		return err
 	}
-	return nil
+	if closeClient {
+		if err := verify(); err != nil {
+			return err
+		}
+		if err := e.closeRiot(ctx, e.newPlatform()); err != nil {
+			return err
+		}
+		e.mu.RLock()
+		cancel := e.cancel
+		e.mu.RUnlock()
+		if cancel != nil {
+			cancel()
+			if err := e.waitUntilStopped(ctx); err != nil {
+				return err
+			}
+		}
+		// Authorization was verified before quit. CaptureVerified additionally
+		// checks the settled file's subject against that verified PUUID.
+		verify = func() error { return nil }
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		err := vault.CaptureVerified(profile.ID, lifetime, sessionvault.Identity{PUUID: account.PUUID, RiotID: account.RiotID}, verify)
+		if !errors.Is(err, sessionvault.ErrNotRemembered) || closeClient || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 func (e *Engine) RiotSessionActive(ctx context.Context) (bool, error) {
-	processes, err := platform.New().KnownProcesses(ctx)
+	processes, err := e.newPlatform().KnownProcesses(ctx)
 	return len(processes) > 0, err
 }
 
@@ -464,6 +513,8 @@ func (e *Engine) RiotSessionActive(ctx context.Context) (bool, error) {
 // Riot rotates its remembered-login state; replaying the original snapshot on
 // every launch can resurrect superseded state. Retention is never extended.
 func (e *Engine) RefreshSavedLogin(ctx context.Context) error {
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
 	e.mu.RLock()
 	vault, profile := e.vault, e.config.ActiveProfile()
 	e.mu.RUnlock()
@@ -471,7 +522,7 @@ func (e *Engine) RefreshSavedLogin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	account, err := riotclient.CurrentRiotAccountSession(ctx)
+	account, err := e.readRiotAccount(ctx)
 	if err != nil || !account.Authorized {
 		return ErrRiotAccountUnverified
 	}
@@ -479,7 +530,7 @@ func (e *Engine) RefreshSavedLogin(ctx context.Context) error {
 		return ErrRiotAccountMismatch
 	}
 	return vault.RefreshVerified(profile.ID, sessionvault.Identity{PUUID: account.PUUID, RiotID: account.RiotID}, func() error {
-		current, err := riotclient.CurrentRiotAccountSession(ctx)
+		current, err := e.readRiotAccount(ctx)
 		if err != nil || !current.Authorized {
 			return ErrRiotAccountUnverified
 		}
@@ -491,6 +542,8 @@ func (e *Engine) RefreshSavedLogin(ctx context.Context) error {
 }
 
 func (e *Engine) ForgetSavedLogin() error {
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
 	e.mu.RLock()
 	vault := e.vault
 	profileID := e.config.ActiveProfileID
@@ -504,6 +557,8 @@ func (e *Engine) ForgetSavedLogin() error {
 // SwitchLaunchProfile closes Riot and selects the target. It never captures
 // the current client into a profile: that could save another account's login.
 func (e *Engine) SwitchLaunchProfile(ctx context.Context, id string) (ProfileSwitchResult, error) {
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
 	e.mu.RLock()
 	updated := e.config.Clone()
 	vault := e.vault
@@ -513,30 +568,8 @@ func (e *Engine) SwitchLaunchProfile(ctx context.Context, id string) (ProfileSwi
 	}
 	target := updated.ActiveProfile()
 
-	// Capture rotated state while the outgoing account is still running, before
-	// cancelling the runtime or terminating Riot. Never create a new save here.
 	if vault != nil {
-		refreshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		refreshErr := e.RefreshSavedLogin(refreshCtx)
-		cancel()
-		if refreshErr != nil && !errors.Is(refreshErr, sessionvault.ErrNotFound) && !errors.Is(refreshErr, sessionvault.ErrExpired) && !errors.Is(refreshErr, sessionvault.ErrUnverified) && !errors.Is(refreshErr, sessionvault.ErrIdentityMismatch) && !errors.Is(refreshErr, ErrRiotAccountUnverified) && !errors.Is(refreshErr, ErrRiotAccountMismatch) {
-			return ProfileSwitchResult{}, ErrSavedLoginRefresh
-		}
-	}
-
-	result := ProfileSwitchResult{Profile: target}
-	if vault != nil {
-		status, err := e.savedLoginStatusForProfile(vault, target)
-		switch {
-		case err == nil:
-			result.TargetSessionAvailable = true
-			result.TargetPUUID = status.Identity.PUUID
-		case errors.Is(err, sessionvault.ErrExpired):
-			result.TargetSessionExpired = true
-		case errors.Is(err, sessionvault.ErrUnverified), errors.Is(err, sessionvault.ErrIdentityMismatch):
-			result.TargetSessionUnverified = true
-		case errors.Is(err, sessionvault.ErrNotFound):
-		default:
+		if _, err := e.savedLoginStatusForProfile(vault, target); err != nil && !ignorableSavedLogin(err) {
 			return ProfileSwitchResult{}, fmt.Errorf("inspect target profile session: %w", err)
 		}
 	}
@@ -548,22 +581,37 @@ func (e *Engine) SwitchLaunchProfile(ctx context.Context, id string) (ProfileSwi
 	stopRuntime := e.cancel
 	snapshot := e.snapshot
 	e.mu.RUnlock()
+	adapter := e.newPlatform()
+	if err := e.closeRiot(ctx, adapter); err != nil {
+		return ProfileSwitchResult{}, err
+	}
 	if stopRuntime != nil {
 		e.emit(Snapshot{Phase: PhaseStopping, Status: snapshot.Status, Enabled: snapshot.Enabled, Game: snapshot.Game, Detail: "Switching Riot accounts"})
 		stopRuntime()
 	}
-	adapter := platform.New()
-	if err := adapter.StopKnownProcesses(ctx); err != nil {
-		processes, inspectErr := adapter.KnownProcesses(ctx)
-		if inspectErr != nil || len(processes) > 0 {
-			return ProfileSwitchResult{}, fmt.Errorf("%w: %v", ErrRiotCloseFailed, err)
-		}
-	}
-	if err := waitForNoRiotProcesses(ctx, adapter); err != nil {
-		return ProfileSwitchResult{}, fmt.Errorf("%w: %v", ErrRiotCloseFailed, err)
-	}
 	if err := e.waitUntilStopped(ctx); err != nil {
 		return ProfileSwitchResult{}, err
+	}
+	if err := e.refreshStoppedProfile(ctx, adapter, e.ActiveLaunchProfile()); err != nil {
+		return ProfileSwitchResult{}, err
+	}
+	// Closing the current account can complete an older incomplete save. Use
+	// the settled status when deciding whether the target needs a fresh login.
+	result := ProfileSwitchResult{Profile: target}
+	if vault != nil {
+		status, err := e.savedLoginStatusForProfile(vault, target)
+		switch {
+		case err == nil:
+			result.TargetSessionAvailable = true
+			result.TargetPUUID = status.Identity.PUUID
+		case errors.Is(err, sessionvault.ErrExpired):
+			result.TargetSessionExpired = true
+		case errors.Is(err, sessionvault.ErrUnverified), errors.Is(err, sessionvault.ErrIdentityMismatch), errors.Is(err, sessionvault.ErrNotRemembered):
+			result.TargetSessionUnverified = true
+		case errors.Is(err, sessionvault.ErrNotFound):
+		default:
+			return ProfileSwitchResult{}, fmt.Errorf("inspect settled target profile session: %w", err)
+		}
 	}
 
 	if err := e.SelectLaunchProfile(id); err != nil {
@@ -573,6 +621,13 @@ func (e *Engine) SwitchLaunchProfile(ctx context.Context, id string) (ProfileSwi
 }
 
 func (e *Engine) Run(parent context.Context, options RunOptions) error {
+	e.lifecycleMu.Lock()
+	startupLocked := true
+	defer func() {
+		if startupLocked {
+			e.lifecycleMu.Unlock()
+		}
+	}()
 	e.mu.Lock()
 	if e.running {
 		e.mu.Unlock()
@@ -606,6 +661,11 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	e.cancel, e.running = cancel, true
 	e.mu.Unlock()
 	defer func() {
+		refreshCtx, stopRefresh := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := e.refreshStoppedProfile(refreshCtx, e.newPlatform(), config.ActiveProfile()); err != nil {
+			slog.Warn("could not preserve settled Riot login", "error", err)
+		}
+		stopRefresh()
 		e.mu.Lock()
 		finalConfig := e.config
 		e.running = false
@@ -618,7 +678,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	}()
 	e.emit(e.phaseSnapshot(PhasePreflight, game, "Checking Riot Client and local networking"))
 
-	adapter := platform.New()
+	adapter := e.newPlatform()
 	e.mu.Lock()
 	e.adapter = adapter
 	e.mu.Unlock()
@@ -632,47 +692,28 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 		return e.fail(game, status, ErrRiotAlreadyRunning)
 	}
 	if attachExisting {
+		e.lifecycleMu.Unlock()
+		startupLocked = false
 		return e.attachExistingClient(ctx, adapter, game, status)
 	}
 	if len(processes) > 0 && options.StopExisting {
-		if err := adapter.StopKnownProcesses(ctx); err != nil {
+		if err := e.closeRiot(ctx, adapter); err != nil {
 			return e.fail(game, status, err)
 		}
-		time.Sleep(2 * time.Second)
-		processes, err = adapter.KnownProcesses(ctx)
-		if err != nil {
-			return e.fail(game, status, fmt.Errorf("confirm Riot shutdown: %w", err))
+		if err := e.refreshStoppedProfile(ctx, adapter, config.ActiveProfile()); err != nil {
+			return e.fail(game, status, err)
 		}
-		if len(processes) > 0 {
-			return e.fail(game, status, errors.New("Riot Client did not fully exit; saved login was not restored"))
-		}
+		processes = nil
 	}
-	if e.vault != nil {
-		profile := config.ActiveProfile()
-		if len(processes) > 0 {
-			if _, vaultErr := e.savedLoginStatusForProfile(e.vault, profile); vaultErr == nil {
-				return e.fail(game, status, errors.New("close Riot Client before switching to a saved login profile"))
-			}
-		} else {
-			if options.FreshLogin {
-				if err := e.vault.ClearActiveSession(); err != nil {
-					return e.fail(game, status, fmt.Errorf("clear previous Riot login before fresh sign-in: %w", err))
-				}
-			} else {
-				if err := e.vault.Restore(profile.ID, profileExpectedRiotID(profile.RiotID)); err != nil {
-					switch {
-					case errors.Is(err, sessionvault.ErrNotFound):
-					case errors.Is(err, sessionvault.ErrExpired):
-						slog.Info("saved Riot login expired; Riot Client will request sign-in", "profile", profile.Name)
-					case errors.Is(err, sessionvault.ErrUnverified), errors.Is(err, sessionvault.ErrIdentityMismatch):
-						return e.fail(game, status, fmt.Errorf("saved login needs identity verification; use Re-login and save the correct account: %w", err))
-					default:
-						return e.fail(game, status, fmt.Errorf("restore saved Riot login: %w", err))
-					}
-				}
-			}
+	if len(processes) == 0 {
+		if err := e.prepareLogin(ctx, adapter, config.ActiveProfile(), options); err != nil {
+			return e.fail(game, status, err)
 		}
+	} else if options.RestoreSavedLogin || options.FreshLogin {
+		return e.fail(game, status, errors.New("close Riot Client before switching saved accounts"))
 	}
+	e.lifecycleMu.Unlock()
+	startupLocked = false
 	executable, err := resolveRiotClientExecutable(adapter, config.RiotClientPath)
 	if err != nil {
 		return e.fail(game, status, err)
@@ -812,9 +853,20 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 	for {
 		select {
 		case <-ctx.Done():
-			_ = process.Kill()
+			e.closeCancelledClient(adapter)
 			return nil
 		case handshakeErr := <-proxy.TLSFailures():
+			accountCtx, stopAccountCheck := context.WithTimeout(ctx, 2*time.Second)
+			account, accountErr := e.readRiotAccount(accountCtx)
+			stopAccountCheck()
+			if accountErr != nil || !account.Authorized {
+				// A rejected chat connection must not interrupt first sign-in or
+				// MFA. The timer retries native-chat fallback after authorization.
+				waiting.Detail = "Waiting for Riot sign-in; chat is not ready yet"
+				e.emit(waiting)
+				handshakeTimer.Reset(chatHandshakeTimeout)
+				continue
+			}
 			slog.Warn("Riot rejected the local presence proxy; restarting with native Riot chat", "error", handshakeErr)
 			fallback := e.phaseSnapshot(PhaseLaunching, game, "Riot rejected presence proxy; restoring native friends and chat")
 			fallback.Enabled = false
@@ -822,7 +874,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 			stopProxy()
 			_ = configServer.Close(context.Background())
 			stopCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
-			if stopErr := adapter.StopKnownProcesses(stopCtx); stopErr != nil {
+			if stopErr := e.closeRiot(stopCtx, adapter); stopErr != nil {
 				stop()
 				return e.fail(game, status, fmt.Errorf("stop Riot Client for native-chat fallback: %w", stopErr))
 			}
@@ -840,7 +892,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 			return waitForRiotShutdown(ctx, adapter)
 		case <-handshakeTimer.C:
 			accountCtx, stopAccountCheck := context.WithTimeout(ctx, 2*time.Second)
-			account, accountErr := riotclient.CurrentRiotAccountSession(accountCtx)
+			account, accountErr := e.readRiotAccount(accountCtx)
 			stopAccountCheck()
 			if accountErr != nil || !account.Authorized {
 				waiting.Detail = "Waiting for Riot sign-in; chat is not ready yet"
@@ -855,7 +907,7 @@ func (e *Engine) Run(parent context.Context, options RunOptions) error {
 			stopProxy()
 			_ = configServer.Close(context.Background())
 			stopCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
-			if stopErr := adapter.StopKnownProcesses(stopCtx); stopErr != nil {
+			if stopErr := e.closeRiot(stopCtx, adapter); stopErr != nil {
 				stop()
 				return e.fail(game, status, fmt.Errorf("stop Riot Client for native-chat fallback: %w", stopErr))
 			}
@@ -942,7 +994,7 @@ func (e *Engine) runWithDirectChat(ctx context.Context, cancel context.CancelFun
 	go func() { processDone <- process.Wait() }()
 	select {
 	case <-ctx.Done():
-		_ = process.Kill()
+		e.closeCancelledClient(adapter)
 		return nil
 	case err := <-processDone:
 		if err != nil {
@@ -1011,25 +1063,33 @@ func (e *Engine) syncNativeAvailability(ctx context.Context, status model.Status
 	}
 }
 
-func (e *Engine) Stop() {
+func (e *Engine) Stop() error {
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
 	e.mu.RLock()
 	cancel := e.cancel
 	snapshot := e.snapshot
 	adapter := e.adapter
+	profile := e.config.ActiveProfile()
 	e.mu.RUnlock()
-	if cancel != nil {
-		e.emit(Snapshot{Phase: PhaseStopping, Status: snapshot.Status, Enabled: snapshot.Enabled, Game: snapshot.Game, Detail: "Stopping RiftOps and Riot Client"})
-		cancel()
-		if adapter != nil {
-			go func() {
-				ctx, stop := context.WithTimeout(context.Background(), 15*time.Second)
-				defer stop()
-				if err := adapter.StopKnownProcesses(ctx); err != nil {
-					slog.Warn("stop Riot processes failed", "error", err)
-				}
-			}()
-		}
+	if cancel == nil {
+		return nil
 	}
+	if adapter == nil {
+		adapter = e.newPlatform()
+	}
+	e.emit(Snapshot{Phase: PhaseStopping, Status: snapshot.Status, Enabled: snapshot.Enabled, Game: snapshot.Game, Detail: "Saving Riot session and closing the client"})
+	ctx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+	defer stop()
+	if err := e.closeRiot(ctx, adapter); err != nil {
+		e.emit(snapshot)
+		return err
+	}
+	cancel()
+	if err := e.waitUntilStopped(ctx); err != nil {
+		return err
+	}
+	return e.refreshStoppedProfile(ctx, adapter, profile)
 }
 
 func (e *Engine) SetStatus(ctx context.Context, status model.Status) error {

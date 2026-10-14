@@ -590,8 +590,15 @@ func sseHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getProfiles(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	refreshAccountRank(ctx, riotclient.GetLCULockfile(), featureData, riotclient.CurrentRiotAccountSession)
+	var ranks map[string]featurestore.AccountRank
+	if featureData != nil {
+		ranks = featureData.Snapshot().AccountRanks
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(backendEngine.LaunchProfiles())
+	_ = json.NewEncoder(w).Encode(profilesWithRanks(backendEngine.LaunchProfiles(), ranks))
 }
 
 func getProfileSessionStatuses(w http.ResponseWriter, r *http.Request) {
@@ -603,6 +610,7 @@ func getProfileSessionStatuses(w http.ResponseWriter, r *http.Request) {
 		Saved          bool   `json:"saved"`
 		Expired        bool   `json:"expired"`
 		NeedsRecapture bool   `json:"needsRecapture"`
+		Incomplete     bool   `json:"incomplete"`
 		CapturedAt     string `json:"capturedAt,omitempty"`
 		ExpiresAt      string `json:"expiresAt,omitempty"`
 		Error          string `json:"error,omitempty"`
@@ -613,9 +621,10 @@ func getProfileSessionStatuses(w http.ResponseWriter, r *http.Request) {
 		entry := profileSessionStatus{
 			Saved:          err == nil,
 			Expired:        errors.Is(err, sessionvault.ErrExpired),
-			NeedsRecapture: errors.Is(err, sessionvault.ErrUnverified) || errors.Is(err, sessionvault.ErrIdentityMismatch),
+			NeedsRecapture: errors.Is(err, sessionvault.ErrUnverified) || errors.Is(err, sessionvault.ErrIdentityMismatch) || errors.Is(err, sessionvault.ErrNotRemembered),
+			Incomplete:     errors.Is(err, sessionvault.ErrNotRemembered),
 		}
-		if err == nil || errors.Is(err, sessionvault.ErrExpired) {
+		if err == nil || errors.Is(err, sessionvault.ErrExpired) || errors.Is(err, sessionvault.ErrNotRemembered) {
 			entry.CapturedAt = status.CapturedAt.Format(time.RFC3339)
 			entry.ExpiresAt = status.ExpiresAt.Format(time.RFC3339)
 		} else if err != nil && !errors.Is(err, sessionvault.ErrNotFound) && !entry.NeedsRecapture {
@@ -682,7 +691,10 @@ func selectProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if snap := backendEngine.Snapshot(); snap.Phase != engine.PhaseIdle && snap.Phase != engine.PhaseError {
-		backendEngine.Stop()
+		if err := backendEngine.Stop(); err != nil {
+			httpError(w, "Riot could not be stopped safely. Close Riot Client, then retry selecting the profile.", http.StatusConflict)
+			return
+		}
 	}
 	if err := backendEngine.SelectLaunchProfile(body.ID); err != nil {
 		httpError(w, "Failed to select profile", http.StatusInternalServerError)
@@ -734,13 +746,14 @@ func switchProfile(w http.ResponseWriter, r *http.Request) {
 	runResult := make(chan error, 1)
 	go func() {
 		runResult <- backendEngine.Run(context.Background(), engine.RunOptions{
-			Game:           game,
-			Status:         status,
-			Patchline:      profile.Patchline,
-			StopExisting:   false,
-			FreshLogin:     freshLogin,
-			RiotClientArgs: append([]string(nil), profile.RiotClientArgs...),
-			GameArgs:       launchGameArgs(profile),
+			Game:              game,
+			Status:            status,
+			Patchline:         profile.Patchline,
+			StopExisting:      false,
+			FreshLogin:        freshLogin,
+			RestoreSavedLogin: !freshLogin,
+			RiotClientArgs:    append([]string(nil), profile.RiotClientArgs...),
+			GameArgs:          launchGameArgs(profile),
 		})
 	}()
 	verification, verifyErr := waitForProfileLaunch(ctx, runResult, result.TargetPUUID, freshLogin)
@@ -1241,7 +1254,15 @@ func launchGameArgs(profile settings.LaunchProfile) []string {
 }
 
 func stopEngine(w http.ResponseWriter, r *http.Request) {
-	backendEngine.Stop()
+	if !profileSessionMu.TryLock() {
+		httpError(w, "Another account operation is running. Wait before stopping Riot.", http.StatusConflict)
+		return
+	}
+	defer profileSessionMu.Unlock()
+	if err := backendEngine.Stop(); err != nil {
+		httpError(w, "Could not close Riot and preserve the saved login. Close Riot normally, then retry.", http.StatusConflict)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1252,16 +1273,36 @@ func captureSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer profileSessionMu.Unlock()
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	var body struct {
+		CloseClient bool `json:"closeClient"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpError(w, "Invalid save request", http.StatusBadRequest)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if err := backendEngine.CaptureSavedLogin(ctx, 30*24*time.Hour); err != nil {
+	var captureErr error
+	if body.CloseClient {
+		captureErr = backendEngine.CaptureAndCloseSavedLogin(ctx, 30*24*time.Hour)
+	} else {
+		captureErr = backendEngine.CaptureSavedLogin(ctx, 30*24*time.Hour)
+	}
+	if err := captureErr; err != nil {
 		message := "Could not save this Riot session. Keep Riot Client open with Stay signed in enabled, then try again."
 		statusCode := http.StatusInternalServerError
 		switch {
+		case errors.Is(err, sessionvault.ErrNotRemembered):
+			w.Header().Set("X-RiftOps-Error-Code", "login-not-persisted")
+			message, statusCode = "Riot is signed in but has not written a reusable login. Enable Stay signed in, then use Close Riot & save to finish saving.", http.StatusConflict
 		case errors.Is(err, engine.ErrRiotIDRequired):
 			message, statusCode = "Set this profile's Riot ID to the connected Name#Tag before saving its login.", http.StatusConflict
 		case errors.Is(err, engine.ErrRiotAccountMismatch):
 			message, statusCode = "The signed-in Riot ID did not match this profile, or the account changed while saving. Verify the account and try again.", http.StatusConflict
+		case errors.Is(err, sessionvault.ErrIdentityMismatch):
+			message, statusCode = "Riot's saved files do not match the signed-in account. Finish signing in to the intended account, then retry.", http.StatusConflict
 		case errors.Is(err, engine.ErrRiotAccountUnverified):
 			message, statusCode = "Riot Client is not signed in with a verifiable account. Sign in and try again.", http.StatusConflict
 		}

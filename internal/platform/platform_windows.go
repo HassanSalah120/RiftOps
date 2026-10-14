@@ -113,7 +113,12 @@ func (windowsAdapter) Launch(ctx context.Context, request LaunchRequest) (Proces
 	if err != nil {
 		return nil, err
 	}
-	command := exec.CommandContext(ctx, request.Executable, arguments...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The engine owns shutdown so it can request a graceful quit and preserve
+	// Riot's settled session before cancellation. CommandContext force-kills.
+	command := exec.Command(request.Executable, arguments...)
 	hideWindow(command)
 	if err := command.Start(); err != nil {
 		return nil, fmt.Errorf("launch Riot Client: %w", err)

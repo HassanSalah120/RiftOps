@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.10.19 — 2026-10-14
+
+- Added Solo/Duo and Flex rank, division, LP, and last-checked date to Riot account rows. Verified ranks refresh while League is connected and remain available after switching or closing League.
+- Kept rank caches separate by account and server, preserved previous data on failed or interrupted reads, and supported League's queue-map rank format. Accounts without loaded data are distinct from confirmed unranked accounts.
+- Preserved newer native Riot sessions during ordinary launches instead of replaying old saves. Explicit account switching remains the path that restores saved logins.
+- Requested graceful Riot shutdown before saving settled login files during Stop and switching. Same-account switches now use the completed save's current readiness.
+- Preserved only the intended account's valid remembered-device cookie during fresh sign-in, while clearing authorization. RiftOps's local retention does not extend Riot's authentication or device-trust expiry.
+- Detected incomplete remembered-login snapshots and added a confirmed Close Riot & save recovery action. Saving cannot silently overwrite a complete login with an incomplete snapshot.
+- Recognized authenticated PendingProductContext sessions using a separate live RSO check, while rejecting pending MFA and account changes. Chat fallback waits for sign-in to finish before restarting Riot.
+- Serialized account lifecycle operations and vault mutations, kept status reads consistent during save replacement, and stopped profile selection when shutdown fails.
+- Updated the GitHub Pages release showcase with the account rank display and remembered-login changes.
+
 ## v2.10.18 — 2026-10-12
 
 - Replaced the Collection gallery with champion portraits and completion rings: gold for owned skins, green for distinct shard-only skins, and a dark track for missing skins.
