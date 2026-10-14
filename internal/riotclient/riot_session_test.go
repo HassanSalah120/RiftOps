@@ -8,6 +8,30 @@ import (
 	"testing"
 )
 
+func TestQuitRequestsGracefulExitWithoutSigningOut(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.Path != "/process-control/v1/process/quit" {
+			t.Errorf("unexpected shutdown: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	lf := testLockfile(server.URL)
+	lf.Source = "riot-client"
+	if err := lf.Quit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lf.Source = "league"
+	if err := lf.Quit(context.Background()); err == nil {
+		t.Fatal("accepted a League lockfile for Riot shutdown")
+	}
+	if requests != 1 {
+		t.Fatal("made extra shutdown requests")
+	}
+}
+
 func TestFetchRiotAccountSessionReturnsOnlyAuthorizedIdentity(t *testing.T) {
 	const secret = "secret-must-not-leak"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +78,52 @@ func TestFetchRiotAccountSessionFailsClosed(t *testing.T) {
 			}
 			if err != nil && strings.Contains(err.Error(), "secret-must-not-leak") {
 				t.Fatal("upstream auth material leaked in error")
+			}
+		})
+	}
+}
+
+func TestPendingProductContextRequiresAuthenticatedRSOAndStableIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name, rso      string
+		status         int
+		changed        bool
+		wantAuthorized bool
+	}{
+		{"signed in", `{"type":"authenticated"}`, http.StatusOK, false, true},
+		{"MFA pending", `{"type":"needs_multifactor_verification"}`, http.StatusOK, false, false},
+		{"signed out", `{"type":"needs_credentials"}`, http.StatusOK, false, false},
+		{"RSO booting", `{"message":"RSO is not yet initialized"}`, http.StatusNotFound, false, false},
+		{"invalid response", `{`, http.StatusOK, false, false},
+		{"account changed", `{"type":"authenticated"}`, http.StatusOK, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reads := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("unexpected mutation: %s", r.Method)
+				}
+				switch r.URL.Path {
+				case "/player-session-lifecycle/v1/session":
+					reads++
+					puuid := "synthetic-one"
+					if test.changed && reads > 1 {
+						puuid = "synthetic-two"
+					}
+					_, _ = w.Write([]byte(`{"loginState":"PendingProductContext","puuid":"` + puuid + `","riotID":{"gameName":"Synthetic","tagLine":"TEST"}}`))
+				case "/rso-auth/v1/session":
+					w.WriteHeader(test.status)
+					_, _ = w.Write([]byte(test.rso))
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			lf := testLockfile(server.URL)
+			lf.Source = "riot-client"
+			account, _ := lf.FetchRiotAccountSession(context.Background())
+			if account.Authorized != test.wantAuthorized {
+				t.Fatalf("authorized=%v, want %v", account.Authorized, test.wantAuthorized)
 			}
 		})
 	}

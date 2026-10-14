@@ -15,6 +15,31 @@ func testLockfile(serverURL string) *Lockfile {
 	return &Lockfile{BaseURL: serverURL, Password: "test-password", allowInsecure: true}
 }
 
+func TestRankedStatsQueueDialectsAndUnavailableData(t *testing.T) {
+	for _, body := range []string{
+		`{"queues":[{"queueType":"RANKED_SOLO_5x5","tier":"BRONZE","division":"I","leaguePoints":5}]}`,
+		`{"queueMap":{"RANKED_SOLO_5x5":{"tier":"BRONZE","division":"I","leaguePoints":5}}}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/lol-ranked/v1/current-ranked-stats" {
+				t.Errorf("unexpected endpoint: %s", r.URL.Path)
+			}
+			_, _ = w.Write([]byte(body))
+		}))
+		entries, err := testLockfile(server.URL).FetchLCULeague(context.Background(), "synthetic")
+		server.Close()
+		if err != nil || len(entries) != 1 || entries[0].QueueType != "RANKED_SOLO_5x5" || entries[0].Rank != "I" || entries[0].LeaguePoints != 5 {
+			t.Fatal("ranked queue dialect lost rank data")
+		}
+	}
+	if _, err := decodeRankedQueues([]byte(`{}`)); err == nil {
+		t.Fatal("missing ranked data was treated as unranked")
+	}
+	if entries, err := decodeRankedQueues([]byte(`{"queues":[]}`)); err != nil || entries == nil || len(entries) != 0 {
+		t.Fatal("valid unranked queues were rejected")
+	}
+}
+
 func TestParseLockfileValidatesFieldsAndPreservesPasswordColons(t *testing.T) {
 	lockfile, err := parseLockfile("LeagueClient:42:12345:secret:with-colon:https")
 	if err != nil {

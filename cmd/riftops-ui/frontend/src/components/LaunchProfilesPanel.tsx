@@ -15,6 +15,7 @@ import {
 import ConfirmModal from './ConfirmModal';
 import type { ConfirmAction } from '../types';
 import { useLCUConnection } from './lcuConnectionContext';
+import { accountRankLabel } from '../utils/accountRank';
 
 type Toast = (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
 
@@ -27,6 +28,7 @@ const LOCALES = ['auto', 'en_US', 'en_GB', 'de_DE', 'fr_FR', 'es_ES', 'it_IT', '
 
 function sessionLabel(status: ProfileSessionStatus | undefined): string {
   if (!status) return 'Checking saved login…';
+  if (status.incomplete) return 'Remembered login incomplete · sign in and re-save';
   if (status.needsRecapture) return 'Re-save after verifying account';
   if (status.error) return 'Saved login unavailable';
   if (status.expired) return 'Local save expired · sign in again';
@@ -62,14 +64,14 @@ export default function LaunchProfilesPanel({
   showToast: Toast;
   onRefreshSnapshot: () => Promise<void>;
 }) {
-  const { streamerMode } = useLCUConnection();
+  const { streamerMode, connected: leagueConnected, pageVisible, performanceMode } = useLCUConnection();
   const [profiles, setProfiles] = useState<LaunchProfile[]>([]);
   const [statuses, setStatuses] = useState<Record<string, ProfileSessionStatus>>({});
   const [connected, setConnected] = useState<ConnectedLeagueAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const accountActionLock = useRef(false);
-  const [deleteConfirmation, setDeleteConfirmation] = useState<ConfirmAction | null>(null);
+  const [confirmation, setConfirmation] = useState<ConfirmAction | null>(null);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -101,6 +103,25 @@ export default function LaunchProfilesPanel({
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!leagueConnected || !pageVisible) return;
+    let cancelled = false;
+    let fetching = false;
+    const refreshRanks = async () => {
+      if (fetching) return;
+      fetching = true;
+      try {
+        const next = await fetchLaunchProfiles();
+        if (!cancelled) setProfiles(next);
+      } catch { /* Keep the last checked ranks during a disconnect. */ }
+      finally { fetching = false; }
+    };
+    void refreshRanks();
+    const interval = performanceMode === 'fast' ? 20_000 : performanceMode === 'quiet' ? 90_000 : 45_000;
+    const timer = window.setInterval(() => void refreshRanks(), interval);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [leagueConnected, pageVisible, performanceMode]);
 
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0];
   const activeProfileRiotId = activeProfile ? profileGameRiotId(activeProfile) : '';
@@ -135,7 +156,7 @@ export default function LaunchProfilesPanel({
       } else if (forceLogin) {
         showToast('Fresh sign-in needed', `Sign in to the intended Riot account for ${profileLabel}, then save its login.`, 'info');
       } else if (result.targetSessionUnverified) {
-        showToast('One-time re-save needed', `The old save for ${profileLabel} has no verified identity. Sign in to the correct account, then save it again.`, 'info');
+        showToast('One-time re-save needed', `The old save for ${profileLabel} is incomplete or needs identity verification. Sign in to the correct account, then save it again.`, 'info');
       } else if (result.targetSessionExpired) {
         showToast('Local save expired', `${profileLabel} needs a fresh Riot sign-in. Save it afterward.`, 'info');
       } else {
@@ -150,16 +171,27 @@ export default function LaunchProfilesPanel({
     }
   };
 
-  const saveCurrentSession = async () => {
+  const saveCurrentSession = async (closeClient = false) => {
     if (!activeProfile) return;
     if (accountActionLock.current) return;
     accountActionLock.current = true;
     setBusy('capture');
+    setError('');
     try {
-      await captureSavedLogin();
+      await captureSavedLogin(closeClient);
       await load();
+      if (closeClient) await onRefreshSnapshot().catch(() => undefined);
       showToast('Riot login saved', `${streamerMode ? 'This profile' : activeProfile.name} is bound to the signed-in Riot account. Riot may still require sign-in later.`, 'success');
     } catch (cause: any) {
+      if (cause?.code === 'login-not-persisted' && !closeClient) {
+        setConfirmation({
+          open: true, title: 'Close Riot to finish saving?',
+          message: 'Riot has not written a reusable login yet. Enable Stay signed in first. This will close Riot Client and any Riot game, then save the completed login. Cancel to keep playing.',
+          actionLabel: 'Close Riot & save', danger: false,
+          onConfirm: () => { setConfirmation(null); void saveCurrentSession(true); },
+        });
+        return;
+      }
       setError(cause?.message || 'The current Riot login could not be saved.');
       showToast('Could not save Riot session', cause?.message || 'Keep Riot Client open and signed in, then try again.', 'error');
     } finally {
@@ -258,7 +290,7 @@ export default function LaunchProfilesPanel({
   };
 
   return (
-    <>{deleteConfirmation && <ConfirmModal action={deleteConfirmation} onClose={() => setDeleteConfirmation(null)} />}
+    <>{confirmation && <ConfirmModal action={confirmation} onClose={() => setConfirmation(null)} />}
     <section className="dashboard-section account-switcher glass-card" aria-labelledby="launch-profiles-title">
       <header className="account-switcher__header">
         <div className="account-switcher__heading">
@@ -332,10 +364,10 @@ export default function LaunchProfilesPanel({
             {editingId && profiles.length > 1 && <button type="button" className="account-switcher__delete" onClick={() => {
               const profile = profiles.find((item) => item.id === editingId);
               if (!profile) return;
-              setDeleteConfirmation({
+              setConfirmation({
                 open: true, danger: true, title: 'Delete account?', actionLabel: 'Delete account',
                 message: `Delete ${streamerMode ? 'this account' : profile.name} and its saved Riot login?`,
-                onConfirm: () => { setDeleteConfirmation(null); void removeProfile(profile); },
+                onConfirm: () => { setConfirmation(null); void removeProfile(profile); },
               });
             }} disabled={busy !== ''}><Trash2 aria-hidden="true" /> Delete account</button>}
           </div>
@@ -365,6 +397,16 @@ export default function LaunchProfilesPanel({
                   {detectedMismatch && <div className="account-switcher__region-note">League reports {connected.region}. <button type="button" onClick={() => void updateDetectedServer(profile)} disabled={busy !== ''}>Update server</button></div>}
                 </div>
               </div>
+              <div className="account-switcher__ranks" aria-label={`${profileDisplayName} League ranks`}>
+                {profile.rank ? <>
+                  <div><span>Solo/Duo</span><strong>{accountRankLabel(profile.rank.solo)}</strong></div>
+                  <div><span>Flex</span><strong>{accountRankLabel(profile.rank.flex)}</strong></div>
+                  <small title={`Last checked ${new Date(profile.rank.updatedAt).toLocaleString()}`}>Last checked {new Date(profile.rank.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</small>
+                </> : <>
+                  <strong className="account-switcher__rank-unknown">Rank not loaded</strong>
+                  <small>Open League once to load ranks.</small>
+                </>}
+              </div>
               <div className="account-switcher__row-actions">
                 <button type="button" className={active ? 'btn-primary' : 'btn-secondary'} onClick={() => void runSwitch(profile)} disabled={busy !== ''}>
                   {switching ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Zap aria-hidden="true" />}
@@ -379,7 +421,7 @@ export default function LaunchProfilesPanel({
           );
         })}
       </div>
-      <p className="account-switcher__footnote">Enable Stay signed in before saving. The 30-day limit applies to RiftOps's encrypted local save; Riot can require sign-in sooner. Verified saved logins refresh during switches without extending that limit. Fresh sign-in uses native chat to avoid interrupting login.</p>
+      <p className="account-switcher__footnote">Enable Stay signed in before saving. For fewer MFA prompts, also check Riot’s separate Remember this app for 30 days option. RiftOps preserves verified saved logins when Riot closes and keeps this account’s valid device trust during re-login. The local save’s 30-day retention does not extend Riot’s authentication or device-trust expiry.</p>
     </section></>
   );
 }

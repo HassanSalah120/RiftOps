@@ -80,7 +80,11 @@ func (darwinAdapter) Launch(ctx context.Context, request LaunchRequest) (Process
 	if err != nil {
 		return nil, err
 	}
-	command := exec.CommandContext(ctx, request.Executable, arguments...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The engine closes Riot gracefully before terminating its runtime.
+	command := exec.Command(request.Executable, arguments...)
 	if err := command.Start(); err != nil {
 		return nil, fmt.Errorf("launch Riot Client: %w", err)
 	}

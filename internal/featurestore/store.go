@@ -1,8 +1,8 @@
 // Package featurestore persists RiftOps' non-secret feature data.
 //
 // The store deliberately does not contain Riot credentials, LCU tokens, or
-// raw PUUIDs. Account-scoped records use a one-way account key derived from
-// the current PUUID and are written atomically with private file permissions.
+// raw PUUIDs. Account-scoped records use one-way identity keys and are written
+// atomically with private file permissions.
 package featurestore
 
 import (
@@ -108,6 +108,7 @@ type Data struct {
 	SettingsBackups    map[string][]ClientSettingsBackup `json:"settingsBackups"`
 	ItemSetSnapshots   map[string][]ItemSetSnapshot      `json:"itemSetSnapshots"`
 	BatchReceipts      []BatchReceipt                    `json:"batchReceipts"`
+	AccountRanks       map[string]AccountRank            `json:"accountRanks"`
 }
 
 func defaultData() Data {
@@ -119,6 +120,7 @@ func defaultData() Data {
 		ItemSetSnapshots:   make(map[string][]ItemSetSnapshot),
 		LobbyPresets:       []LobbyPreset{},
 		BatchReceipts:      []BatchReceipt{},
+		AccountRanks:       make(map[string]AccountRank),
 	}
 }
 
@@ -174,6 +176,9 @@ func (s *Store) load() error {
 	if decoded.BatchReceipts == nil {
 		decoded.BatchReceipts = []BatchReceipt{}
 	}
+	if decoded.AccountRanks == nil {
+		decoded.AccountRanks = make(map[string]AccountRank)
+	}
 	s.data = decoded
 	return nil
 }
@@ -198,6 +203,9 @@ func (s *Store) Save(data Data) error {
 	}
 	if data.ItemSetSnapshots == nil {
 		data.ItemSetSnapshots = make(map[string][]ItemSetSnapshot)
+	}
+	if data.AccountRanks == nil {
+		data.AccountRanks = make(map[string]AccountRank)
 	}
 	encoded, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {

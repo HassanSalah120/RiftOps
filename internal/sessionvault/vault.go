@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/HassanSalah120/RiftOps/internal/atomicfile"
@@ -30,6 +31,7 @@ var (
 	ErrExpired          = errors.New("saved Riot login has expired")
 	ErrUnverified       = errors.New("saved Riot login needs a one-time identity-verified re-save")
 	ErrIdentityMismatch = errors.New("saved Riot login belongs to a different Riot ID")
+	ErrNotRemembered    = errors.New("Riot has not persisted a reusable login; enable Stay signed in and save after Riot finishes signing in")
 	validID             = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 )
 
@@ -39,6 +41,7 @@ type protector interface {
 }
 
 type Vault struct {
+	mu          sync.Mutex
 	RiotDataDir string
 	VaultDir    string
 	protector   protector
@@ -92,6 +95,8 @@ func (v *Vault) Capture(profileID string, lifetime time.Duration, identity Ident
 // RefreshVerified replaces rotated session files for the same live account
 // without extending retention or creating a save the user did not request.
 func (v *Vault) RefreshVerified(profileID string, identity Identity, verify func() error) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	status, err := v.Status(profileID)
 	if err != nil {
 		return err
@@ -109,6 +114,8 @@ func (v *Vault) RefreshVerified(profileID string, identity Identity, verify func
 // account before replacing any existing vault. A failed check leaves the old
 // encrypted save untouched.
 func (v *Vault) CaptureVerified(profileID string, lifetime time.Duration, identity Identity, verify func() error) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	if err := validateProfileID(profileID); err != nil {
 		return err
 	}
@@ -129,12 +136,21 @@ func (v *Vault) captureVerified(profileID string, identity Identity, capturedAt,
 		return err
 	}
 	defer clearFileMap(files)
+	if owner := diskPUUID(files["Data/"+privateSettingsFile]); owner != "" && owner != identity.PUUID {
+		return ErrIdentityMismatch
+	}
 	if verify != nil {
 		if err := verify(); err != nil {
 			return err
 		}
+		if err := rememberedLoginReady(files["Data/"+privateSettingsFile], identity.PUUID); err != nil {
+			return err
+		}
 	}
+	return v.storeCapture(profileID, identity, capturedAt, expiresAt, files)
+}
 
+func (v *Vault) storeCapture(profileID string, identity Identity, capturedAt, expiresAt time.Time, files map[string][]byte) error {
 	encoded, err := json.Marshal(payload{
 		Version:    2,
 		CapturedAt: capturedAt,
@@ -281,6 +297,8 @@ func readStableFile(path string) ([]byte, error) {
 }
 
 func (v *Vault) Restore(profileID, expectedRiotID string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	value, err := v.load(profileID)
 	if err != nil {
 		return err
@@ -309,6 +327,9 @@ func (v *Vault) Restore(profileID, expectedRiotID string) error {
 	}
 	if err := validateSnapshotFiles(files); err != nil {
 		return err
+	}
+	if owner := diskPUUID(files["Data/"+privateSettingsFile]); owner != "" && owner != value.Identity.PUUID {
+		return ErrIdentityMismatch
 	}
 	if len(files) == 0 {
 		return errors.New("saved Riot login payload was invalid")
@@ -340,6 +361,8 @@ func (v *Vault) Restore(profileID, expectedRiotID string) error {
 // ClearActiveSession removes all remembered-login and session files so Riot
 // shows its normal, fresh sign-in screen.
 func (v *Vault) ClearActiveSession() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	return v.clearManagedSession()
 }
 
@@ -416,6 +439,10 @@ func (v *Vault) Status(profileID string) (Status, error) {
 	defer clearBytes(value.Data)
 	defer clearBytes(value.ClientData)
 	defer clearFileMap(value.Files)
+	return v.payloadStatus(value)
+}
+
+func (v *Vault) payloadStatus(value payload) (Status, error) {
 	status := Status{CapturedAt: value.CapturedAt, ExpiresAt: value.ExpiresAt, Identity: value.Identity}
 	if value.Version < 2 {
 		return status, ErrUnverified
@@ -427,6 +454,8 @@ func (v *Vault) Status(profileID string) (Status, error) {
 }
 
 func (v *Vault) Delete(profileID string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	if err := validateProfileID(profileID); err != nil {
 		return err
 	}

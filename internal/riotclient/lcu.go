@@ -850,16 +850,8 @@ func (lf *Lockfile) FetchLCULeague(ctx context.Context, puuid string) ([]LCULeag
 	// Primary endpoint: /lol-ranked/v1/current-ranked-stats
 	body, err := lf.DoRequest(ctx, "GET", "/lol-ranked/v1/current-ranked-stats")
 	if err == nil {
-		var stats struct {
-			Queues []LCULeagueEntry `json:"queues"`
-		}
-		if err := json.Unmarshal(body, &stats); err == nil {
-			for i := range stats.Queues {
-				if stats.Queues[i].Rank == "" && stats.Queues[i].Division != "" {
-					stats.Queues[i].Rank = stats.Queues[i].Division
-				}
-			}
-			return stats.Queues, nil
+		if queues, err := decodeRankedQueues(body); err == nil {
+			return queues, nil
 		}
 	}
 
@@ -867,21 +859,51 @@ func (lf *Lockfile) FetchLCULeague(ctx context.Context, puuid string) ([]LCULeag
 	if puuid != "" {
 		path := fmt.Sprintf("/lol-ranked/v1/ranked-stats/%s", url.PathEscape(strings.TrimSpace(puuid)))
 		if body, err := lf.DoRequest(ctx, "GET", path); err == nil {
-			var stats struct {
-				Queues []LCULeagueEntry `json:"queues"`
-			}
-			if err := json.Unmarshal(body, &stats); err == nil {
-				for i := range stats.Queues {
-					if stats.Queues[i].Rank == "" && stats.Queues[i].Division != "" {
-						stats.Queues[i].Rank = stats.Queues[i].Division
-					}
-				}
-				return stats.Queues, nil
+			if queues, err := decodeRankedQueues(body); err == nil {
+				return queues, nil
 			}
 		}
 	}
 
 	return nil, fmt.Errorf("no ranked stats available")
+}
+
+func decodeRankedQueues(body []byte) ([]LCULeagueEntry, error) {
+	var stats struct {
+		Queues   []LCULeagueEntry          `json:"queues"`
+		QueueMap map[string]LCULeagueEntry `json:"queueMap"`
+	}
+	if err := json.Unmarshal(body, &stats); err != nil {
+		return nil, err
+	}
+	if stats.Queues == nil && stats.QueueMap == nil {
+		return nil, errors.New("ranked queues are unavailable")
+	}
+	queues := stats.Queues
+	if len(stats.QueueMap) > 0 {
+		keys := make([]string, 0, len(stats.QueueMap))
+		for key := range stats.QueueMap {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		queues = make([]LCULeagueEntry, 0, len(keys))
+		for _, key := range keys {
+			entry := stats.QueueMap[key]
+			if entry.QueueType == "" {
+				entry.QueueType = key
+			}
+			queues = append(queues, entry)
+		}
+	}
+	if queues == nil {
+		queues = []LCULeagueEntry{}
+	}
+	for i := range queues {
+		if queues[i].Rank == "" {
+			queues[i].Rank = queues[i].Division
+		}
+	}
+	return queues, nil
 }
 
 // FetchLCUMastery fetches top champion masteries from the LCU.
