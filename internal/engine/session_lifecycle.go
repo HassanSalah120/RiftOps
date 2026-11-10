@@ -71,7 +71,9 @@ func (e *Engine) refreshStoppedProfile(ctx context.Context, adapter platform.Ada
 		return ErrSavedLoginRefresh
 	}
 	if len(processes) > 0 {
-		return nil
+		if err := waitForNoRiotProcesses(ctx, adapter); err != nil {
+			return nil
+		}
 	}
 	err = e.vault.RefreshSettled(profile.ID, profileExpectedRiotID(profile.RiotID))
 	// Signed-out/other-account files are never a valid replacement. Keep the

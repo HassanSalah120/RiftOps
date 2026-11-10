@@ -44,6 +44,7 @@ type Vault struct {
 	mu          sync.Mutex
 	RiotDataDir string
 	VaultDir    string
+	ElectronDir string
 	protector   protector
 	now         func() time.Time
 }
@@ -85,7 +86,13 @@ func Default(vaultDir string) (*Vault, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Vault{RiotDataDir: dataDir, VaultDir: vaultDir, protector: platformProtector{}, now: time.Now}, nil
+	return &Vault{
+		RiotDataDir: dataDir,
+		VaultDir:    vaultDir,
+		ElectronDir: defaultElectronUserDataDir(),
+		protector:   platformProtector{},
+		now:         time.Now,
+	}, nil
 }
 
 func (v *Vault) Capture(profileID string, lifetime time.Duration, identity Identity) error {
@@ -342,6 +349,13 @@ func (v *Vault) Restore(profileID, expectedRiotID string) error {
 		}
 		targets[key] = path
 	}
+	var fallbackSettings []byte
+	if _, ok := files["Config/"+clientSettingsFile]; !ok {
+		clientRoot := filepath.Dir(v.RiotDataDir)
+		if cur, err := readStableFile(filepath.Join(clientRoot, "Config", clientSettingsFile)); err == nil {
+			fallbackSettings = cur
+		}
+	}
 	if err := v.clearManagedSession(); err != nil {
 		return err
 	}
@@ -354,6 +368,10 @@ func (v *Vault) Restore(profileID, expectedRiotID string) error {
 		if err := writePrivateFile(targets[key], files[key]); err != nil {
 			return err
 		}
+	}
+	if len(fallbackSettings) > 0 {
+		clientRoot := filepath.Dir(v.RiotDataDir)
+		_ = writePrivateFile(filepath.Join(clientRoot, "Config", clientSettingsFile), fallbackSettings)
 	}
 	return nil
 }
@@ -373,6 +391,9 @@ func (v *Vault) clearManagedSession() error {
 				return err
 			}
 		}
+	}
+	if v.ElectronDir != "" {
+		_ = clearElectronSessionStorage(v.ElectronDir)
 	}
 	return nil
 }
@@ -561,4 +582,43 @@ func clearFileMap(files map[string][]byte) {
 	for _, value := range files {
 		clearBytes(value)
 	}
+}
+
+
+func defaultElectronUserDataDir() string {
+	switch runtime.GOOS {
+	case "windows":
+		root := os.Getenv("APPDATA")
+		if root == "" {
+			return ""
+		}
+		return filepath.Join(root, "Riot Client")
+	case "darwin":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(home, "Library", "Application Support", "Riot Client")
+	default:
+		return ""
+	}
+}
+
+func clearElectronSessionStorage(electronDir string) error {
+	if electronDir == "" {
+		return nil
+	}
+	targets := []string{
+		filepath.Join(electronDir, "Local Storage"),
+		filepath.Join(electronDir, "Session Storage"),
+		filepath.Join(electronDir, "Network", "Cookies"),
+		filepath.Join(electronDir, "Network", "Cookies-journal"),
+		filepath.Join(electronDir, "Network", "Network Persistent State"),
+		filepath.Join(electronDir, "WebStorage"),
+		filepath.Join(electronDir, "blob_storage"),
+	}
+	for _, target := range targets {
+		_ = removeSafePath(target)
+	}
+	return nil
 }

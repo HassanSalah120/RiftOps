@@ -61,7 +61,10 @@ func (windowsAdapter) KnownProcesses(ctx context.Context) ([]ProcessInfo, error)
 		return nil, err
 	}
 	known := map[string]bool{
+		"riot client.exe":             true,
+		"riotclientelectron.exe":      true,
 		"riotclientservices.exe":      true,
+		"riotclientcrashhandler.exe":  true,
 		"riotclientux.exe":            true,
 		"riotclientuxrender.exe":      true,
 		"leagueclient.exe":            true,

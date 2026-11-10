@@ -1,4 +1,4 @@
-//go:build desktop
+
 
 package main
 

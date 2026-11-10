@@ -414,3 +414,122 @@ func TestRestoreRefusesUnverifiedLegacyVaultWithoutChangingActiveSession(t *test
 		t.Fatalf("active session changed after refused restore: %q, %v", got, err)
 	}
 }
+
+func TestPrepareFreshLoginPreservesInstallRegion(t *testing.T) {
+	dataDir := t.TempDir()
+	clientRoot := filepath.Dir(dataDir)
+	configDir := filepath.Join(clientRoot, "Config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(configDir, clientSettingsFile)
+	initialSettings := []byte("install:\n    globals:\n        locale: \"en_GB\"\n        region: \"EUNE\"\n")
+	if err := os.WriteFile(settingsPath, initialSettings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}, now: time.Now}
+
+	if err := vault.PrepareFreshLogin("profile-new", "NewUser#EUN"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("RiotClientSettings.yaml was deleted: %v", err)
+	}
+	if !bytes.Equal(got, initialSettings) {
+		t.Fatalf("RiotClientSettings.yaml changed: got %q, want %q", got, initialSettings)
+	}
+}
+
+func TestRestorePreservesInstallRegionWhenMissingInLegacyVault(t *testing.T) {
+	dataDir := t.TempDir()
+	clientRoot := filepath.Dir(dataDir)
+	configDir := filepath.Join(clientRoot, "Config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(configDir, clientSettingsFile)
+	initialSettings := []byte("install:\n    globals:\n        region: \"EUNE\"\n")
+	if err := os.WriteFile(settingsPath, initialSettings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	vault := &Vault{RiotDataDir: dataDir, VaultDir: t.TempDir(), protector: testProtector{}, now: time.Now}
+
+	privatePath := filepath.Join(dataDir, privateSettingsFile)
+	if err := os.WriteFile(privatePath, []byte("games-session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(settingsPath)
+	if err := vault.Capture("profile-legacy-save", time.Hour, testIdentity); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(settingsPath, initialSettings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := vault.Restore("profile-legacy-save", testIdentity.RiotID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("RiotClientSettings.yaml was deleted: %v", err)
+	}
+	if !bytes.Equal(got, initialSettings) {
+		t.Fatalf("RiotClientSettings.yaml changed: got %q, want %q", got, initialSettings)
+	}
+}
+
+func TestClearManagedSessionCleansElectronCache(t *testing.T) {
+	dataDir := t.TempDir()
+	electronDir := t.TempDir()
+
+	localStorage := filepath.Join(electronDir, "Local Storage", "leveldb")
+	sessionStorage := filepath.Join(electronDir, "Session Storage")
+	networkCookies := filepath.Join(electronDir, "Network", "Cookies")
+
+	if err := os.MkdirAll(localStorage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localStorage, "000003.log"), []byte("auth-token-state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sessionStorage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionStorage, "000003.log"), []byte("session-state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(networkCookies), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(networkCookies, []byte("cookies-db"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	vault := &Vault{
+		RiotDataDir: dataDir,
+		VaultDir:    t.TempDir(),
+		ElectronDir: electronDir,
+		protector:   testProtector{},
+		now:         time.Now,
+	}
+
+	if err := vault.ClearActiveSession(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(electronDir, "Local Storage")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Local Storage was not removed")
+	}
+	if _, err := os.Stat(sessionStorage); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Session Storage was not removed")
+	}
+	if _, err := os.Stat(networkCookies); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Network/Cookies was not removed")
+	}
+}

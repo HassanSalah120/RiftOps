@@ -120,6 +120,7 @@ func (v *Vault) PrepareFreshLogin(profileID, expectedRiotID string) error {
 	defer v.mu.Unlock()
 	value, err := v.load(profileID)
 	var trust []byte
+	var settingsData []byte
 	liveMatches := false
 	if err == nil {
 		defer clearBytes(value.Data)
@@ -144,12 +145,25 @@ func (v *Vault) PrepareFreshLogin(profileID, expectedRiotID string) error {
 				}
 			}
 		}
+		if len(value.Files) > 0 && len(value.Files["Config/"+clientSettingsFile]) > 0 {
+			settingsData = append([]byte(nil), value.Files["Config/"+clientSettingsFile]...)
+		}
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
+	}
+	if len(settingsData) == 0 {
+		clientRoot := filepath.Dir(v.RiotDataDir)
+		if cur, err := readStableFile(filepath.Join(clientRoot, "Config", clientSettingsFile)); err == nil {
+			settingsData = cur
+		}
 	}
 	defer clearBytes(trust)
 	if err := v.clearManagedSession(); err != nil {
 		return err
+	}
+	if len(settingsData) > 0 {
+		clientRoot := filepath.Dir(v.RiotDataDir)
+		_ = writePrivateFile(filepath.Join(clientRoot, "Config", clientSettingsFile), settingsData)
 	}
 	if len(trust) > 0 {
 		return writePrivateFile(filepath.Join(v.RiotDataDir, privateSettingsFile), trust)
