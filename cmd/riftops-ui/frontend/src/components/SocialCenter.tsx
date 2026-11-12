@@ -211,13 +211,17 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
 
   const inviteSelected = async () => {
     const ids = [...selected];
-    if (!ids.length || ids.length > (remoteClient ? 1 : 20)) return;
+    if (!ids.length || ids.length > 20) return;
     setBusy('invite');
     try {
-      if (remoteClient) { await inviteLCUFriends(ids); setFeedback({ tone: 'success', message: 'Invitation sent.' }); return; }
-      await startReview('friend-invite', ids, false, `Review ${ids.length} lobby invitation${ids.length === 1 ? '' : 's'}`, 'RiftOps will dispatch reviewed lobby invitations through your League client.', ids.map((id) => getFriendName(friends.find((friend) => friendKey(friend) === id) || { id })), 'friends');
-    } catch (reason: any) { setFeedback({ tone: 'error', message: reason?.message || 'Invitation failed.' }); }
-    finally { setBusy(''); }
+      await inviteLCUFriends(ids);
+      setSelected(new Set());
+      setFeedback({ tone: 'success', message: `${ids.length} lobby invitation${ids.length === 1 ? '' : 's'} sent.` });
+    } catch (reason: any) {
+      setFeedback({ tone: 'error', message: reason?.message || 'Invitation failed.' });
+    } finally {
+      setBusy('');
+    }
   };
 
   const removeSelected = async () => {
@@ -313,7 +317,7 @@ export default function SocialCenter({ remoteClient = false }: { remoteClient?: 
                     <button type="button" className="social-select-button" onClick={() => toggleSelected(friend)} aria-label={`${isSelected ? 'Deselect' : 'Select'} ${name}`} aria-pressed={isSelected}>{isSelected ? <Check /> : <span />}</button>
                     <div className="social-friend-avatar">{friend.profileIconId ? <img src={`/lol-game-data/assets/v1/profile-icons/${friend.profileIconId}.jpg`} alt="" width="40" height="40" loading="lazy" /> : <span className={tone}><i /></span>}<em className={tone} title={statusLabel(friend.availability)} /></div>
                     <div className="social-friend-copy"><strong>{name}{inLobby && <em>IN LOBBY</em>}{friend.isPremade && <em className="is-premade">PARTY{friend.partySize && friend.partySize > 1 ? ` · ${friend.partySize}` : ''}</em>}</strong><small>{friend.mode || friend.productName || 'League of Legends'} · {(friend.availability || 'offline').toLowerCase()}{activityLabel(friend) ? ` · ${activityLabel(friend)}` : ''}{friend.puuid && masteryScores[friend.puuid] !== undefined ? ` · mastery ${masteryScores[friend.puuid].toLocaleString()}` : ''}</small></div>
-                    <div className="social-friend-actions">{profileURL && <a href={profileURL} target="_blank" rel="noreferrer" aria-label={`Open ${name} profile`}><ExternalLink /></a>}{!remoteClient && friend.puuid && <button type="button" disabled={busy !== ''} onClick={() => void scoutMastery(friend)} aria-label={`Inspect mastery for ${name}`}><Award /></button>}{inGame && !remoteClient && friend.puuid && <button type="button" disabled={busy !== ''} onClick={() => void spectate(friend)} aria-label={`Spectate ${name}`}><Eye /></button>}{!remoteClient && friend.puuid && <button type="button" className={isMuted ? 'is-muted' : ''} disabled={busy !== ''} onClick={() => void toggleMute(friend)} aria-label={`${isMuted ? 'Unmute' : 'Mute'} ${name}`}><VolumeX /></button>}{remoteClient && friend.summonerId && <button type="button" disabled={busy !== ''} onClick={() => void run(`invite-${id}`, () => inviteLCUFriends([friend.summonerId!]), 'Invitation sent.')} aria-label={`Invite ${name}`}><Send /></button>}<button type="button" className={favorite ? 'is-favorite' : ''} onClick={() => setFavorites((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} aria-label={`${favorite ? 'Remove' : 'Add'} ${name} ${favorite ? 'from' : 'to'} favorites`}><Star /></button></div>
+                    <div className="social-friend-actions">{profileURL && <a href={profileURL} target="_blank" rel="noreferrer" aria-label={`Open ${name} profile`}><ExternalLink /></a>}{!remoteClient && friend.puuid && <button type="button" disabled={busy !== ''} onClick={() => void scoutMastery(friend)} aria-label={`Inspect mastery for ${name}`}><Award /></button>}{inGame && !remoteClient && friend.puuid && <button type="button" disabled={busy !== ''} onClick={() => void spectate(friend)} aria-label={`Spectate ${name}`}><Eye /></button>}{!remoteClient && friend.puuid && <button type="button" className={isMuted ? 'is-muted' : ''} disabled={busy !== ''} onClick={() => void toggleMute(friend)} aria-label={`${isMuted ? 'Unmute' : 'Mute'} ${name}`}><VolumeX /></button>}{(friend.summonerId || friend.id) && <button type="button" disabled={busy !== ''} onClick={() => void run(`invite-${id}`, () => inviteLCUFriends([friend.summonerId || friend.id!]), 'Invitation sent.')} aria-label={`Invite ${name}`} title={`Invite ${name} to party`}><Send /></button>}<button type="button" className={favorite ? 'is-favorite' : ''} onClick={() => setFavorites((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} aria-label={`${favorite ? 'Remove' : 'Add'} ${name} ${favorite ? 'from' : 'to'} favorites`}><Star /></button></div>
                   </article>;
                 })}</div>
               </section>)}

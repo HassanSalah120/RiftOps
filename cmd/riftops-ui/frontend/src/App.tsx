@@ -629,6 +629,12 @@ export default function App() {
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           onOpenNotifications={() => setNotificationCenterOpen(true)}
           unreadNotifications={notificationHistory.filter((item) => !item.read).length}
+          activeProfileId={snapshot.ActiveProfileID}
+          onRefreshSnapshot={async () => { setSnapshot(await api.fetchSnapshot()); }}
+          showToast={showToast}
+          presenceMasked={snapshot.Enabled}
+          onToggleMasking={(enabled) => void handleToggleMasking(enabled)}
+          onDodge={() => void runClientCommand('Dodged champion select lobby.', api.lcuDodge)}
         />
         <main id="riftops-main" className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col relative z-10" tabIndex={-1}>
           <Suspense fallback={<div className="workspace-loading" role="status">Loading workspace…</div>}>
@@ -686,7 +692,7 @@ export default function App() {
                 {!remoteClient && <section className="home-friends" aria-label="League friends"><FriendsPanel id="dashboard-friends" connected={lcuConnected} /></section>}
               </div>
               {!remoteClient && <div className="home-secondary">
-                <details className="workflow-disclosure"><summary><span><Users /><strong>Riot accounts & launch profiles</strong><small>Choose, add, or manage saved accounts</small></span><ChevronDown /></summary><div><LaunchProfilesPanel activeProfileId={snapshot.ActiveProfileID} showToast={showToast} onRefreshSnapshot={async () => { setSnapshot(await api.fetchSnapshot()); }} /></div></details>
+                <details open className="workflow-disclosure"><summary><span><Users /><strong>Riot accounts & launch profiles</strong><small>Choose, add, or manage saved accounts</small></span><ChevronDown /></summary><div><LaunchProfilesPanel activeProfileId={snapshot.ActiveProfileID} showToast={showToast} onRefreshSnapshot={async () => { setSnapshot(await api.fetchSnapshot()); }} /></div></details>
                 <details className="workflow-disclosure"><summary><span><Zap /><strong>Quick automations</strong><small>Ready checks, requeue, and client shortcuts</small></span><ChevronDown /></summary><div><QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} /></div></details>
               </div>}
             </div>

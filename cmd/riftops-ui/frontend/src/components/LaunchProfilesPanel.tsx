@@ -28,16 +28,16 @@ const LOCALES = ['auto', 'en_US', 'en_GB', 'de_DE', 'fr_FR', 'es_ES', 'it_IT', '
 
 function sessionLabel(status: ProfileSessionStatus | undefined): string {
   if (!status) return 'Checking saved login…';
-  if (status.incomplete) return 'Remembered login incomplete · sign in and re-save';
-  if (status.needsRecapture) return 'Re-save after verifying account';
-  if (status.error) return 'Saved login unavailable';
-  if (status.expired) return 'Local save expired · sign in again';
-  if (!status.saved) return 'No saved login yet';
-  if (!status.expiresAt) return 'Identity-verified local save';
+  if (status.incomplete) return 'Login incomplete · enable "Stay signed in" in Riot Client and re-save';
+  if (status.needsRecapture) return 'Re-save needed after Riot account verification';
+  if (status.error) return 'Saved login unavailable · sign in to refresh';
+  if (status.expired) return 'Local save expired · sign into Riot Client and re-save';
+  if (!status.saved) return 'No saved login yet · sign in and click "Save current login"';
+  if (!status.expiresAt) return 'Ready to launch · Verified local save';
   const remaining = new Date(status.expiresAt).getTime() - Date.now();
-  if (!Number.isFinite(remaining) || remaining <= 0) return 'Local save expired · sign in again';
+  if (!Number.isFinite(remaining) || remaining <= 0) return 'Session expired · sign in again';
   const days = Math.max(1, Math.ceil(remaining / 86_400_000));
-  return `Identity-verified save · up to ${days}d locally`;
+  return `Ready to launch · Verified (${days}d remaining)`;
 }
 
 function sameRiotId(left?: string, right?: string): boolean {
