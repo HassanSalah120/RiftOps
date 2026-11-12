@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { Play, Square, Shield, RotateCcw, Zap, Swords, ArrowRight, Users, ChevronDown } from 'lucide-react';
+import { Play, Square, Shield, RotateCcw, Swords, ArrowRight } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
 import GameSelector from './components/GameSelector';
-import StatusSelector from './components/StatusSelector';
-import { displayedPresence, presenceRuntimeLabel } from './presenceStatus';
+import { presenceRuntimeLabel } from './presenceStatus';
 import Toast from './components/Toast';
 import Sidebar from './components/Sidebar';
 import QuickActions from './components/QuickActions';
@@ -17,7 +16,6 @@ import UpdateDialog from './components/UpdateDialog';
 import NotificationCenter from './components/NotificationCenter';
 import type { NotificationEntry } from './components/NotificationCenter';
 import { useLCUConnection } from './components/lcuConnectionContext';
-import ClientControlRoom from './components/ClientControlRoom';
 import AccountSummary from './components/AccountSummary';
 import { GAMES, gameLabel } from './types';
 import { StatusBadge, type FeedbackState } from './components/DesignPrimitives';
@@ -27,7 +25,7 @@ import PhoneCompanionPanel from './components/PhoneCompanionPanel';
 import FriendsPanel from './components/FriendsPanel';
 import LaunchProfilesPanel from './components/LaunchProfilesPanel';
 import { useLocale } from './localeContext';
-import { normalizeLivePhase, livePhaseLabel } from './liveSession';
+import { normalizeLivePhase, livePhaseLabel, isActiveLivePhase, livePhaseDescription } from './liveSession';
 import FirstRunSetup from './components/FirstRunSetup';
 
 const MatchHistory = lazy(() => import('./components/MatchHistory'));
@@ -53,14 +51,6 @@ function timeAgo(startedAt: string): string {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
-
-const GAME_IMGS: Record<string, string> = {
-  'lol': '/games/lol.jpg',
-  'valorant': '/games/valorant.jpg',
-  'lor': '/games/lor.jpg',
-  'lion': '/games/lion.jpg',
-  'riot-client': '/games/riot-client.jpg',
-};
 
 export default function App() {
   const { locale, setLocale, t } = useLocale();
@@ -110,7 +100,6 @@ export default function App() {
   const [riotLocationBusy, setRiotLocationBusy] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState<FeedbackState>(null);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
-  const [gameImgError, setGameImgError] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [clientMode, setClientMode] = useState<'loading' | 'desktop' | 'phone'>('loading');
   const remoteClient = clientMode === 'phone';
@@ -418,7 +407,6 @@ export default function App() {
 
   const handleSetGame = async (game: string) => {
     setSelectedGame(game);
-    setGameImgError(false);
     try {
       await persistPreferences({ game });
     } catch (err: any) {
@@ -448,28 +436,6 @@ export default function App() {
       danger: true,
       onConfirm: () => { void api.quitApp(); },
     });
-  };
-
-  const handleSetStatus = async (status: string) => {
-    if (status === 'offline' && !offlineAvailable) {
-      showToast('Offline masking unavailable', 'Close Riot normally, then launch from Home using the published Windows release. Native chat cannot mask your presence.', 'info');
-      return;
-    }
-    if (!presenceStatusAvailable) {
-      showToast('League unavailable', 'League availability cannot be changed until the client is connected.', 'info');
-      return;
-    }
-    if (homeActionLock.current) return;
-    homeActionLock.current = true;
-    setHomeAction('presence');
-    try {
-      await api.setStatus(status);
-      const snap = await api.fetchSnapshot();
-      setSnapshot(snap);
-      showToast('Presence Updated', `Status set to ${status}`, 'success');
-    } catch (err: any) {
-      showToast('Set Status Error', err.message, 'error');
-    } finally { homeActionLock.current = false; setHomeAction(''); }
   };
 
   const handleToggleMasking = async (enabled: boolean) => {
@@ -541,12 +507,8 @@ export default function App() {
   const isLive = lcuConnected && ['IN_GAME', 'LOADING', 'RECONNECTING'].includes(leaguePhase);
   const leagueStatus = !lcuConnected ? 'League offline' : livePhaseLabel(leaguePhase);
   const presenceControlsAvailable = isIdle || snapshot.ChatPort > 0;
-  const presenceStatusAvailable = presenceControlsAvailable || lcuConnected;
-  const offlineAvailable = snapshot.ChatPort > 0 || (isIdle && !lcuConnected);
-  const leagueAvailability = displayedPresence(snapshot, lcuQol?.availability);
   const presenceLabel = presenceRuntimeLabel(snapshot);
   const gameInfo = GAMES.find((g) => g.value === selectedGame);
-  const gameImg = GAME_IMGS[selectedGame];
 
   if (clientMode === 'loading') {
     return (
@@ -652,49 +614,160 @@ export default function App() {
              ═══════════════════════════════════════════════ */}
           {activeTab === 'dashboard' && (
             <div className="home-workspace workspace-stage flex-1 min-h-0 overflow-y-auto">
-              <PageHeader icon={Play} eyebrow="HOME" title="Home" description="Launch your game, manage your presence, and get ready for the next match." meta={<StatusBadge tone={lcuConnected ? 'live' : 'neutral'}>{leagueStatus}</StatusBadge>} />
-              {remoteClient && <div className="phone-session-banner"><Shield /><span><strong>Phone session connected</strong><small>Live League controls are routed through your paired RiftOps desktop.</small></span></div>}
-              <div className="home-overview">
-                {!remoteClient && <section className="home-launch" aria-labelledby="home-launch-title">
-                  <div className="home-launch__art">
-                    {!gameImgError && <img src={gameImg} alt="" width="1600" height="900" fetchPriority="high" onError={() => setGameImgError(true)} />}
-                    <div className="home-launch__identity"><h2 id="home-launch-title">{gameInfo?.label || 'Choose your game'}</h2><span>{presenceLabel}</span></div>
-                  </div>
-                  <div className="home-launch__body">
-                    <GameSelector value={selectedGame} onChange={handleSetGame} disabled={!isIdle} />
-                    <div className="home-launch__actions">
-                      <button type="button" onClick={() => handleLaunch()} disabled={!isIdle || launchStage !== 'idle' || homeAction !== ''} className="btn-primary">
-                        {launchStage !== 'idle' ? <RotateCcw className="animate-spin" /> : <Play className="fill-current" />}
-                        {launchStage === 'checking' ? 'Checking…' : launchStage === 'starting' ? 'Starting…' : launchStage === 'waiting' ? 'Connecting…' : launchStage === 'ready' ? 'Ready' : `Launch ${gameInfo?.label || 'game'}`}
-                      </button>
-                      <button type="button" onClick={handleStop} disabled={isIdle || homeAction !== ''} className="btn-secondary" title="Stop the RiftOps chat proxy">{homeAction === 'stop' ? <RotateCcw className="animate-spin" /> : <Square />}{homeAction === 'stop' ? 'Stopping…' : 'Stop proxy'}</button>
+              <PageHeader
+                icon={Play}
+                eyebrow="HOME"
+                title="Home"
+                description="Your game command center. Switch accounts, launch League, and manage your team."
+                meta={<StatusBadge tone={lcuConnected ? 'live' : 'neutral'}>{leagueStatus}</StatusBadge>}
+              />
+
+              {remoteClient && (
+                <div className="phone-session-banner">
+                  <Shield />
+                  <span>
+                    <strong>Phone session connected</strong>
+                    <small>Live League controls are routed through your paired RiftOps desktop.</small>
+                  </span>
+                </div>
+              )}
+
+              {/* ═══════════════════════════════════════════════
+                 ADAPTIVE HERO CARD
+                 ═══════════════════════════════════════════════ */}
+              {!lcuConnected ? (
+                !remoteClient && (
+                  <section className="home-hero home-hero--launch" aria-labelledby="home-launch-title">
+                    <div className="home-hero__content">
+                      <div className="home-hero__info">
+                        <div className="home-hero__header">
+                          <div className="home-hero__icon">
+                            <Play className="fill-current" />
+                          </div>
+                          <div>
+                            <div className="home-hero__eyebrow">Riot Games Launcher</div>
+                            <h2 id="home-launch-title" className="home-hero__title">{gameInfo?.label || 'League of Legends'}</h2>
+                          </div>
+                        </div>
+                        <p className="home-hero__description">
+                          {snapshot.Detail || 'Safe masking proxy active. Launch into client with protected chat credentials.'}
+                        </p>
+                        <div className="home-hero__meta">
+                          <GameSelector value={selectedGame} onChange={handleSetGame} disabled={!isIdle} />
+                          {timeAgo(snapshot.StartedAt) && (
+                            <span className="home-hero__last-launch">
+                              Last launch {timeAgo(snapshot.StartedAt)}{snapshot.Game ? ` · ${gameLabel(snapshot.Game)}` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="home-hero__actions">
+                        <button
+                          type="button"
+                          onClick={() => handleLaunch()}
+                          disabled={!isIdle || launchStage !== 'idle' || homeAction !== ''}
+                          className="btn-primary home-hero__btn-launch"
+                        >
+                          {launchStage !== 'idle' ? <RotateCcw className="animate-spin" /> : <Play className="fill-current" />}
+                          {launchStage === 'checking' ? 'Checking…' : launchStage === 'starting' ? 'Starting…' : launchStage === 'waiting' ? 'Connecting…' : launchStage === 'ready' ? 'Ready' : `Launch ${gameInfo?.label || 'game'}`}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleStop}
+                          disabled={isIdle || homeAction !== ''}
+                          className="btn-secondary"
+                          title="Stop the RiftOps chat proxy"
+                        >
+                          {homeAction === 'stop' ? <RotateCcw className="animate-spin" /> : <Square />}
+                          {homeAction === 'stop' ? 'Stopping…' : 'Stop proxy'}
+                        </button>
+                      </div>
                     </div>
-                    {launchStage !== 'idle' && <div className="launch-progress" role="status" aria-live="polite"><div className="launch-progress__track"><span style={{ width: launchStage === 'checking' ? '25%' : launchStage === 'starting' ? '50%' : launchStage === 'waiting' ? '78%' : '100%' }} /></div><span>{launchStage === 'checking' ? 'Preflight checks in progress' : launchStage === 'starting' ? 'Starting the selected Riot game' : launchStage === 'waiting' ? 'Waiting for the local client to become ready' : 'RiftOps is connected'}</span></div>}
-                    {snapshot.Detail && <p className="home-launch__detail" role="status">{snapshot.Detail}</p>}
-                    {timeAgo(snapshot.StartedAt) && <p className="home-launch__last">Last launch {timeAgo(snapshot.StartedAt)}{snapshot.Game ? ` · ${gameLabel(snapshot.Game)}` : ''}</p>}
+                    {launchStage !== 'idle' && (
+                      <div className="launch-progress" role="status" aria-live="polite">
+                        <div className="launch-progress__track">
+                          <span style={{ width: launchStage === 'checking' ? '25%' : launchStage === 'starting' ? '50%' : launchStage === 'waiting' ? '78%' : '100%' }} />
+                        </div>
+                        <span>
+                          {launchStage === 'checking' ? 'Preflight checks in progress' : launchStage === 'starting' ? 'Starting the selected Riot game' : launchStage === 'waiting' ? 'Waiting for the local client to become ready' : 'RiftOps is connected'}
+                        </span>
+                      </div>
+                    )}
+                  </section>
+                )
+              ) : (
+                <section className="home-hero home-hero--live" aria-labelledby="home-live-title">
+                  <div className="home-hero__content">
+                    <div className="home-hero__info">
+                      <div className="home-hero__header">
+                        <div className="home-hero__icon home-hero__icon--live">
+                          <Swords />
+                        </div>
+                        <div>
+                          <div className="home-hero__eyebrow flex items-center gap-2">
+                            <span className="live-pulse-dot" />
+                            <span>LEAGUE ACTIVE · {livePhaseLabel(leaguePhase).toUpperCase()}</span>
+                          </div>
+                          <h2 id="home-live-title" className="home-hero__title">
+                            {isActiveLivePhase(leaguePhase) ? livePhaseDescription(leaguePhase) : 'League of Legends is Connected'}
+                          </h2>
+                        </div>
+                      </div>
+                      <p className="home-hero__description">
+                        {isActiveLivePhase(leaguePhase)
+                          ? 'Live match session is in progress. View real-time match stats, lane matchups, and runes in Live Game.'
+                          : 'Ready for your next game. Pick your queue, configure automations, or invite friends.'}
+                      </p>
+                    </div>
+                    <div className="home-hero__actions">
+                      <button
+                        type="button"
+                        className="btn-primary home-hero__btn-action"
+                        onClick={() => setActiveTab(isLive ? 'live' : 'play')}
+                      >
+                        <span>{isLive ? 'Open Live Game' : 'Open Play & Queue'}</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </section>}
-                <div className="home-account">
+                </section>
+              )}
+
+              {/* ═══════════════════════════════════════════════
+                 2-COLUMN BALANCED COMMAND CENTER
+                 ═══════════════════════════════════════════════ */}
+              <div className="home-grid">
+                {/* Left Column (Main): Active Profile, Saved Accounts, Quick Automations */}
+                <div className="home-col-main">
                   <AccountSummary />
-                  {!remoteClient && <section className="home-presence" aria-labelledby="home-presence-title">
-                    <header><div><h2 id="home-presence-title">Chat presence</h2><p>Choose how friends see you.</p></div><Shield aria-hidden="true" /></header>
-                    <StatusSelector current={leagueAvailability} onChange={handleSetStatus} disabled={!presenceStatusAvailable || homeAction !== ''} offlineUnavailable={!offlineAvailable} />
-                    <div className="home-presence__mask"><span><strong>Presence masking</strong><small>{snapshot.Enabled ? 'Masking is enabled' : 'Masking is disabled'}</small></span><label className="toggle"><input type="checkbox" role="switch" aria-label="Presence masking" checked={snapshot.Enabled} disabled={!presenceControlsAvailable || homeAction !== ''} onChange={(e) => handleToggleMasking(e.target.checked)} /><span className="slider" /></label></div>
-                    {!presenceControlsAvailable && <p>Offline masking is unavailable in native chat. Close Riot normally, then launch from Home using the <a href="https://github.com/HassanSalah120/RiftOps/releases/latest" target="_blank" rel="noopener noreferrer">published Windows release</a>. Fresh sign-in uses native chat until you relaunch.</p>}
-                    {!presenceStatusAvailable && <p>Launch League and sign in to change availability.</p>}
-                  </section>}
-                  {remoteClient && <PhoneCompanionPanel showToast={(message, type = 'info') => showToast('League Client', message, type)} />}
+
+                  {!remoteClient && (
+                    <LaunchProfilesPanel
+                      activeProfileId={snapshot.ActiveProfileID}
+                      showToast={showToast}
+                      onRefreshSnapshot={async () => {
+                        setSnapshot(await api.fetchSnapshot());
+                      }}
+                    />
+                  )}
+
+                  {!remoteClient && (
+                    <QuickActions
+                      onOpenQoL={() => setActiveTab('qol')}
+                      showToast={(message, type = 'info') => showToast('League Client', message, type)}
+                    />
+                  )}
+                </div>
+
+                {/* Right Column (Side): Friends & Lobby Invites or Phone Companion */}
+                <div className="home-col-side">
+                  {remoteClient ? (
+                    <PhoneCompanionPanel showToast={(message, type = 'info') => showToast('League Client', message, type)} />
+                  ) : (
+                    <FriendsPanel id="dashboard-friends" connected={lcuConnected} />
+                  )}
                 </div>
               </div>
-              <section className="home-next" aria-labelledby="home-next-title"><span className="home-next__icon"><Swords /></span><div><h2 id="home-next-title">{isLive ? 'Your match is live' : 'Ready for your next match?'}</h2><p>{isLive ? 'Follow champion select, match status, and your build in Live Game.' : 'Choose a queue and lanes, then play manually or use your automation rules.'}</p></div><button type="button" className="btn-primary" onClick={() => setActiveTab(isLive ? 'live' : 'play')}>{isLive ? 'Open Live Game' : 'Open Play & Queue'}<ArrowRight /></button></section>
-              <div className="home-session-grid">
-                <section className="home-session"><h2>League session</h2><ClientControlRoom remoteClient={remoteClient} onOpenQoL={() => setActiveTab(remoteClient ? 'live' : 'qol')} onOpenLive={() => setActiveTab('live')} onOpenHistory={() => setActiveTab('history')} showToast={(message, type = 'info') => showToast('League Client', message, type)} /></section>
-                {!remoteClient && <section className="home-friends" aria-label="League friends"><FriendsPanel id="dashboard-friends" connected={lcuConnected} /></section>}
-              </div>
-              {!remoteClient && <div className="home-secondary">
-                <details open className="workflow-disclosure"><summary><span><Users /><strong>Riot accounts & launch profiles</strong><small>Choose, add, or manage saved accounts</small></span><ChevronDown /></summary><div><LaunchProfilesPanel activeProfileId={snapshot.ActiveProfileID} showToast={showToast} onRefreshSnapshot={async () => { setSnapshot(await api.fetchSnapshot()); }} /></div></details>
-                <details className="workflow-disclosure"><summary><span><Zap /><strong>Quick automations</strong><small>Ready checks, requeue, and client shortcuts</small></span><ChevronDown /></summary><div><QuickActions onOpenQoL={() => setActiveTab('qol')} showToast={(message, type = 'info') => showToast('League Client', message, type)} /></div></details>
-              </div>}
             </div>
           )}
 
