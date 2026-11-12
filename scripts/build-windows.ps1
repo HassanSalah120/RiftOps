@@ -91,9 +91,11 @@ try {
         "cmd/riftops-ui/fyne.syso",
         "cmd/riftops-ui/FyneApp.ico",
         "cmd/riftops-ui/riftops-ui.exe.manifest",
-        "cmd/riftops-ui/RiftOps.exe",
-        "internal/certificate/bundled_release.go"
+        "cmd/riftops-ui/RiftOps.exe"
     )
+    if ($ProxyCertificatePath) {
+        $GeneratedFiles += "internal/certificate/bundled_release.go"
+    }
     foreach ($GeneratedFile in $GeneratedFiles) {
         Remove-Item -Force -LiteralPath $GeneratedFile -ErrorAction SilentlyContinue
     }
@@ -166,6 +168,13 @@ const bundledHostname = "$ProxyHostname"
         Set-Content -LiteralPath "internal/certificate/bundled_release.go" -Value $BundleSource -Encoding utf8 -NoNewline
         $GoBuildTags = "$GoBuildTags,riftops_bundled_cert"
         Write-Host "Bundling trusted proxy certificate for $ProxyHostname (private key is embedded in the executable)."
+        & go test -tags $GoBuildTags ./internal/certificate -run '^TestBundledCertificateIsPubliclyTrusted$' -count=1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Embedded proxy certificate smoke test failed."
+        }
+    } elseif (Test-Path -LiteralPath "internal/certificate/bundled_release.go") {
+        $GoBuildTags = "$GoBuildTags,riftops_bundled_cert"
+        Write-Host "Using existing bundled proxy certificate from internal/certificate/bundled_release.go."
         & go test -tags $GoBuildTags ./internal/certificate -run '^TestBundledCertificateIsPubliclyTrusted$' -count=1
         if ($LASTEXITCODE -ne 0) {
             throw "Embedded proxy certificate smoke test failed."

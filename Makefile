@@ -9,8 +9,13 @@ BINARY  := $(OUTDIR)/RiftOps.exe
 LDFLAGS := -s -w -H windowsgui
 LDFLAGS += -X github.com/HassanSalah120/RiftOps/internal/buildinfo.Version=$(VERSION)
 
+TAGS :=
+ifneq ($(wildcard internal/certificate/bundled_release.go),)
+    TAGS := -tags riftops_bundled_cert
+endif
+
 # Build flags for determinism
-BUILDFLAGS := -trimpath -ldflags="$(LDFLAGS)"
+BUILDFLAGS := $(TAGS) -trimpath -ldflags="$(LDFLAGS)"
 
 .PHONY: all frontend resources clean
 

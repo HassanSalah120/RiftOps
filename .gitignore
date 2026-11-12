@@ -1,8 +1,10 @@
 # Build products
 /dist/
 /riftops-ui.exe
+/internal/certificate/bundled_release.go
 /rsrc_windows_amd64.syso
 /s
+*.pfx
 
 # Frontend dependencies and output
 **/node_modules/
