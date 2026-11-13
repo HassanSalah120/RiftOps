@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   CircleUserRound,
+  Info,
   Loader2,
+  LogIn,
   RefreshCw,
   Save,
   Shield,
@@ -145,7 +147,11 @@ export default function AccountSwitcherPopover({
       await loadData();
       showToast?.('Session Saved', `Current Riot login bound to ${streamerMode ? 'profile' : activeProfile.name}.`, 'success');
     } catch (err: any) {
-      showToast?.('Save Failed', err?.message || 'Could not capture current Riot login.', 'error');
+      if (err?.code === 'login-not-persisted') {
+        showToast?.('Save Failed', "Cannot save: 'Stay signed in' was not checked in Riot Client. Sign in with 'Stay signed in' checked, then click Save.", 'error');
+      } else {
+        showToast?.('Save Failed', err?.message || 'Could not capture current Riot login.', 'error');
+      }
     } finally {
       switchLock.current = false;
       setSavingSession(false);
@@ -260,7 +266,9 @@ export default function AccountSwitcherPopover({
                             <span className="text-emerald-400 font-bold" title="Saved Riot session is ready">· Ready</span>
                           ) : status?.expired ? (
                             <span className="text-amber-400 font-bold" title="Saved login expired">· Needs Login</span>
-                          ) : null}
+                          ) : (
+                            <span className="text-text-dim/60 font-medium" title="Login not saved. Selecting will open Riot sign-in.">· Not Saved</span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -275,10 +283,21 @@ export default function AccountSwitcherPopover({
                           type="button"
                           disabled={isSwitching || Boolean(switchingId)}
                           onClick={() => void handleSwitch(profile)}
-                          className="px-2.5 py-1 rounded-lg bg-hextech-gold/20 hover:bg-hextech-gold/30 text-hextech-gold border border-hextech-gold/40 font-bold text-[11px] transition cursor-pointer disabled:opacity-40 flex items-center gap-1"
+                          className={`px-2.5 py-1 rounded-lg border font-bold text-[11px] transition cursor-pointer disabled:opacity-40 flex items-center gap-1 ${
+                            status?.saved
+                              ? 'bg-hextech-gold/20 hover:bg-hextech-gold/30 text-hextech-gold border-hextech-gold/40'
+                              : 'bg-white/[0.06] hover:bg-white/[0.12] text-text-muted hover:text-white border-white/10'
+                          }`}
+                          title={status?.saved ? '1-click switch account' : 'Switch & open Riot Client sign-in'}
                         >
-                          {isSwitching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-                          Switch
+                          {isSwitching ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : status?.saved ? (
+                            <Zap className="w-3 h-3" />
+                          ) : (
+                            <LogIn className="w-3 h-3" />
+                          )}
+                          {status?.saved ? 'Switch' : 'Sign In'}
                         </button>
                       )}
                     </div>
@@ -289,7 +308,7 @@ export default function AccountSwitcherPopover({
           </div>
 
           {/* Quick Action Footer */}
-          <div className="p-2.5 border-t border-white/[0.08] bg-black/40 flex items-center justify-between gap-2">
+          <div className="p-2.5 border-t border-white/[0.08] bg-black/40 flex flex-col gap-2">
             {lcuConnected && activeProfile && (
               <button
                 type="button"
@@ -301,6 +320,10 @@ export default function AccountSwitcherPopover({
                 Save Current Riot Login
               </button>
             )}
+            <div className="text-[10px] text-text-dim px-1 flex items-center gap-1.5 leading-tight">
+              <Info className="w-3 h-3 text-hextech-gold shrink-0" />
+              <span>Check <strong>"Stay signed in"</strong> in Riot Client for 1-click switching.</span>
+            </div>
           </div>
         </div>
       )}

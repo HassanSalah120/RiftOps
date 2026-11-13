@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CircleUserRound, Loader2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X, Zap } from 'lucide-react';
+import { CircleUserRound, Info, Loader2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X, Zap } from 'lucide-react';
 import {
   captureSavedLogin,
   deleteLaunchProfile,
@@ -183,12 +183,14 @@ export default function LaunchProfilesPanel({
       if (closeClient) await onRefreshSnapshot().catch(() => undefined);
       showToast('Riot login saved', `${streamerMode ? 'This profile' : activeProfile.name} is bound to the signed-in Riot account. Riot may still require sign-in later.`, 'success');
     } catch (cause: any) {
-      if (cause?.code === 'login-not-persisted' && !closeClient) {
+      if (cause?.code === 'login-not-persisted') {
         setConfirmation({
-          open: true, title: 'Close Riot to finish saving?',
-          message: 'Riot has not written a reusable login yet. Enable Stay signed in first. This will close Riot Client and any Riot game, then save the completed login. Cancel to keep playing.',
-          actionLabel: 'Close Riot & save', danger: false,
-          onConfirm: () => { setConfirmation(null); void saveCurrentSession(true); },
+          open: true,
+          title: "'Stay signed in' Required",
+          message: "Riot Client was signed in without 'Stay signed in' checked. Riot did not generate a persistent session token. To enable 1-click account switching, please sign out of Riot Client, sign back in with 'Stay signed in' checked below your password, and click Save.",
+          actionLabel: 'Understood',
+          danger: false,
+          onConfirm: () => { setConfirmation(null); },
         });
         return;
       }
@@ -323,6 +325,11 @@ export default function LaunchProfilesPanel({
             Save current login
           </button>
         )}
+      </div>
+
+      <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-hextech-gold/5 border border-hextech-gold/20 text-xs text-text-dim">
+        <Info className="w-4 h-4 text-hextech-gold shrink-0" aria-hidden="true" />
+        <span><strong>1-Click Switching Requirement:</strong> Check the <strong>"Stay signed in"</strong> checkbox when signing into Riot Client so your session can be saved.</span>
       </div>
 
       {error && <p className="account-switcher__error" role="alert">{error}</p>}

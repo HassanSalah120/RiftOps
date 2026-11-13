@@ -533,3 +533,50 @@ func TestClearManagedSessionCleansElectronCache(t *testing.T) {
 		t.Errorf("Network/Cookies was not removed")
 	}
 }
+
+func TestRestorePreservesElectronStorage(t *testing.T) {
+	dataDir := t.TempDir()
+	electronDir := t.TempDir()
+
+	localStorage := filepath.Join(electronDir, "Local Storage")
+	if err := os.MkdirAll(localStorage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cookieFile := filepath.Join(electronDir, "Network", "Cookies")
+	if err := os.MkdirAll(filepath.Dir(cookieFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookieFile, []byte("browser-cookie-state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	identity := Identity{PUUID: testIdentity.PUUID, RiotID: "Player#EUW"}
+	path := filepath.Join(dataDir, privateSettingsFile)
+	if err := os.WriteFile(path, rememberedFixture(identity.PUUID, "cookie", "one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	vault := &Vault{
+		RiotDataDir: dataDir,
+		VaultDir:    t.TempDir(),
+		ElectronDir: electronDir,
+		protector:   testProtector{},
+		now:         time.Now,
+	}
+
+	if err := vault.CaptureVerified("profile-1", 30*24*time.Hour, identity, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restore profile-1 and verify Electron cookies & local storage are preserved
+	if err := vault.Restore("profile-1", "Player#EUW"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(localStorage); err != nil {
+		t.Errorf("Restore should not remove Local Storage: %v", err)
+	}
+	if got, err := os.ReadFile(cookieFile); err != nil || string(got) != "browser-cookie-state" {
+		t.Errorf("Restore should not wipe Network/Cookies: got %q, err %v", got, err)
+	}
+}

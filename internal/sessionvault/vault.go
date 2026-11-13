@@ -356,7 +356,7 @@ func (v *Vault) Restore(profileID, expectedRiotID string) error {
 			fallbackSettings = cur
 		}
 	}
-	if err := v.clearManagedSession(); err != nil {
+	if err := v.clearManagedFiles(); err != nil {
 		return err
 	}
 	keys := make([]string, 0, len(files))
@@ -384,13 +384,20 @@ func (v *Vault) ClearActiveSession() error {
 	return v.clearManagedSession()
 }
 
-func (v *Vault) clearManagedSession() error {
+func (v *Vault) clearManagedFiles() error {
 	for _, spec := range v.sessionPaths() {
 		for _, path := range []string{spec.Path, spec.Path + ".backup"} {
 			if err := removeSafePath(path); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (v *Vault) clearManagedSession() error {
+	if err := v.clearManagedFiles(); err != nil {
+		return err
 	}
 	if v.ElectronDir != "" {
 		_ = clearElectronSessionStorage(v.ElectronDir)

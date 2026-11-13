@@ -1296,7 +1296,7 @@ func captureSession(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, sessionvault.ErrNotRemembered):
 			w.Header().Set("X-RiftOps-Error-Code", "login-not-persisted")
-			message, statusCode = "Riot is signed in but has not written a reusable login. Enable Stay signed in, then use Close Riot & save to finish saving.", http.StatusConflict
+			message, statusCode = "Cannot save 1-click login: 'Stay signed in' was not checked in Riot Client when signing in. Please sign out of Riot Client, sign back in with 'Stay signed in' checked under the password field, then save.", http.StatusConflict
 		case errors.Is(err, engine.ErrRiotIDRequired):
 			message, statusCode = "Set this profile's Riot ID to the connected Name#Tag before saving its login.", http.StatusConflict
 		case errors.Is(err, engine.ErrRiotAccountMismatch):
