@@ -58,10 +58,8 @@ foreach ($VersionPart in $VersionParts) {
 }
 $FileVersion = if ($VersionParts.Count -eq 3) { "$Version.$Build" } else { $Version }
 
-$GoWinres = (Get-Command go-winres -ErrorAction SilentlyContinue).Source
-if (-not $GoWinres) {
-    $GoWinres = Join-Path $env:USERPROFILE "go\bin\go-winres.exe"
-}
+$GoWinresCmd = Get-Command go-winres -ErrorAction SilentlyContinue
+$GoWinres = if ($GoWinresCmd) { $GoWinresCmd.Source } else { Join-Path $env:USERPROFILE "go\bin\go-winres.exe" }
 if (-not (Test-Path -LiteralPath $GoWinres)) {
     throw "go-winres is required. Run: go install github.com/tc-hib/go-winres@v0.3.3"
 }
@@ -79,10 +77,7 @@ if (-not $Gcc) {
         $Gcc = Get-Command gcc -ErrorAction SilentlyContinue
     }
 }
-if (-not $Gcc) {
-    throw "GCC/MinGW is required. Open an Administrator PowerShell, run 'choco install mingw --no-progress -y', then reopen PowerShell."
-}
-$env:CGO_ENABLED = "1"
+$env:CGO_ENABLED = if ($Gcc) { "1" } else { "0" }
 
 Push-Location $Root
 try {
@@ -124,11 +119,17 @@ try {
 	}
 
     if (-not $SkipTests) {
-		Write-Host "[4/9] Running race-enabled desktop tests..."
-		go test -race -tags desktop ./...
-        if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
-		Write-Host "[5/9] Running go vet..."
-		go vet -tags desktop ./...
+        if ($Gcc) {
+            Write-Host "[4/9] Running race-enabled desktop tests..."
+            go test -race -tags desktop ./...
+            if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
+        } else {
+            Write-Host "[4/9] Running desktop tests..."
+            go test -tags desktop ./...
+            if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
+        }
+        Write-Host "[5/9] Running go vet..."
+        go vet -tags desktop ./...
         if ($LASTEXITCODE -ne 0) { throw "Vet failed." }
     }
 
@@ -271,14 +272,17 @@ const bundledHostname = "$ProxyHostname"
     }
 }
 finally {
-    foreach ($GeneratedFile in @(
+    $CleanupFiles = @(
         "cmd/riftops-ui/fyne_metadata_init.go",
         "cmd/riftops-ui/fyne.syso",
         "cmd/riftops-ui/FyneApp.ico",
         "cmd/riftops-ui/riftops-ui.exe.manifest",
-        "cmd/riftops-ui/RiftOps.exe",
-        "internal/certificate/bundled_release.go"
-    )) {
+        "cmd/riftops-ui/RiftOps.exe"
+    )
+    if ($ProxyCertificatePath) {
+        $CleanupFiles += "internal/certificate/bundled_release.go"
+    }
+    foreach ($GeneratedFile in $CleanupFiles) {
         Remove-Item -Force -LiteralPath $GeneratedFile -ErrorAction SilentlyContinue
     }
     Pop-Location
