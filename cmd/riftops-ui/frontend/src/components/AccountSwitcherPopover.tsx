@@ -27,10 +27,13 @@ import {
 } from '../api';
 import { useLCUConnection } from './lcuConnectionContext';
 import { accountRankLabel } from '../utils/accountRank';
+import ConfirmModal from './ConfirmModal';
+import type { ConfirmAction } from '../types';
 
 interface AccountSwitcherPopoverProps {
   activeProfileId?: string;
   onRefreshSnapshot?: () => Promise<void>;
+  onOpenAccountsHub?: () => void;
   showToast?: (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
   className?: string;
 }
@@ -38,6 +41,7 @@ interface AccountSwitcherPopoverProps {
 export default function AccountSwitcherPopover({
   activeProfileId,
   onRefreshSnapshot,
+  onOpenAccountsHub,
   showToast,
   className = '',
 }: AccountSwitcherPopoverProps) {
@@ -51,6 +55,7 @@ export default function AccountSwitcherPopover({
   const [loading, setLoading] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [savingSession, setSavingSession] = useState(false);
+  const [confirmation, setConfirmation] = useState<ConfirmAction | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const switchLock = useRef(false);
@@ -110,7 +115,7 @@ export default function AccountSwitcherPopover({
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
 
-  const handleSwitch = async (profile: LaunchProfile, forceLogin = false) => {
+  const executeSwitch = async (profile: LaunchProfile, forceLogin = false) => {
     if (switchLock.current) return;
     switchLock.current = true;
     setSwitchingId(profile.id);
@@ -136,6 +141,25 @@ export default function AccountSwitcherPopover({
       switchLock.current = false;
       setSwitchingId(null);
     }
+  };
+
+  const handleSwitch = (profile: LaunchProfile, forceLogin = false) => {
+    if (lcuConnected && !forceLogin && profile.id !== activeProfile?.id) {
+      const profileLabel = streamerMode ? 'profile' : profile.name;
+      setConfirmation({
+        open: true,
+        danger: true,
+        title: 'Switch League Account?',
+        message: `League of Legends is currently open.\n\nSwitching to "${profileLabel}" will close your active Riot Client session.\n\nDo you want to proceed?`,
+        actionLabel: 'Close & Switch',
+        onConfirm: () => {
+          setConfirmation(null);
+          void executeSwitch(profile, forceLogin);
+        },
+      });
+      return;
+    }
+    void executeSwitch(profile, forceLogin);
   };
 
   const handleSaveCurrent = async () => {
@@ -171,7 +195,9 @@ export default function AccountSwitcherPopover({
     : undefined;
 
   return (
-    <div ref={containerRef} className={`relative inline-block ${className}`}>
+    <>
+      {confirmation && <ConfirmModal action={confirmation} onClose={() => setConfirmation(null)} />}
+      <div ref={containerRef} className={`relative inline-block ${className}`}>
       {/* Trigger Button */}
       <button
         type="button"
@@ -320,6 +346,18 @@ export default function AccountSwitcherPopover({
                 Save Current Riot Login
               </button>
             )}
+            {onOpenAccountsHub && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenAccountsHub();
+                }}
+                className="w-full px-3 py-1.5 rounded-xl bg-hextech-gold/15 hover:bg-hextech-gold/25 text-hextech-gold border border-hextech-gold/30 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>Manage All Accounts in Hub &rarr;</span>
+              </button>
+            )}
             <div className="text-[10px] text-text-dim px-1 flex items-center gap-1.5 leading-tight">
               <Info className="w-3 h-3 text-hextech-gold shrink-0" />
               <span>Check <strong>"Stay signed in"</strong> in Riot Client for 1-click switching.</span>
@@ -327,6 +365,7 @@ export default function AccountSwitcherPopover({
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

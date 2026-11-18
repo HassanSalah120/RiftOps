@@ -48,6 +48,7 @@ interface WorkspaceHeaderProps {
   notificationCenterOpen?: boolean;
   activeProfileId?: string;
   onRefreshSnapshot?: () => Promise<void>;
+  onOpenAccountsHub?: () => void;
   showToast?: (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
   presenceMasked?: boolean;
   onToggleMasking?: (enabled: boolean) => void;
@@ -63,6 +64,7 @@ export default function WorkspaceHeader({
   notificationCenterOpen = false,
   activeProfileId,
   onRefreshSnapshot,
+  onOpenAccountsHub,
   showToast,
   presenceMasked = false,
   onToggleMasking,
@@ -110,6 +112,7 @@ export default function WorkspaceHeader({
           <AccountSwitcherPopover
             activeProfileId={activeProfileId}
             onRefreshSnapshot={onRefreshSnapshot}
+            onOpenAccountsHub={onOpenAccountsHub}
             showToast={showToast}
           />
 

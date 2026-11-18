@@ -23,7 +23,6 @@ import PageHeader from './components/PageHeader';
 import { ALL_TABS, availableTabs, tabAvailable } from './clientCapabilities';
 import PhoneCompanionPanel from './components/PhoneCompanionPanel';
 import FriendsPanel from './components/FriendsPanel';
-import LaunchProfilesPanel from './components/LaunchProfilesPanel';
 import { useLocale } from './localeContext';
 import { normalizeLivePhase, livePhaseLabel, isActiveLivePhase, livePhaseDescription } from './liveSession';
 import FirstRunSetup from './components/FirstRunSetup';
@@ -594,6 +593,7 @@ export default function App() {
           unreadNotifications={notificationHistory.filter((item) => !item.read).length}
           activeProfileId={snapshot.ActiveProfileID}
           onRefreshSnapshot={async () => { setSnapshot(await api.fetchSnapshot()); }}
+          onOpenAccountsHub={() => setActiveTab('accounts')}
           showToast={showToast}
           presenceMasked={snapshot.Enabled}
           onToggleMasking={(enabled) => void handleToggleMasking(enabled)}
@@ -738,20 +738,16 @@ export default function App() {
                  2-COLUMN BALANCED COMMAND CENTER
                  ═══════════════════════════════════════════════ */}
               <div className="home-grid">
-                {/* Left Column (Main): Active Profile, Saved Accounts, Quick Automations */}
+                {/* Left Column (Main): Active Profile Quick Switcher & Quick Automations */}
                 <div className="home-col-main">
-                  <AccountSummary />
-
-                  {!remoteClient && (
-                    <LaunchProfilesPanel
-                      activeProfileId={snapshot.ActiveProfileID}
-                      showToast={showToast}
-                      onRefreshSnapshot={async () => {
-                        setSnapshot(await api.fetchSnapshot());
-                      }}
-                      onOpenAccountsHub={() => setActiveTab('accounts')}
-                    />
-                  )}
+                  <AccountSummary
+                    activeProfileId={snapshot.ActiveProfileID}
+                    onRefreshSnapshot={async () => {
+                      setSnapshot(await api.fetchSnapshot());
+                    }}
+                    onOpenAccountsHub={() => setActiveTab('accounts')}
+                    showToast={showToast}
+                  />
 
                   {!remoteClient && (
                     <QuickActions
