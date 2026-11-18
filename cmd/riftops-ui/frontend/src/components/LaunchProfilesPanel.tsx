@@ -308,10 +308,9 @@ export default function LaunchProfilesPanel({
           {onOpenAccountsHub && (
             <button
               type="button"
-              className="btn-secondary account-switcher__open-hub"
+              className="account-switcher__open-hub"
               onClick={onOpenAccountsHub}
               title="Open full Hextech Accounts Hub"
-              style={{ fontSize: '11px', padding: '4px 8px', letterSpacing: '0.04em' }}
             >
               Accounts Hub &rarr;
             </button>
@@ -406,10 +405,17 @@ export default function LaunchProfilesPanel({
           const accountDetails = streamerMode
             ? 'Account details hidden'
             : [profileLoginUsername(profile) ? `Login: ${profileLoginUsername(profile)}` : '', profileRiotId ? `Riot ID: ${profileRiotId}` : ''].filter(Boolean).join(' · ');
+          const tierSolo = (profile.rank?.solo?.tier || 'unranked').toLowerCase();
           return (
             <article key={profile.id} className={`account-switcher__row ${active ? 'is-active' : ''}`}>
               <div className="account-switcher__identity">
-                <span className="account-switcher__avatar" aria-hidden="true">{profileDisplayName.slice(0, 1).toUpperCase()}</span>
+                <div className="account-switcher__avatar-wing" aria-hidden="true" title={profile.rank?.solo ? accountRankLabel(profile.rank.solo) : 'Unranked'}>
+                  <img
+                    src={`/league/ranks/${tierSolo}.png`}
+                    alt=""
+                    onError={(e) => { e.currentTarget.src = '/league/ranks/unranked.png'; }}
+                  />
+                </div>
                 <div className="account-switcher__identity-copy">
                   <div className="account-switcher__name"><strong>{profileDisplayName}</strong>{active && <span>Selected</span>}</div>
                   <p>{accountDetails || 'No sign-in username saved'} <span aria-hidden="true">·</span> {profile.region || 'Server not set'}</p>

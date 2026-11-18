@@ -1834,6 +1834,10 @@ html[data-performance='quiet'] .control-room__glow { animation: none !important;
 .account-switcher__row.is-active { background: rgba(200,170,110,.055); }
 .account-switcher__identity { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 220px; }
 .account-switcher__avatar { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; color: #dfc88c; border: 1px solid rgba(200,170,110,.2); border-radius: 10px; background: rgba(200,170,110,.08); font-family: var(--font-display); font-size: 18px; font-weight: 800; }
+.account-switcher__avatar-wing { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: 0 0 44px; }
+.account-switcher__avatar-wing img { max-width: 100%; max-height: 100%; object-fit: contain; filter: drop-shadow(0 2px 6px rgba(0,0,0,.7)); }
+.account-switcher__open-hub { display: inline-flex; align-items: center; gap: 6px; background: linear-gradient(135deg, rgba(200,170,110,.25) 0%, rgba(200,170,110,.08) 100%); border: 1px solid rgba(200,170,110,.6); color: #f0e6d2; font-family: var(--font-display, inherit); font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; padding: 6px 12px; border-radius: 8px; transition: all .2s ease; box-shadow: 0 0 10px rgba(200,170,110,.15); cursor: pointer; }
+.account-switcher__open-hub:hover { background: linear-gradient(135deg, rgba(200,170,110,.4) 0%, rgba(200,170,110,.15) 100%); border-color: #f0e6d2; box-shadow: 0 0 14px rgba(200,170,110,.35); transform: translateY(-1px); }
 .account-switcher__identity-copy { min-width: 0; }
 .account-switcher__name { display: flex; align-items: center; gap: 8px; }
 .account-switcher__name strong { overflow: hidden; color: #f0e6d2; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
