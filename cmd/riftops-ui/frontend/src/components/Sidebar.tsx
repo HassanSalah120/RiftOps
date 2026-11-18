@@ -1,4 +1,4 @@
-import { Activity, BookOpen, Command, Gem, History, PanelLeftClose, PanelLeftOpen, MoreHorizontal, X, Radar, RadioTower, Settings, Sparkles, Swords, Wand2, Users } from 'lucide-react';
+import { Activity, BookOpen, CircleUserRound, Command, Gem, History, PanelLeftClose, PanelLeftOpen, MoreHorizontal, X, Radar, RadioTower, Settings, Sparkles, Swords, Wand2, Users } from 'lucide-react';
 import { useState } from 'react';
 import type { Tab } from '../types';
 import { tabAvailable } from '../clientCapabilities';
@@ -10,6 +10,7 @@ import { useLocale } from '../localeContext';
 
 const NAV = [
   { key: 'dashboard' as Tab, icon: Radar, label: 'Home', mobileLabel: 'Home', hint: 'Summoner & quick actions', group: 'game' },
+  { key: 'accounts' as Tab, icon: CircleUserRound, label: 'Accounts', mobileLabel: 'Accounts', hint: 'Hextech account switcher', group: 'game' },
   { key: 'play' as Tab, icon: Swords, label: 'Play & Queue', mobileLabel: 'Play', hint: 'Queue & auto pick/ban', group: 'game' },
   { key: 'live' as Tab, icon: Activity, label: 'Live Game', mobileLabel: 'Live', hint: 'Matchup & build helper', group: 'game' },
   { key: 'social' as Tab, icon: Users, label: 'Friends', mobileLabel: 'Friends', hint: 'Friends & invites', group: 'game' },
@@ -52,8 +53,8 @@ export default function Sidebar({
   });
 
   const translatedLabel = (key: Tab, fallback: string) => {
-    const map: Partial<Record<Tab, string>> = { dashboard: 'nav.command', play: 'nav.play', live: 'nav.live', social: 'nav.social', history: 'nav.history', skins: 'nav.skins', progress: 'nav.progress', loot: 'nav.loot', qol: 'nav.qol', remote: 'nav.remote', settings: 'nav.settings' };
-    return map[key] ? t(map[key]!) : fallback;
+    const map: Partial<Record<Tab, string>> = { dashboard: 'nav.command', accounts: 'nav.accounts', play: 'nav.play', live: 'nav.live', social: 'nav.social', history: 'nav.history', skins: 'nav.skins', progress: 'nav.progress', loot: 'nav.loot', qol: 'nav.qol', remote: 'nav.remote', settings: 'nav.settings' };
+    return map[key] ? (t(map[key]!) === map[key] ? fallback : t(map[key]!)) : fallback;
   };
   const renderNavItem = (item: typeof NAV[number]) => {
     const active = activeTab === item.key;
@@ -62,7 +63,7 @@ export default function Sidebar({
       <button
         type="button"
         key={item.key}
-        className={`app-sidebar__item ${['dashboard', 'play', 'live', 'social'].includes(item.key) ? 'is-mobile-primary' : 'is-mobile-hidden'} ${active ? 'is-active' : ''}`}
+        className={`app-sidebar__item ${['dashboard', 'accounts', 'play', 'live', 'social'].includes(item.key) ? 'is-mobile-primary' : 'is-mobile-hidden'} ${active ? 'is-active' : ''}`}
         onClick={() => onTabChange(item.key)}
         aria-label={translatedLabel(item.key, item.label)}
         title={translatedLabel(item.key, item.label)}

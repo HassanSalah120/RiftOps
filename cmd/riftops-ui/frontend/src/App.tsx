@@ -37,6 +37,7 @@ const QoLPanel = lazy(() => import('./components/QoLPanel'));
 const LootDashboard = lazy(() => import('./components/LootDashboard'));
 const RemoteAccessPage = lazy(() => import('./components/RemoteAccessPage'));
 const SocialCenter = lazy(() => import('./components/SocialCenter'));
+const AccountsHubPage = lazy(() => import('./components/AccountsHubPage'));
 const SettingsPage = lazy(() => import('./components/SettingsPage'));
 
 function timeAgo(startedAt: string): string {
@@ -112,7 +113,7 @@ export default function App() {
   const [reducedMotion, setReducedMotion] = useState(() => {
     try { return localStorage.getItem('riftops.reducedMotion') === 'true'; } catch { return false; }
   });
-  const { connected: lcuConnected, qol: lcuQol, performanceMode, setPerformanceMode, pageVisible } = useLCUConnection();
+  const { connected: lcuConnected, qol: lcuQol, performanceMode, setPerformanceMode, pageVisible, streamerMode } = useLCUConnection();
   const previousLcuConnection = useRef<boolean | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -748,6 +749,7 @@ export default function App() {
                       onRefreshSnapshot={async () => {
                         setSnapshot(await api.fetchSnapshot());
                       }}
+                      onOpenAccountsHub={() => setActiveTab('accounts')}
                     />
                   )}
 
@@ -768,6 +770,22 @@ export default function App() {
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════
+             ACCOUNTS HUB TAB
+             ═══════════════════════════════════════════════ */}
+          {activeTab === 'accounts' && (
+            <div className="workspace-stage flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
+              <AccountsHubPage
+                activeProfileId={snapshot.ActiveProfileID}
+                showToast={showToast}
+                onRefreshSnapshot={async () => {
+                  setSnapshot(await api.fetchSnapshot());
+                }}
+                streamerMode={streamerMode}
+              />
             </div>
           )}
 

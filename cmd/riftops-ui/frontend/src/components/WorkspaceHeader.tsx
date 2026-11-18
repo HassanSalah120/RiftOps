@@ -10,6 +10,7 @@ import type { ConfirmAction } from '../types';
 
 const TAB_LABELS: Record<Tab, string> = {
   dashboard: 'Home',
+  accounts: 'Accounts',
   play: 'Play & Queue',
   live: 'Live Game',
   social: 'Friends',
@@ -24,6 +25,7 @@ const TAB_LABELS: Record<Tab, string> = {
 
 const TAB_LOCALE_MAP: Partial<Record<Tab, string>> = {
   dashboard: 'nav.command',
+  accounts: 'nav.accounts',
   play: 'nav.play',
   live: 'nav.live',
   social: 'nav.social',

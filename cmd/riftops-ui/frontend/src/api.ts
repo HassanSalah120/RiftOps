@@ -162,6 +162,21 @@ export async function deleteLaunchProfile(id: string): Promise<void> {
   if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to delete launch profile');
 }
 
+export async function exportLaunchProfiles(): Promise<LaunchProfile[]> {
+  const res = await fetch('/api/profiles/export', { cache: 'no-store' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to export launch profiles');
+  return res.json();
+}
+
+export async function importLaunchProfiles(profiles: LaunchProfile[]): Promise<void> {
+  const res = await fetch('/api/profiles/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profiles),
+  });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Failed to import launch profiles');
+}
+
 export async function switchLaunchProfile(id: string, forceLogin = false): Promise<{
   profile: LaunchProfile;
   targetSessionAvailable: boolean;

@@ -59,10 +59,12 @@ export default function LaunchProfilesPanel({
   activeProfileId,
   showToast,
   onRefreshSnapshot,
+  onOpenAccountsHub,
 }: {
   activeProfileId: string;
   showToast: Toast;
   onRefreshSnapshot: () => Promise<void>;
+  onOpenAccountsHub?: () => void;
 }) {
   const { streamerMode, connected: leagueConnected, pageVisible, performanceMode } = useLCUConnection();
   const [profiles, setProfiles] = useState<LaunchProfile[]>([]);
@@ -303,6 +305,17 @@ export default function LaunchProfilesPanel({
           </div>
         </div>
         <div className="account-switcher__header-actions">
+          {onOpenAccountsHub && (
+            <button
+              type="button"
+              className="btn-secondary account-switcher__open-hub"
+              onClick={onOpenAccountsHub}
+              title="Open full Hextech Accounts Hub"
+              style={{ fontSize: '11px', padding: '4px 8px', letterSpacing: '0.04em' }}
+            >
+              Accounts Hub &rarr;
+            </button>
+          )}
           <button type="button" className="account-switcher__icon-button" onClick={() => void load()} disabled={loading || busy !== ''} aria-label="Refresh accounts and detect server" title="Refresh accounts and detect server">
             <RefreshCw className={loading ? 'animate-spin' : ''} aria-hidden="true" />
           </button>
