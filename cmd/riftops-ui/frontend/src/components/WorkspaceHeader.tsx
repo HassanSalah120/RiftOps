@@ -80,7 +80,8 @@ export default function WorkspaceHeader({
   const leagueLabel = connected ? livePhaseLabel(sessionPhase) : 'League offline';
   const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K';
   const labelKey = TAB_LOCALE_MAP[activeTab];
-  const label = labelKey ? t(labelKey) : TAB_LABELS[activeTab];
+  const translated = labelKey ? t(labelKey) : '';
+  const label = (translated && translated !== labelKey) ? translated : TAB_LABELS[activeTab];
 
   const handleDodgeClick = () => {
     setDodgeConfirm({

@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
-  CircleUserRound,
   Copy,
   Download,
   Edit2,
@@ -11,7 +10,6 @@ import {
   List,
   Loader2,
   Lock,
-  LogIn,
   MoreVertical,
   Plus,
   RefreshCw,
@@ -37,6 +35,10 @@ import {
   type ProfileSessionStatus,
   type QueueRank,
 } from '../api';
+import { useLCUConnection } from './lcuConnectionContext';
+import { accountRankLabel, normalizeRegionLabel } from '../utils/accountRank';
+import ConfirmModal from './ConfirmModal';
+import type { ConfirmAction } from '../types';
 import '../styles/accountsHub.css';
 
 interface AccountsHubPageProps {
@@ -127,8 +129,29 @@ function rankScore(rank: QueueRank): number {
   const divMap: Record<string, number> = { I: 1, IV: 4, III: 3, II: 2, '1': 1, '2': 2, '3': 3, '4': 4 };
   const div = rank.division ? divMap[rank.division.toUpperCase()] || 5 : 5;
   const lp = rank.leaguePoints || 0;
-  // Lower score = higher rank
   return tierIdx * 10000 + div * 1000 - lp;
+}
+
+function parseRiotId(riotId?: string, fallbackName?: string): { name: string; tag: string } {
+  const source = (riotId && riotId.includes('#')) ? riotId : (fallbackName && fallbackName.includes('#')) ? fallbackName : '';
+  if (source) {
+    const parts = source.split('#');
+    return { name: parts[0], tag: `#${parts.slice(1).join('#')}` };
+  }
+  return { name: riotId || fallbackName || 'Summoner', tag: '' };
+}
+
+function getSessionInfo(status?: ProfileSessionStatus) {
+  if (!status) return { label: 'Checking save…', type: 'pending' as const, tip: 'Checking saved session' };
+  if (status.incomplete) return { label: 'Incomplete', type: 'warn' as const, tip: 'Sign into Riot Client with "Stay signed in" checked' };
+  if (status.needsRecapture) return { label: 'Re-save needed', type: 'warn' as const, tip: 'Verification updated in Riot Client; re-save needed' };
+  if (status.expired) return { label: 'Save expired', type: 'danger' as const, tip: 'Session token expired in Riot Client' };
+  if (!status.saved) return { label: 'No saved login', type: 'dim' as const, tip: 'Sign into Riot Client to save 1-click login' };
+  if (!status.expiresAt) return { label: 'Ready to launch', type: 'success' as const, tip: 'Verified local save ready to launch' };
+  const remaining = new Date(status.expiresAt).getTime() - Date.now();
+  if (!Number.isFinite(remaining) || remaining <= 0) return { label: 'Expired', type: 'danger' as const, tip: 'Session token expired' };
+  const days = Math.max(1, Math.ceil(remaining / 86_400_000));
+  return { label: `Ready (${days}d)`, type: 'success' as const, tip: `Verified session token (${days} days remaining)` };
 }
 
 export default function AccountsHubPage({
@@ -137,6 +160,7 @@ export default function AccountsHubPage({
   onRefreshSnapshot,
   streamerMode = false,
 }: AccountsHubPageProps) {
+  const { connected: leagueConnected } = useLCUConnection();
   const [profiles, setProfiles] = useState<LaunchProfile[]>([]);
   const [statuses, setStatuses] = useState<Record<string, ProfileSessionStatus>>({});
   const [loading, setLoading] = useState(true);
@@ -147,6 +171,7 @@ export default function AccountsHubPage({
   const [sortBy, setSortBy] = useState<'rank-desc' | 'rank-asc' | 'lp' | 'name'>('rank-desc');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [queueMode, setQueueMode] = useState<'solo' | 'flex'>('solo');
+  const [confirmation, setConfirmation] = useState<ConfirmAction | null>(null);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -170,12 +195,14 @@ export default function AccountsHubPage({
   const loadProfiles = useCallback(async () => {
     setLoading(true);
     try {
-      const [profData, statusData] = await Promise.all([
+      const [profData, statusData, connData] = await Promise.all([
         fetchLaunchProfiles(),
         fetchProfileSessionStatuses().catch(() => ({})),
+        fetchConnectedLeagueAccount().catch(() => null),
       ]);
       setProfiles(profData);
       setStatuses(statusData);
+      setConnectedAccount(connData?.available ? connData : null);
     } catch (err: any) {
       showToast?.('Error', err?.message || 'Failed to load accounts', 'error');
     } finally {
@@ -273,8 +300,8 @@ export default function AccountsHubPage({
     return result;
   }, [profiles, selectedTierFilter, selectedRegion, searchQuery, sortBy, queueMode]);
 
-  // Switch profile
-  const handleSwitch = async (profile: LaunchProfile) => {
+  // Switch execution
+  const executeSwitch = async (profile: LaunchProfile) => {
     if (switchingId) return;
     setSwitchingId(profile.id);
     try {
@@ -291,6 +318,29 @@ export default function AccountsHubPage({
     } finally {
       setSwitchingId(null);
     }
+  };
+
+  const handleRequestSwitch = (profile: LaunchProfile) => {
+    if (profile.id === activeProfileId) return;
+
+    // UX Rule: Safe session interruption guard
+    if (leagueConnected) {
+      const targetName = streamerMode ? 'profile' : profile.name;
+      setConfirmation({
+        open: true,
+        danger: true,
+        title: 'Switch League Account?',
+        message: `League of Legends is currently open.\n\nSwitching accounts will close your active Riot Client session to restore "${targetName}".\n\nDo you want to close the active session and switch?`,
+        actionLabel: 'Close & Switch',
+        onConfirm: () => {
+          setConfirmation(null);
+          void executeSwitch(profile);
+        },
+      });
+      return;
+    }
+
+    void executeSwitch(profile);
   };
 
   // Copy Riot ID
@@ -348,33 +398,51 @@ export default function AccountsHubPage({
     if (!modalForm.name.trim()) return;
     try {
       await saveLaunchProfile({
-        ...(editingProfile || {}),
+        id: editingProfile?.id || '',
         name: modalForm.name.trim(),
         riotId: modalForm.riotId.trim(),
         region: modalForm.region,
         accountLabel: modalForm.accountLabel.trim(),
         loginUsername: modalForm.loginUsername.trim(),
+        enabled: true,
+        status: editingProfile?.status || 'offline',
+        defaultGame: 'lol',
       });
       setIsModalOpen(false);
       await loadProfiles();
-      showToast?.('Account Saved', `Saved ${modalForm.name}`, 'success');
+      showToast?.('Saved', `Account ${modalForm.name} saved successfully`, 'success');
     } catch (err: any) {
-      showToast?.('Save Failed', err?.message || 'Failed to save account', 'error');
+      showToast?.('Save Failed', err?.message || 'Could not save profile', 'error');
     }
   };
 
-  const handleDelete = async (profile: LaunchProfile) => {
-    if (!confirm(`Delete profile "${profile.name}"? Saved session vault will also be removed.`)) return;
-    try {
-      await deleteLaunchProfile(profile.id);
-      await loadProfiles();
-      showToast?.('Account Deleted', `Deleted ${profile.name}`, 'info');
-    } catch (err: any) {
-      showToast?.('Delete Failed', err?.message || 'Could not delete profile', 'error');
+  const handleDelete = (profile: LaunchProfile) => {
+    if (profiles.length <= 1) {
+      showToast?.('Cannot Delete', 'You must have at least one account profile.', 'error');
+      return;
     }
+    const name = streamerMode ? 'this account' : profile.name;
+    setConfirmation({
+      open: true,
+      danger: true,
+      title: 'Delete Account Profile?',
+      message: `Delete ${name} and its saved session credentials?\nThis action cannot be undone.`,
+      actionLabel: 'Delete Profile',
+      onConfirm: async () => {
+        setConfirmation(null);
+        try {
+          await deleteLaunchProfile(profile.id);
+          await loadProfiles();
+          await onRefreshSnapshot?.();
+          showToast?.('Deleted', `Account ${name} removed.`, 'success');
+        } catch (err: any) {
+          showToast?.('Delete Failed', err?.message || 'Failed to delete profile', 'error');
+        }
+      },
+    });
   };
 
-  // Export Profiles
+  // Export JSON
   const handleExport = async () => {
     try {
       const data = await exportLaunchProfiles();
@@ -385,23 +453,24 @@ export default function AccountsHubPage({
       a.download = `riftops-accounts-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast?.('Exported', 'Saved account backup to JSON file.', 'success');
+      showToast?.('Exported', 'Account profiles backup saved.', 'success');
     } catch (err: any) {
       showToast?.('Export Failed', err?.message || 'Could not export profiles', 'error');
     }
   };
 
-  // Import Profiles
+  // Import JSON
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed)) throw new Error('Invalid JSON format: expected an array of accounts');
+      if (!Array.isArray(parsed)) throw new Error('File does not contain a valid profile array');
       await importLaunchProfiles(parsed);
       await loadProfiles();
-      showToast?.('Import Succeeded', `Imported ${parsed.length} accounts.`, 'success');
+      await onRefreshSnapshot?.();
+      showToast?.('Imported', `Successfully imported ${parsed.length} profiles.`, 'success');
     } catch (err: any) {
       showToast?.('Import Failed', err?.message || 'Invalid backup file', 'error');
     } finally {
@@ -410,238 +479,246 @@ export default function AccountsHubPage({
   };
 
   return (
-    <div className="accounts-hub">
-      {/* ─────────────────────────────────────────────────────────────
-         SIDEBAR: RANK DISTRIBUTION & UTILITIES
-         ───────────────────────────────────────────────────────────── */}
-      <aside className="accounts-sidebar">
-        <button
-          type="button"
-          onClick={openAddModal}
-          className="accounts-sidebar__add-btn"
-          title="Add a new League account"
-        >
-          <Plus className="w-4 h-4 text-hextech-gold" />
-          <span>Add Account</span>
-        </button>
+    <>
+      {confirmation && <ConfirmModal action={confirmation} onClose={() => setConfirmation(null)} />}
 
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="accounts-sidebar__title mb-0">Rank Distribution</h4>
-            {selectedTierFilter && (
-              <button
-                type="button"
-                onClick={() => setSelectedTierFilter(null)}
-                className="text-[10px] text-hextech-gold hover:underline cursor-pointer bg-transparent border-0 p-0"
-              >
-                Clear
-              </button>
-            )}
+      <div className="accounts-layout">
+        {/* ═══════════════════════════════════════════════
+           LEFT SIDEBAR: RANK DISTRIBUTION & BACKUPS
+           ═══════════════════════════════════════════════ */}
+        <aside className="accounts-sidebar" aria-label="Accounts and Rank Filters">
+          <div className="accounts-sidebar__add-wrap">
+            <button
+              type="button"
+              onClick={openAddModal}
+              className="accounts-sidebar__add-btn"
+              title="Add a new League account"
+            >
+              <Plus className="w-4 h-4 text-[#010a13]" />
+              <span>Add Account</span>
+            </button>
           </div>
 
-          <div className="accounts-sidebar__dist-list">
+          <div className="accounts-sidebar__dist-title">
+            <span>Rank Distribution</span>
+            <span className="accounts-sidebar__dist-count">{profiles.length} Total</span>
+          </div>
+
+          <div className="accounts-sidebar__ranks">
+            <button
+              type="button"
+              onClick={() => setSelectedTierFilter(null)}
+              className={`accounts-sidebar__rank-item ${selectedTierFilter === null ? 'is-selected' : ''}`}
+            >
+              <div className="accounts-sidebar__rank-left">
+                <span className="w-3.5 h-3.5 rounded-full border border-white/20 bg-white/5 flex items-center justify-center text-[9px]">
+                  *
+                </span>
+                <span className="accounts-sidebar__rank-name">All Tiers</span>
+              </div>
+              <span className="accounts-sidebar__rank-count">{profiles.length}</span>
+            </button>
+
             {TIER_ORDER.map((tier) => {
-              const count = distribution[tier] || 0;
-              const isActive = selectedTierFilter === tier;
-              const isZero = count === 0;
+              const count = distribution[tier];
+              const isSelected = selectedTierFilter === tier;
+              const palette = TIER_PALETTES[tier];
 
               return (
                 <button
-                  key={tier}
                   type="button"
-                  onClick={() => setSelectedTierFilter(isActive ? null : tier)}
-                  className={`accounts-sidebar__dist-row ${isActive ? 'is-active' : ''} ${isZero ? 'is-zero' : ''}`}
-                  title={`Filter by ${tier} (${count} accounts)`}
+                  key={tier}
+                  onClick={() => setSelectedTierFilter(isSelected ? null : tier)}
+                  className={`accounts-sidebar__rank-item ${isSelected ? 'is-selected' : ''}`}
                 >
-                  <img
-                    src={`/league/crests/${tier.toLowerCase()}.svg`}
-                    alt={tier}
-                    className="accounts-sidebar__dist-icon"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLElement).style.display = 'none';
-                    }}
-                  />
-                  <span className="accounts-sidebar__dist-name">{tier}</span>
-                  <span className="accounts-sidebar__dist-count">{count}</span>
+                  <div className="accounts-sidebar__rank-left">
+                    <img
+                      src={`/league/crests/${tier.toLowerCase()}.svg`}
+                      alt=""
+                      className="accounts-sidebar__rank-crest"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                    <span
+                      className="accounts-sidebar__rank-name"
+                      style={{ color: count > 0 ? palette.base : undefined }}
+                    >
+                      {tier}
+                    </span>
+                  </div>
+                  <span className={`accounts-sidebar__rank-count ${count > 0 ? 'is-nonzero' : ''}`}>
+                    {count}
+                  </span>
                 </button>
               );
             })}
           </div>
-        </div>
 
-        {/* Sidebar Utilities */}
-        <div className="accounts-sidebar__footer">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="accounts-sidebar__footer-link"
-            title="Import accounts from JSON backup"
-          >
-            <Upload className="w-4 h-4 text-hextech-gold" />
-            <span>Import Accounts</span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json"
-            onChange={handleImportFile}
-            className="hidden"
-          />
-
-          <button
-            type="button"
-            onClick={handleExport}
-            className="accounts-sidebar__footer-link"
-            title="Export accounts to JSON backup"
-          >
-            <Download className="w-4 h-4 text-hextech-gold" />
-            <span>Export Accounts</span>
-          </button>
-
-          <div className="text-[10px] text-text-dim px-2 pt-2 leading-tight">
-            <span>RiftOps Session Vault v3.5 · Ban-Safe DPAPI</span>
+          <div className="accounts-sidebar__footer">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={handleImportFile}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="accounts-sidebar__footer-btn"
+              title="Import accounts from JSON backup"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Import</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExport}
+              className="accounts-sidebar__footer-btn"
+              title="Export accounts to JSON backup"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export</span>
+            </button>
           </div>
-        </div>
-      </aside>
+        </aside>
 
-      {/* ─────────────────────────────────────────────────────────────
-         MAIN SECTION: TOOLBAR & ACCOUNT CARDS
-         ───────────────────────────────────────────────────────────── */}
-      <main className="accounts-main">
-        {/* Top Header */}
-        <header className="accounts-header">
-          <div>
-            <div className="accounts-header__eyebrow">
-              {queueMode === 'solo' ? 'Ranked Solo / Duo' : 'Ranked Flex'}
+        {/* ═══════════════════════════════════════════════
+           MAIN HUB AREA: SEARCH, TOOLBAR, & ACCOUNT CARDS
+           ═══════════════════════════════════════════════ */}
+        <main className="accounts-main">
+          {/* Header Title & Queue Mode Toggle */}
+          <div className="accounts-header">
+            <div>
+              <div className="accounts-header__eyebrow">
+                {selectedTierFilter ? `${selectedTierFilter.toUpperCase()} ACCOUNTS` : 'HEX-TECH ACCOUNT SWITCHER'}
+              </div>
+              <h1 className="accounts-header__title">Accounts Hub</h1>
             </div>
-            <h1 className="accounts-header__title">Accounts</h1>
-          </div>
 
-          <div className="accounts-header__meta">
-            <div className="flex items-center gap-3">
-              {/* Queue Mode Selector */}
-              <div className="flex items-center bg-black/40 border border-white/10 rounded p-0.5">
+            <div className="accounts-header__meta">
+              <div className="flex items-center gap-1.5 p-1 rounded-xl bg-white/[0.04] border border-white/[0.08]">
                 <button
                   type="button"
                   onClick={() => setQueueMode('solo')}
-                  className={`px-2.5 py-1 text-xs font-bold rounded transition cursor-pointer ${
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
                     queueMode === 'solo'
-                      ? 'bg-hextech-gold/20 text-hextech-gold border border-hextech-gold/30'
-                      : 'text-text-dim hover:text-white'
+                      ? 'bg-[#c8aa6e] text-[#010a13] shadow-[0_0_10px_rgba(200,170,110,0.3)]'
+                      : 'text-[#8f9ca3] hover:text-[#f0e6d2]'
                   }`}
                 >
-                  Solo / Duo
+                  Ranked Solo/Duo
                 </button>
                 <button
                   type="button"
                   onClick={() => setQueueMode('flex')}
-                  className={`px-2.5 py-1 text-xs font-bold rounded transition cursor-pointer ${
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
                     queueMode === 'flex'
-                      ? 'bg-hextech-gold/20 text-hextech-gold border border-hextech-gold/30'
-                      : 'text-text-dim hover:text-white'
+                      ? 'bg-[#c8aa6e] text-[#010a13] shadow-[0_0_10px_rgba(200,170,110,0.3)]'
+                      : 'text-[#8f9ca3] hover:text-[#f0e6d2]'
                   }`}
                 >
-                  Flex
+                  Ranked Flex
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={loadProfiles}
-                disabled={loading}
-                className="p-1.5 rounded text-text-dim hover:text-white hover:bg-white/10 transition cursor-pointer"
-                title="Refresh accounts & ranks"
-              >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="accounts-header__count">
+                  {displayedProfiles.length} of {profiles.length} account{profiles.length === 1 ? '' : 's'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void loadProfiles()}
+                  disabled={loading}
+                  className="p-1 rounded-lg text-[#8f9ca3] hover:text-[#f0e6d2] hover:bg-white/[0.05] transition cursor-pointer"
+                  title="Refresh profiles"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
             </div>
-            <span className="accounts-header__count">
-              {displayedProfiles.length} of {profiles.length} accounts
-            </span>
-          </div>
-        </header>
-
-        {/* Toolbar */}
-        <div className="accounts-toolbar">
-          {/* Search Bar */}
-          <div className="accounts-toolbar__search">
-            <Search className="accounts-toolbar__search-icon" />
-            <input
-              type="text"
-              placeholder="Search name, tag or account ID..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-dim hover:text-white cursor-pointer bg-transparent border-0"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
           </div>
 
-          {/* Region Dropdown */}
-          <select
-            value={selectedRegion}
-            onChange={(e) => setSelectedRegion(e.target.value)}
-            className="accounts-toolbar__select"
-            title="Filter by server region"
-          >
-            {REGIONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
+          {/* Filtering and Search Toolbar */}
+          <div className="accounts-toolbar">
+            <div className="accounts-toolbar__search">
+              <Search className="accounts-toolbar__search-icon" />
+              <input
+                type="text"
+                placeholder="Search name, tag, or login username…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8f9ca3] hover:text-[#f0e6d2] cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
 
-          {/* Sort Dropdown */}
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="accounts-toolbar__select"
-            title="Sort accounts"
-          >
-            <option value="rank-desc">Sort: Highest Rank</option>
-            <option value="rank-asc">Sort: Lowest Rank</option>
-            <option value="lp">Sort: Highest LP</option>
-            <option value="name">Sort: Name (A-Z)</option>
-          </select>
+            <div className="accounts-toolbar__controls">
+              {/* Region Filter */}
+              <div className="accounts-toolbar__select-wrap">
+                <select
+                  value={selectedRegion}
+                  onChange={(e) => setSelectedRegion(e.target.value)}
+                  className="accounts-toolbar__select"
+                >
+                  {REGIONS.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          {/* View Mode Toggle */}
-          <div className="accounts-toolbar__view-toggle">
-            <button
-              type="button"
-              onClick={() => setViewMode('grid')}
-              className={`accounts-toolbar__view-btn ${viewMode === 'grid' ? 'is-active' : ''}`}
-              title="Grid view"
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('list')}
-              className={`accounts-toolbar__view-btn ${viewMode === 'list' ? 'is-active' : ''}`}
-              title="List view"
-            >
-              <List className="w-4 h-4" />
-            </button>
+              {/* Sort Dropdown */}
+              <div className="accounts-toolbar__select-wrap">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="accounts-toolbar__select"
+                >
+                  <option value="rank-desc">Sort: Highest Rank</option>
+                  <option value="rank-asc">Sort: Lowest Rank</option>
+                  <option value="lp">Sort: League Points (LP)</option>
+                  <option value="name">Sort: Name (A-Z)</option>
+                </select>
+              </div>
+
+              {/* View Mode Toggle */}
+              <div className="accounts-toolbar__view-toggle">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('grid')}
+                  className={`accounts-toolbar__view-btn ${viewMode === 'grid' ? 'is-active' : ''}`}
+                  title="Hextech Card Grid View"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('list')}
+                  className={`accounts-toolbar__view-btn ${viewMode === 'list' ? 'is-active' : ''}`}
+                  title="Compact Table View"
+                >
+                  <List className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* Account Cards */}
-        {displayedProfiles.length === 0 ? (
-          <div className="p-16 text-center border border-white/5 bg-black/20 rounded-xl my-4">
-            <CircleUserRound className="w-12 h-12 text-hextech-gold/40 mx-auto mb-3" />
-            <h3 className="text-base font-bold text-white mb-1">No Accounts Found</h3>
-            <p className="text-xs text-text-dim max-w-sm mx-auto mb-4">
-              {searchQuery || selectedTierFilter || selectedRegion !== 'all'
-                ? 'Try adjusting your search or tier filter.'
-                : 'Click "Add Account" to add your first League of Legends account.'}
-            </p>
-            {(searchQuery || selectedTierFilter || selectedRegion !== 'all') && (
+          {/* Account Cards Container */}
+          {displayedProfiles.length === 0 ? (
+            <div className="accounts-empty-state">
+              <Info className="w-10 h-10 text-[#c8aa6e]/60 mb-2" />
+              <h3>No accounts match your criteria</h3>
+              <p>Try clearing your search query or selecting "All Tiers" in the left sidebar.</p>
               <button
                 type="button"
                 onClick={() => {
@@ -649,54 +726,78 @@ export default function AccountsHubPage({
                   setSelectedTierFilter(null);
                   setSelectedRegion('all');
                 }}
-                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded text-xs font-bold transition cursor-pointer"
+                className="mt-3 px-4 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs font-bold text-[#f0e6d2] transition cursor-pointer"
               >
                 Reset All Filters
               </button>
-            )}
-          </div>
-        ) : (
-          <div className={viewMode === 'grid' ? 'accounts-grid' : 'accounts-list'}>
-            {displayedProfiles.map((profile) => {
-              const isActive = profile.id === activeProfileId;
-              const status = statuses[profile.id];
-              const rank = getRankData(profile, queueMode);
-              const tier = normalizeTier(rank.tier);
-              const palette = TIER_PALETTES[tier];
-              const progress = calculateLpProgress(rank);
-              const isSwitching = switchingId === profile.id;
+            </div>
+          ) : viewMode === 'grid' ? (
+            /* ═══════════════════════════════════════════════
+               GRID VIEW: COMMANDING HEXTECH HERO CARDS
+               ═══════════════════════════════════════════════ */
+            <div className="accounts-grid">
+              {displayedProfiles.map((profile) => {
+                const rank = getRankData(profile, queueMode);
+                const tier = normalizeTier(rank.tier);
+                const progress = calculateLpProgress(rank);
+                const isActive = profile.id === activeProfileId;
+                const isSwitching = switchingId === profile.id;
+                const status = statuses[profile.id];
+                const sessionInfo = getSessionInfo(status);
 
-              // Parse display name and tagline
-              const riotId = profile.riotId || profile.name;
-              const [rawName, rawTag] = riotId.includes('#') ? riotId.split('#') : [riotId, ''];
-              const displayName = streamerMode ? 'Hidden Account' : rawName;
-              const displayTag = streamerMode ? '#0000' : rawTag ? `#${rawTag}` : '';
+                // Connected in live client check
+                const isConnectedInClient = Boolean(
+                  connectedAccount?.available &&
+                  connectedAccount?.riotId &&
+                  profile.riotId &&
+                  connectedAccount.riotId.toLowerCase().trim() === profile.riotId.toLowerCase().trim()
+                );
 
-              return (
-                <article
-                  key={profile.id}
-                  className={`account-card ${isActive ? 'is-active' : ''}`}
-                  style={
-                    {
-                      '--tier-color': palette.base,
-                      '--tier-light': palette.light,
-                      '--tier-dark': palette.dark,
-                    } as React.CSSProperties
-                  }
-                >
-                  {/* Card Header */}
-                  <div className="account-card__header">
-                    <div className="account-card__identity">
-                      <div className="flex items-center gap-1.5">
-                        <span className="account-card__name" title={riotId}>
-                          {displayName}
-                        </span>
-                        {displayTag && <span className="account-card__tag">{displayTag}</span>}
-                        {profile.riotId && (
+                const tierPalette = TIER_PALETTES[tier] || TIER_PALETTES.Unranked;
+                const parsedRiotId = parseRiotId(
+                  streamerMode ? 'Demo Player#EUW' : profile.riotId,
+                  profile.name
+                );
+                const fullName = streamerMode ? 'Demo Player#EUW' : (profile.riotId || profile.name);
+
+                // Secondary queue rank
+                const secondaryRank = queueMode === 'solo' ? profile.rank?.flex : profile.rank?.solo;
+                const secondaryLabel = secondaryRank ? accountRankLabel(secondaryRank) : null;
+
+                return (
+                  <article
+                    key={profile.id}
+                    className={`account-card ${isActive ? 'is-active' : ''}`}
+                    style={{
+                      '--tier-base': tierPalette.base,
+                      '--tier-light': tierPalette.light,
+                      '--tier-dark': tierPalette.dark,
+                      '--tier-glow': `${tierPalette.base}33`,
+                    } as React.CSSProperties}
+                  >
+                    {/* Corner Hextech Accent Notches */}
+                    <span className="account-card__corner account-card__corner--tl" />
+                    <span className="account-card__corner account-card__corner--tr" />
+                    <span className="account-card__corner account-card__corner--bl" />
+                    <span className="account-card__corner account-card__corner--br" />
+
+                    {/* ═══════════════════════════════════════
+                       TOP SECTION: IDENTITY & STATE BADGES
+                       ═══════════════════════════════════════ */}
+                    <div className="account-card__header">
+                      <div className="account-card__identity">
+                        {/* Name + Tag + Copy button */}
+                        <div className="account-card__name-row">
+                          <span className="account-card__summoner-name" title={fullName}>
+                            {parsedRiotId.name}
+                          </span>
+                          {parsedRiotId.tag && (
+                            <span className="account-card__tag">{parsedRiotId.tag}</span>
+                          )}
                           <button
                             type="button"
-                            onClick={() => handleCopyRiotId(profile.riotId, profile.id)}
-                            className="p-1 text-text-dim hover:text-white transition cursor-pointer bg-transparent border-0"
+                            onClick={() => handleCopyRiotId(fullName, profile.id)}
+                            className="account-card__copy-btn"
                             title="Copy Riot ID"
                           >
                             {copiedId === profile.id ? (
@@ -705,216 +806,330 @@ export default function AccountsHubPage({
                               <Copy className="w-3.5 h-3.5" />
                             )}
                           </button>
-                        )}
-                      </div>
+                        </div>
 
-                      <div className="account-card__meta-row">
-                        {profile.region && (
+                        {/* Badges / Chips Row */}
+                        <div className="account-card__meta-row">
                           <span className="account-card__chip account-card__chip-region">
-                            {profile.region.replace(/\d+$/, '')}
+                            {normalizeRegionLabel(profile.region)}
                           </span>
-                        )}
-                        {profile.accountLabel && (
-                          <span className="account-card__chip account-card__chip-label">
-                            {profile.accountLabel}
-                          </span>
-                        )}
-                        {status?.saved ? (
+
+                          {/* Selected in RiftOps Badge */}
+                          {isActive && (
+                            <span
+                              className="account-card__chip account-card__chip-selected"
+                              title="Active selection in RiftOps profile store"
+                            >
+                              <Check className="w-3 h-3 text-[#0ac8b9]" />
+                              <span>Selected</span>
+                            </span>
+                          )}
+
+                          {/* Authenticated in League Client Badge */}
+                          {isConnectedInClient && (
+                            <span
+                              className="account-card__chip account-card__chip-client"
+                              title="Currently authenticated and running in League Client"
+                            >
+                              <span className="account-card__pulse-dot" />
+                              <span>In Client</span>
+                            </span>
+                          )}
+
+                          {/* Session Vault Status Badge */}
                           <span
-                            className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-bold"
-                            title="Encrypted session vault is ready for 1-click launch"
+                            className={`account-card__chip account-card__chip-${sessionInfo.type}`}
+                            title={sessionInfo.tip}
                           >
-                            <ShieldCheck className="w-3 h-3" />
-                            <span>Ready</span>
+                            {sessionInfo.type === 'success' && <ShieldCheck className="w-3 h-3 text-[#0ac8b9]" />}
+                            {sessionInfo.type === 'warn' && <AlertTriangle className="w-3 h-3 text-amber-400" />}
+                            {sessionInfo.type === 'dim' && <Lock className="w-3 h-3 text-[#8f9ca3]" />}
+                            <span>{sessionInfo.label}</span>
                           </span>
-                        ) : status?.expired ? (
-                          <span
-                            className="inline-flex items-center gap-1 text-[10px] text-amber-400 font-bold"
-                            title="Session expired, fresh sign-in required"
-                          >
-                            <AlertTriangle className="w-3 h-3" />
-                            <span>Expired</span>
-                          </span>
-                        ) : (
-                          <span
-                            className="inline-flex items-center gap-1 text-[10px] text-text-dim/70"
-                            title="Sign in with 'Stay signed in' to enable 1-click swap"
-                          >
-                            <Lock className="w-3 h-3" />
-                            <span>Not Saved</span>
-                          </span>
+
+                          {profile.accountLabel && (
+                            <span className="account-card__chip account-card__chip-label truncate max-w-[110px]" title={profile.accountLabel}>
+                              {profile.accountLabel}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Kebab / Actions Menu */}
+                      <div className="relative account-card__menu-wrap">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(openMenuId === profile.id ? null : profile.id);
+                          }}
+                          className="account-card__menu-btn"
+                          title="Account actions"
+                        >
+                          <MoreVertical className="w-4 h-4" />
+                        </button>
+
+                        {openMenuId === profile.id && (
+                          <div className="absolute right-0 mt-1 w-44 rounded-xl bg-[#071320]/95 border border-[#c8aa6e]/30 shadow-2xl backdrop-blur-xl z-30 p-1 flex flex-col gap-0.5 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                openEditModal(profile);
+                              }}
+                              className="flex items-center gap-2 px-3 py-2 text-[#aebbc1] hover:text-white hover:bg-white/10 rounded cursor-pointer transition text-left"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span>Edit Account</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                handleRequestSwitch(profile);
+                              }}
+                              className="flex items-center gap-2 px-3 py-2 text-[#aebbc1] hover:text-white hover:bg-white/10 rounded cursor-pointer transition text-left"
+                            >
+                              <Zap className="w-3.5 h-3.5 text-[#c8aa6e]" />
+                              <span>Switch Now</span>
+                            </button>
+                            <div className="h-px bg-white/10 my-0.5" />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                handleDelete(profile);
+                              }}
+                              className="flex items-center gap-2 px-3 py-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded cursor-pointer transition text-left"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete</span>
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Context Menu */}
-                    <div className="relative account-card__menu-wrap">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpenMenuId(openMenuId === profile.id ? null : profile.id);
-                        }}
-                        className="account-card__menu-btn"
-                        title="Account actions"
-                      >
-                        <MoreVertical className="w-4 h-4" />
-                      </button>
+                    {/* ═══════════════════════════════════════
+                       CENTER SECTION: HERO RANK EMBLEM & LP
+                       ═══════════════════════════════════════ */}
+                    <div className="account-card__hero">
+                      {/* Large Ranked Wing (130px Focal Point) */}
+                      <div className="account-card__wing-hero">
+                        <img
+                          src={`/league/ranks/${tier.toLowerCase()}.png`}
+                          alt={tier}
+                          className="account-card__wing-img"
+                          onError={(e) => {
+                            e.currentTarget.src = '/league/ranks/unranked.png';
+                          }}
+                        />
+                      </div>
 
-                      {openMenuId === profile.id && (
-                        <div className="absolute right-0 mt-1 w-44 rounded-xl bg-surface-elevated/95 border border-hextech-gold/30 shadow-2xl backdrop-blur-xl z-30 p-1 flex flex-col gap-0.5 text-xs">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setOpenMenuId(null);
-                              openEditModal(profile);
-                            }}
-                            className="flex items-center gap-2 px-3 py-2 text-text-dim hover:text-white hover:bg-white/10 rounded cursor-pointer transition text-left"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                            <span>Edit Account</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setOpenMenuId(null);
-                              void handleSwitch(profile);
-                            }}
-                            className="flex items-center gap-2 px-3 py-2 text-text-dim hover:text-white hover:bg-white/10 rounded cursor-pointer transition text-left"
-                          >
-                            <Zap className="w-3.5 h-3.5 text-hextech-gold" />
-                            <span>Switch Now</span>
-                          </button>
-                          <div className="h-px bg-white/10 my-0.5" />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setOpenMenuId(null);
-                              void handleDelete(profile);
-                            }}
-                            className="flex items-center gap-2 px-3 py-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded cursor-pointer transition text-left"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete</span>
-                          </button>
+                      {/* Rank Title, LP, and Progress Bar */}
+                      <div className="account-card__rank-details">
+                        <div className="account-card__queue-pill">
+                          {queueMode === 'solo' ? 'SOLO / DUO' : 'FLEX 5V5'}
                         </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Card Rank Center */}
-                  <div className="account-card__rank">
-                    <div className="account-card__wing-wrap">
-                      <img
-                        src={`/league/ranks/${tier.toLowerCase()}.png`}
-                        alt={tier}
-                        className="account-card__wing-img"
-                        onError={(e) => {
-                          e.currentTarget.src = '/league/ranks/unranked.png';
-                        }}
-                      />
-                    </div>
-
-                    <div className="account-card__rank-info">
-                      <span className="account-card__tier-name">
-                        {tier.toUpperCase()}
-                        {!APEX_TIERS.has(tier) && rank.division ? ` ${rank.division}` : ''}
-                      </span>
-                      <span className="account-card__lp-text">
-                        {tier === 'Unranked' ? 'Placement' : `${rank.leaguePoints || 0} LP`}
-                      </span>
-                      {tier !== 'Unranked' && (
-                        <div className="account-card__lp-bar">
-                          <div
-                            className="account-card__lp-bar-fill"
-                            style={{ width: `${Math.round(progress * 100)}%` }}
-                          />
+                        <div className="account-card__tier-title" style={{ color: tierPalette.base }}>
+                          {tier.toUpperCase()}
+                          {!APEX_TIERS.has(tier) && rank.division ? ` ${rank.division}` : ''}
                         </div>
-                      )}
-                    </div>
-                  </div>
+                        <div className="account-card__lp-readout">
+                          {tier === 'Unranked' ? 'Unranked' : `${(rank.leaguePoints || 0).toLocaleString()} LP`}
+                        </div>
 
-                  {/* Card Footer / Action Bar */}
-                  <div className="account-card__footer">
-                    {isActive ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="account-card__btn-login is-active-btn"
-                        title="Active profile"
-                      >
-                        <UserCheck className="w-3.5 h-3.5" />
-                        <span>Active</span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={isSwitching || Boolean(switchingId)}
-                        onClick={() => void handleSwitch(profile)}
-                        className={`account-card__btn-login ${!status?.saved ? 'is-signin' : ''}`}
-                        title={
-                          status?.saved
-                            ? '1-click switch account with saved session'
-                            : 'Sign into Riot Client with this profile'
-                        }
-                      >
-                        {isSwitching ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : status?.saved ? (
-                          <Zap className="w-3.5 h-3.5 text-hextech-gold" />
-                        ) : (
-                          <LogIn className="w-3.5 h-3.5" />
+                        {tier !== 'Unranked' && (
+                          <div className="account-card__lp-track">
+                            <div
+                              className="account-card__lp-bar-fill"
+                              style={{
+                                width: `${Math.round(progress * 100)}%`,
+                                background: `linear-gradient(90deg, ${tierPalette.dark}, ${tierPalette.base}, ${tierPalette.light})`,
+                                boxShadow: `0 0 10px ${tierPalette.base}`,
+                              }}
+                            />
+                          </div>
                         )}
-                        <span>{status?.saved ? '> Switch' : '> Log In'}</span>
+
+                        {secondaryLabel && (
+                          <div className="account-card__secondary-rank">
+                            <span>{queueMode === 'solo' ? 'Flex' : 'Solo'}:</span>
+                            <strong>{secondaryLabel}</strong>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ═══════════════════════════════════════
+                       BOTTOM SECTION: BALANCED ACTION ROW
+                       ═══════════════════════════════════════ */}
+                    <div className="account-card__footer">
+                      {isActive ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="account-card__btn-login is-active-btn"
+                          title="Currently active in RiftOps"
+                        >
+                          <UserCheck className="w-4 h-4 text-[#0ac8b9]" />
+                          <span>ACTIVE IN RIFTOPS</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleRequestSwitch(profile)}
+                          disabled={switchingId !== null}
+                          className="account-card__btn-login"
+                          title={status?.saved ? '1-click session restore' : 'Switch & sign in'}
+                        >
+                          {isSwitching ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Zap className="w-4 h-4 text-[#c8aa6e]" />
+                          )}
+                          <span>{isSwitching ? 'SWITCHING…' : '> LOG IN'}</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(profile)}
+                        className="account-card__btn-edit"
+                        title="Edit account details"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
                       </button>
-                    )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            /* ═══════════════════════════════════════════════
+               LIST VIEW: HIGH-DENSITY COMPACT TABLE
+               ═══════════════════════════════════════════════ */
+            <div className="accounts-list">
+              {displayedProfiles.map((profile) => {
+                const rank = getRankData(profile, queueMode);
+                const tier = normalizeTier(rank.tier);
+                const isActive = profile.id === activeProfileId;
+                const isSwitching = switchingId === profile.id;
+                const status = statuses[profile.id];
+                const sessionInfo = getSessionInfo(status);
+                const tierPalette = TIER_PALETTES[tier] || TIER_PALETTES.Unranked;
+                const fullName = streamerMode ? 'Demo Player#EUW' : (profile.riotId || profile.name);
 
-                    <button
-                      type="button"
-                      onClick={() => openEditModal(profile)}
-                      className="account-card__icon-action"
-                      title="Edit Account"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </main>
+                return (
+                  <article
+                    key={profile.id}
+                    className={`account-card ${isActive ? 'is-active' : ''}`}
+                    style={{
+                      '--tier-base': tierPalette.base,
+                    } as React.CSSProperties}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-12 h-12 flex items-center justify-center shrink-0">
+                        <img
+                          src={`/league/ranks/${tier.toLowerCase()}.png`}
+                          alt={tier}
+                          className="max-h-full max-w-full object-contain"
+                          onError={(e) => {
+                            e.currentTarget.src = '/league/ranks/unranked.png';
+                          }}
+                        />
+                      </div>
+                      <div className="min-w-0 flex flex-col">
+                        <div className="flex items-center gap-2">
+                          <strong className="text-sm font-bold text-[#f0e6d2] truncate">
+                            {fullName}
+                          </strong>
+                          <span className="account-card__chip account-card__chip-region">
+                            {normalizeRegionLabel(profile.region)}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-[#8f9ca3] truncate">
+                          {profile.accountLabel || profile.loginUsername || 'No note'}
+                        </span>
+                      </div>
+                    </div>
 
-      {/* ─────────────────────────────────────────────────────────────
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold" style={{ color: tierPalette.base }}>
+                        {tier.toUpperCase()} {!APEX_TIERS.has(tier) && rank.division ? rank.division : ''}
+                      </span>
+                      <span className="text-[11px] text-[#a09b8c]">
+                        {tier === 'Unranked' ? 'Unranked' : `${rank.leaguePoints || 0} LP`}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className={`account-card__chip account-card__chip-${sessionInfo.type}`}>
+                        {sessionInfo.label}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2">
+                      {isActive ? (
+                        <button type="button" disabled className="account-card__btn-login is-active-btn px-4">
+                          <UserCheck className="w-3.5 h-3.5 text-[#0ac8b9]" />
+                          <span>Active</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleRequestSwitch(profile)}
+                          disabled={switchingId !== null}
+                          className="account-card__btn-login px-4"
+                        >
+                          {isSwitching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                          <span>{isSwitching ? '…' : 'Switch'}</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(profile)}
+                        className="account-card__btn-edit"
+                        title="Edit profile"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* ═══════════════════════════════════════════════
          ADD / EDIT ACCOUNT MODAL
-         ───────────────────────────────────────────────────────────── */}
+         ═══════════════════════════════════════════════ */}
       {isModalOpen && (
         <div className="accounts-modal-backdrop" onClick={() => setIsModalOpen(false)}>
           <div className="accounts-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="accounts-modal__title">
-                  {editingProfile ? 'Edit Account' : 'Add League Account'}
-                </h3>
-                <p className="accounts-modal__subtitle">
-                  Configure Riot ID and server details for 1-click profile switching.
-                </p>
-              </div>
+            <div className="accounts-modal__header">
+              <h3>{editingProfile ? 'Edit Account' : 'Add Account'}</h3>
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="p-1 rounded text-text-dim hover:text-white bg-transparent border-0 cursor-pointer"
+                className="accounts-modal__close-btn"
+                aria-label="Close"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             {connectedAccount?.available && !editingProfile && (
-              <div className="p-3 rounded-lg bg-hextech-gold/10 border border-hextech-gold/30 flex items-center justify-between gap-3 text-xs">
-                <div>
-                  <span className="text-hextech-gold font-bold block">Detected Connected League Client</span>
-                  <span className="text-text-dim">{connectedAccount.riotId} · {connectedAccount.region}</span>
+              <div className="accounts-modal__detected">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#0ac8b9] animate-pulse" />
+                  <strong>Connected League Account Detected</strong>
                 </div>
+                <p className="text-xs text-[#aebbc1] mt-1">
+                  Found <strong>{connectedAccount.riotId}</strong> on <strong>{normalizeRegionLabel(connectedAccount.region)}</strong>.
+                </p>
                 <button
                   type="button"
                   onClick={() => {
@@ -925,97 +1140,86 @@ export default function AccountsHubPage({
                       region: connectedAccount.region || prev.region,
                     }));
                   }}
-                  className="px-2.5 py-1 rounded bg-hextech-gold/20 hover:bg-hextech-gold/30 text-hextech-gold font-bold text-xs border border-hextech-gold/40 cursor-pointer"
+                  className="mt-2 text-xs font-bold text-[#c8aa6e] hover:underline cursor-pointer"
                 >
-                  Use Detected
+                  Use Connected Account Details
                 </button>
               </div>
             )}
 
             <form onSubmit={handleSaveModal} className="accounts-modal__form">
               <div className="accounts-modal__field">
-                <label>Profile Name *</label>
+                <label>Profile Nickname *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Main EUW, Smurf NA"
+                  placeholder="e.g. Main, Smurf, Stream Acc"
                   value={modalForm.name}
                   onChange={(e) => setModalForm({ ...modalForm, name: e.target.value })}
                 />
               </div>
 
               <div className="accounts-modal__field">
-                <label>Riot ID (GameName#Tag)</label>
+                <label>Riot ID (GameName#Tag) *</label>
                 <input
                   type="text"
-                  placeholder="e.g. Piltover Queen#NA1"
+                  required
+                  placeholder="e.g. Faker#KR1"
                   value={modalForm.riotId}
                   onChange={(e) => setModalForm({ ...modalForm, riotId: e.target.value })}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="accounts-modal__field">
-                  <label>Region / Server</label>
-                  <select
-                    value={modalForm.region}
-                    onChange={(e) => setModalForm({ ...modalForm, region: e.target.value })}
-                  >
-                    {REGIONS.filter((r) => r.value !== 'all').map((r) => (
-                      <option key={r.value} value={r.value}>
-                        {r.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="accounts-modal__field">
-                  <label>Custom Tag / Role</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. main, smurf, duo"
-                    value={modalForm.accountLabel}
-                    onChange={(e) => setModalForm({ ...modalForm, accountLabel: e.target.value })}
-                  />
-                </div>
+              <div className="accounts-modal__field">
+                <label>Region Server *</label>
+                <select
+                  value={modalForm.region}
+                  onChange={(e) => setModalForm({ ...modalForm, region: e.target.value })}
+                >
+                  {REGIONS.filter((r) => r.value !== 'all').map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="accounts-modal__field">
-                <label>Login Username (Optional note)</label>
+                <label>Sign-in Username (Optional)</label>
                 <input
-                  type="text"
-                  placeholder="Username used to sign in"
+                  type={streamerMode ? 'password' : 'text'}
+                  placeholder="For reference only"
                   value={modalForm.loginUsername}
                   onChange={(e) => setModalForm({ ...modalForm, loginUsername: e.target.value })}
                 />
               </div>
 
-              <div className="p-2.5 rounded bg-white/[0.04] border border-white/5 text-[11px] text-text-dim flex items-center gap-2">
-                <Info className="w-4 h-4 text-hextech-gold shrink-0" />
-                <span>
-                  <strong>Tip:</strong> When logging into Riot Client, make sure to check <strong>"Stay signed in"</strong> below your password so your session can be saved for 1-click swapping.
-                </span>
+              <div className="accounts-modal__field">
+                <label>Label / Note (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Ranked duo with Alex"
+                  value={modalForm.accountLabel}
+                  onChange={(e) => setModalForm({ ...modalForm, accountLabel: e.target.value })}
+                />
               </div>
 
               <div className="accounts-modal__actions">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 rounded text-xs font-bold text-text-dim hover:text-white bg-transparent border border-white/10 cursor-pointer"
+                  className="accounts-modal__btn-secondary"
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded text-xs font-bold text-white bg-hextech-gold/30 hover:bg-hextech-gold/40 border border-hextech-gold/50 cursor-pointer"
-                >
-                  Save Account
+                <button type="submit" className="accounts-modal__btn-primary">
+                  {editingProfile ? 'Save Changes' : 'Add Profile'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

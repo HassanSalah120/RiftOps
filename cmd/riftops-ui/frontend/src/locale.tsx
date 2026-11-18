@@ -6,7 +6,7 @@ type Messages = Record<string, string>;
 
 const messages: Record<Locale, Messages> = {
   en: {
-    'nav.command': 'Home', 'nav.play': 'Play & Queue', 'nav.live': 'Live Game', 'nav.social': 'Friends',
+    'nav.command': 'Home', 'nav.accounts': 'Accounts', 'nav.play': 'Play & Queue', 'nav.live': 'Live Game', 'nav.social': 'Friends',
     'nav.history': 'Match History', 'nav.skins': 'Skins & Splash', 'nav.progress': 'Progress', 'nav.loot': 'Hextech Loot', 'nav.qol': 'Automations',
     'nav.remote': 'Phone Companion', 'nav.settings': 'Settings', 'nav.socialHint': 'Friends and invitations',
     'social.title': 'Social Center', 'social.description': 'Friends, requests, and lobby invitations from the local League Client.',
@@ -16,7 +16,7 @@ const messages: Record<Locale, Messages> = {
     'settings.language': 'App language', 'settings.languageHelp': 'Arabic translates navigation and friends; other workflows currently use English. The layout mirrors automatically.',
   },
   ar: {
-    'nav.command': 'الرئيسية', 'nav.play': 'الردهة والاختيار', 'nav.live': 'اللعبة المباشرة', 'nav.social': 'الأصدقاء',
+    'nav.command': 'الرئيسية', 'nav.accounts': 'الحسابات', 'nav.play': 'الردهة والاختيار', 'nav.live': 'اللعبة المباشرة', 'nav.social': 'الأصدقاء',
     'nav.history': 'سجل المباريات', 'nav.skins': 'المظاهر والملف', 'nav.progress': 'التقدم', 'nav.loot': 'غنائم هيكستيك', 'nav.qol': 'الأتمتة والأدوات',
     'nav.remote': 'مرافق الهاتف', 'nav.settings': 'الإعدادات', 'nav.socialHint': 'الأصدقاء والدعوات',
     'social.title': 'مركز الأصدقاء', 'social.description': 'الأصدقاء والطلبات ودعوات الردهة من عميل League المحلي.',

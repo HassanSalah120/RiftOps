@@ -21,7 +21,7 @@ import {
   type ProfileSessionStatus,
 } from '../api';
 import { useLCUConnection } from './lcuConnectionContext';
-import { accountRankLabel } from '../utils/accountRank';
+import { accountRankLabel, normalizeRegionLabel } from '../utils/accountRank';
 import ConfirmModal from './ConfirmModal';
 import type { ConfirmAction } from '../types';
 
@@ -145,7 +145,7 @@ export default function AccountSummary({
   }, [rank, activeProfile]);
 
   const activeRegion = useMemo(() => {
-    return connectedAccount?.region || activeProfile?.region || 'EUW1';
+    return normalizeRegionLabel(connectedAccount?.region || activeProfile?.region);
   }, [connectedAccount, activeProfile]);
 
   const summoner = profile?.summoner;
@@ -402,7 +402,7 @@ export default function AccountSummary({
                               {streamerMode ? 'Saved Account' : p.name}
                             </span>
                             <span className="px-1.5 py-0.2 rounded bg-white/[0.06] text-[9px] font-bold text-[#8f9ca3]">
-                              {p.region || 'EUW1'}
+                              {normalizeRegionLabel(p.region)}
                             </span>
                           </div>
                           <span className="text-[10px] text-[#dfc477] font-medium truncate">

@@ -417,30 +417,52 @@
 .accounts-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(295px, 1fr));
-  gap: 18px;
+  gap: 20px;
 }
 
 .account-card {
   position: relative;
-  background: rgba(1, 10, 19, 0.75);
-  border: 1px solid rgba(60, 60, 65, 0.55);
-  padding: 18px 18px 14px;
+  background: linear-gradient(175deg, rgba(8, 20, 32, 0.95) 0%, rgba(3, 11, 20, 0.98) 100%);
+  border: 1px solid rgba(200, 170, 110, 0.22);
+  border-radius: 8px;
+  padding: 16px 18px 14px;
   display: flex;
   flex-direction: column;
-  transition: all 0.2s ease;
-  backdrop-filter: blur(4px);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .account-card:hover {
-  border-color: rgba(200, 155, 60, 0.85);
-  box-shadow: 0 0 20px rgba(200, 155, 60, 0.18), inset 0 0 15px rgba(200, 155, 60, 0.05);
+  border-color: var(--tier-base, #c8aa6e);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7), 0 0 24px var(--tier-glow, rgba(200, 170, 110, 0.2));
+  transform: translateY(-2px);
 }
 
 .account-card.is-active {
-  border-color: #c89b3c;
-  background: rgba(1, 15, 28, 0.82);
-  box-shadow: 0 0 24px rgba(200, 155, 60, 0.25);
+  border-color: #c8aa6e;
+  background: linear-gradient(175deg, rgba(10, 24, 38, 0.98) 0%, rgba(4, 15, 26, 0.98) 100%);
+  box-shadow: 0 0 28px rgba(200, 170, 110, 0.3), inset 0 0 15px rgba(200, 170, 110, 0.08);
 }
+
+/* Corner Hextech Accent Notches */
+.account-card__corner {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-color: #c8aa6e;
+  border-style: solid;
+  pointer-events: none;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+.account-card:hover .account-card__corner {
+  opacity: 1;
+}
+.account-card__corner--tl { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.account-card__corner--tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
+.account-card__corner--bl { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; }
+.account-card__corner--br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
 
 /* Card Header */
 .account-card__header {
@@ -456,9 +478,15 @@
   min-width: 0;
 }
 
-.account-card__name {
+.account-card__name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.account-card__summoner-name {
   font-family: 'Beaufort', serif;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: 0.025em;
   color: #f0e6d2;
@@ -469,35 +497,112 @@
 
 .account-card__tag {
   font-family: 'Spiegel', sans-serif;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   color: #7c8d98;
-  margin-left: 3px;
+}
+
+.account-card__copy-btn {
+  background: transparent;
+  border: 0;
+  color: #7c8d98;
+  padding: 3px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.account-card__copy-btn:hover {
+  color: #f0e6d2;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .account-card__meta-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 5px;
+  margin-top: 6px;
   flex-wrap: wrap;
 }
 
 .account-card__chip {
   font-size: 10px;
   letter-spacing: 0.04em;
-  padding: 1px 5px;
-  border-radius: 2px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
 }
 
 .account-card__chip-region {
-  color: #a6b3b7;
-  border: 1px solid #4c5a60;
-  background: rgba(255, 255, 255, 0.03);
+  color: #dce6e3;
+  border: 1px solid rgba(200, 170, 110, 0.35);
+  background: rgba(200, 170, 110, 0.08);
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
-.account-card__chip-level {
-  color: #899da5;
+.account-card__chip-selected {
+  color: #0ac8b9;
+  border: 1px solid rgba(10, 200, 185, 0.35);
+  background: rgba(10, 200, 185, 0.1);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.account-card__chip-client {
+  color: #45d4b9;
+  border: 1px solid rgba(69, 212, 185, 0.35);
+  background: rgba(69, 212, 185, 0.1);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.account-card__pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #0ac8b9;
+  box-shadow: 0 0 6px #0ac8b9;
+  animation: pulse 1.8s infinite;
+}
+
+.account-card__chip-success {
+  color: #0ac8b9;
+  border: 1px solid rgba(10, 200, 185, 0.25);
+  background: rgba(10, 200, 185, 0.08);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.account-card__chip-warn {
+  color: #e6c675;
+  border: 1px solid rgba(230, 198, 117, 0.35);
+  background: rgba(230, 198, 117, 0.1);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.account-card__chip-danger {
+  color: #ff8b94;
+  border: 1px solid rgba(255, 139, 148, 0.35);
+  background: rgba(255, 139, 148, 0.1);
+}
+
+.account-card__chip-dim {
+  color: #8f9ca3;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .account-card__chip-label {
@@ -506,21 +611,12 @@
   background: rgba(200, 170, 110, 0.08);
 }
 
-.account-card__chip-banned {
-  color: #e8a49b;
-  border: 1px solid #8f3a33;
-  background: rgba(194, 67, 58, 0.15);
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
 .account-card__menu-btn {
   background: transparent;
   border: 0;
   color: #7c8d98;
   cursor: pointer;
-  padding: 2px;
+  padding: 4px;
   border-radius: 4px;
   transition: color 0.15s, background 0.15s;
 }
@@ -530,80 +626,145 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* Card Rank Section */
-.account-card__rank {
+/* ─────────────────────────────────────────────────────────────
+   HERO RANK SECTION (Prominent Anchor with Large Wing)
+   ───────────────────────────────────────────────────────────── */
+.account-card__hero {
   display: grid;
-  grid-template-columns: 105px minmax(0, 1fr);
+  grid-template-columns: 135px minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
-  margin: 12px 0 10px;
-  min-height: 90px;
+  gap: 16px;
+  margin: 14px 0 16px;
+  padding: 12px 14px;
+  background: rgba(4, 15, 26, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
 }
 
-.account-card__wing-wrap {
-  display: grid;
-  place-items: center;
-  height: 85px;
-  overflow: visible;
+.account-card__hero::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 130px;
+  height: 130px;
+  background: radial-gradient(circle, var(--tier-glow, rgba(200, 170, 110, 0.2)) 0%, transparent 70%);
+  pointer-events: none;
+  filter: blur(10px);
+  z-index: 0;
+}
+
+.account-card__wing-hero {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 110px;
+  width: 135px;
+  flex-shrink: 0;
 }
 
 .account-card__wing-img {
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
   pointer-events: none;
-  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.85));
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.account-card__rank-info {
+.account-card:hover .account-card__wing-img {
+  transform: scale(1.08) translateY(-2px);
+}
+
+.account-card__rank-details {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.account-card__tier-name {
+.account-card__queue-pill {
   font-family: 'Beaufort', serif;
-  font-size: 19px;
-  line-height: 1.15;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: #8f7b52;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.account-card__tier-title {
+  font-family: 'Beaufort', serif;
+  font-size: 23px;
+  line-height: 1.1;
+  font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--tier-color, #f0e6d2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
 }
 
-.account-card__lp-text {
+.account-card__lp-readout {
   font-family: 'Beaufort', serif;
-  font-size: 13px;
-  line-height: 16px;
+  font-size: 14px;
+  line-height: 1.2;
   font-weight: 700;
-  letter-spacing: 0.075em;
-  text-transform: uppercase;
-  color: #a09b8c;
-  margin-top: 3px;
+  letter-spacing: 0.05em;
+  color: #f0e6d2;
+  margin-top: 4px;
 }
 
-.account-card__lp-bar {
+.account-card__lp-track {
   margin-top: 8px;
-  height: 3px;
+  height: 4px;
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 1px;
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .account-card__lp-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--tier-dark, #4a403c), var(--tier-light, #c9bdb7));
-  box-shadow: 0 0 8px var(--tier-base, #9a8f8a);
+  border-radius: 999px;
+  transition: width 0.4s ease;
 }
 
-/* Card Footer / Action Bar */
+.account-card__secondary-rank {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #8f9ca3;
+}
+
+.account-card__secondary-rank span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6d7f87;
+}
+
+.account-card__secondary-rank strong {
+  font-size: 11px;
+  color: #c9bdb7;
+  font-weight: 600;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CARD FOOTER / BALANCED ACTION ROW
+   ───────────────────────────────────────────────────────────── */
 .account-card__footer {
   margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid rgba(200, 170, 110, 0.12);
+  padding-top: 12px;
+  border-top: 1px solid rgba(200, 170, 110, 0.15);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -614,62 +775,56 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: 32px;
+  gap: 8px;
+  height: 36px;
   font-family: 'Beaufort', serif;
-  font-weight: 700;
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #bfe1db;
-  background: linear-gradient(180deg, #17333a, #10232c);
-  border: 1px solid #517274;
+  color: #f0e6d2;
+  background: linear-gradient(180deg, #1d434d, #112830);
+  border: 1px solid #5a8e91;
+  border-radius: 6px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .account-card__btn-login:hover:not(:disabled) {
-  background: linear-gradient(180deg, #23525a, #173740);
-  color: #e3f9f5;
-  border-color: #7fbbb5;
-  box-shadow: 0 0 14px rgba(92, 203, 192, 0.25);
+  background: linear-gradient(180deg, #28606c, #163640);
+  color: #ffffff;
+  border-color: #8ed5cb;
+  box-shadow: 0 0 16px rgba(92, 203, 192, 0.35);
+  transform: translateY(-1px);
 }
 
 .account-card__btn-login.is-active-btn {
-  background: linear-gradient(180deg, #1d4036, #142e26);
-  border-color: #48a687;
+  background: linear-gradient(180deg, #153830, #0c211c);
+  border-color: #2fb591;
   color: #92e0c8;
+  cursor: default;
+  opacity: 0.9;
 }
 
-.account-card__btn-login.is-signin {
-  background: linear-gradient(180deg, #282b26, #1a1e1b);
-  border-color: #736e52;
-  color: #dbcaa3;
-}
-
-.account-card__btn-login.is-signin:hover:not(:disabled) {
-  border-color: #c8aa6e;
-  color: #fff0c6;
-  box-shadow: 0 0 12px rgba(200, 170, 110, 0.2);
-}
-
-.account-card__icon-action {
+.account-card__btn-edit {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   color: #899da5;
-  border-radius: 2px;
+  border-radius: 6px;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
 }
 
-.account-card__icon-action:hover {
-  color: #e4cf9f;
-  background: rgba(200, 170, 110, 0.1);
-  border-color: rgba(200, 170, 110, 0.3);
+.account-card__btn-edit:hover {
+  color: #f0e6d2;
+  background: rgba(200, 170, 110, 0.15);
+  border-color: rgba(200, 170, 110, 0.4);
 }
 
 /* ─────────────────────────────────────────────────────────────
