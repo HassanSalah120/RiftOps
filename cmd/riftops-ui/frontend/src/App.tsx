@@ -63,6 +63,8 @@ export default function App() {
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     try {
+      const urlTab = new URLSearchParams(window.location.search).get('tab');
+      if (urlTab && ALL_TABS.includes(urlTab as Tab)) return urlTab as Tab;
       const saved = localStorage.getItem('riftops.activeTab');
       return ALL_TABS.includes(saved as Tab) ? saved as Tab : 'dashboard';
     } catch {
@@ -773,7 +775,7 @@ export default function App() {
              ACCOUNTS HUB TAB
              ═══════════════════════════════════════════════ */}
           {activeTab === 'accounts' && (
-            <div className="workspace-stage flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto animate-fadeIn">
+            <div className="workspace-stage workspace-stage--accounts flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden animate-fadeIn">
               <AccountsHubPage
                 activeProfileId={snapshot.ActiveProfileID}
                 showToast={showToast}

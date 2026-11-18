@@ -77,40 +77,71 @@
   --tier-unranked-dark: #2b313d;
 }
 
-.accounts-hub {
+/* ─────────────────────────────────────────────────────────────
+   WORKSPACE CONTAINER (Prevents any extra vertical space)
+   ───────────────────────────────────────────────────────────── */
+.workspace-stage--accounts {
+  padding: 0 !important;
+  margin: 0 !important;
+  height: 100% !important;
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  background: transparent !important;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   TWO-COLUMN HEXTECH LAYOUT
+   ───────────────────────────────────────────────────────────── */
+.accounts-layout {
   position: relative;
   display: flex;
-  min-height: calc(100vh - 72px);
+  flex-direction: row;
+  align-items: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
   background: #060e17 url('/league/backgrounds/hextech.jpg') center / cover no-repeat fixed;
   color: #f0e6d2;
   font-family: 'Spiegel', sans-serif;
   overflow: hidden;
 }
 
-.accounts-hub::before {
+.accounts-layout::before {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(6, 14, 23, 0.88), rgba(4, 11, 18, 0.94));
+  background: linear-gradient(180deg, rgba(6, 14, 23, 0.90), rgba(4, 11, 18, 0.96));
   pointer-events: none;
   z-index: 0;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   SIDEBAR (230px)
+   PRIORITY 2: LEFT SIDEBAR (220px Stable Column)
    ───────────────────────────────────────────────────────────── */
 .accounts-sidebar {
   position: relative;
-  z-index: 1;
-  width: 236px;
-  flex-shrink: 0;
-  background: rgba(7, 17, 25, 0.86);
-  border-right: 1px solid rgba(200, 170, 110, 0.15);
+  z-index: 2;
+  width: 220px;
+  flex: 0 0 220px;
+  min-width: 220px;
+  max-width: 220px;
+  height: 100%;
+  background: rgba(7, 17, 25, 0.92);
+  border-right: 1px solid rgba(200, 170, 110, 0.16);
   display: flex;
   flex-direction: column;
-  padding: 24px 16px 20px;
-  gap: 22px;
+  padding: 20px 14px 16px;
+  gap: 14px;
   overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.accounts-sidebar__add-wrap {
+  width: 100%;
 }
 
 .accounts-sidebar__add-btn {
@@ -118,140 +149,178 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: 40px;
+  height: 38px;
   width: 100%;
   font-family: 'Beaufort', serif;
   font-weight: 700;
   font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #e6d4a9;
-  border: 1px solid #a68b53;
-  background: linear-gradient(180deg, #31332a, #171e20);
-  box-shadow: inset 0 0 0 1px #050c14;
+  color: #010a13;
+  border: 1px solid #c8aa6e;
+  background: linear-gradient(180deg, #e4cf9f, #b89858);
+  border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 .accounts-sidebar__add-btn:hover {
-  color: #fff0c6;
-  background: linear-gradient(180deg, #484430, #212d2c);
-  box-shadow: inset 0 0 0 1px #08111a, 0 0 14px rgba(200, 170, 110, 0.25);
-  border-color: #c8aa6e;
+  background: linear-gradient(180deg, #f7e7c4, #c9aa66);
+  box-shadow: 0 0 14px rgba(200, 170, 110, 0.45);
+  transform: translateY(-1px);
 }
 
-.accounts-sidebar__title {
+.accounts-sidebar__dist-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-family: 'Beaufort', serif;
   color: #b8a882;
   font-weight: 700;
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  margin-bottom: 8px;
-}
-
-.accounts-sidebar__dist-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.accounts-sidebar__dist-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  font-size: 13px;
-  color: #c7c4b8;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-  background: transparent;
-  border: 0;
-  width: 100%;
-  text-align: left;
-}
-
-.accounts-sidebar__dist-row:hover {
-  background: rgba(200, 170, 110, 0.08);
-  color: #f0e6d2;
-}
-
-.accounts-sidebar__dist-row.is-active {
-  background: rgba(200, 170, 110, 0.15);
-  box-shadow: inset 3px 0 #c8aa6e;
-  color: #f7d478;
-  font-weight: 600;
-}
-
-.accounts-sidebar__dist-row.is-zero {
-  opacity: 0.45;
-}
-
-.accounts-sidebar__dist-icon {
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-  flex-shrink: 0;
-}
-
-.accounts-sidebar__dist-name {
-  flex: 1;
-  min-width: 0;
-  truncate: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
+  padding: 0 4px;
+  margin-top: 4px;
 }
 
 .accounts-sidebar__dist-count {
   font-size: 11px;
-  font-family: 'Beaufort', serif;
-  font-weight: 700;
-  color: #b4a47d;
-  min-width: 16px;
-  text-align: right;
+  font-family: 'Spiegel', sans-serif;
+  color: #7c8d98;
+  font-weight: 600;
+  text-transform: none;
 }
 
+/* Sidebar Rank Vertical List (One rank per row, cleanly aligned) */
+.accounts-sidebar__ranks {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+}
+
+.accounts-sidebar__rank-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: #c7c4b8;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  background: transparent;
+  border: 1px solid transparent;
+  text-align: left;
+}
+
+.accounts-sidebar__rank-item:hover {
+  background: rgba(200, 170, 110, 0.08);
+  color: #f0e6d2;
+  border-color: rgba(200, 170, 110, 0.15);
+}
+
+.accounts-sidebar__rank-item.is-selected {
+  background: rgba(200, 170, 110, 0.16);
+  border-color: rgba(200, 170, 110, 0.4);
+  box-shadow: inset 3px 0 0 #c8aa6e;
+  color: #f7d478;
+  font-weight: 600;
+}
+
+.accounts-sidebar__rank-item.is-zero {
+  opacity: 0.45;
+}
+
+.accounts-sidebar__rank-left {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
+}
+
+.accounts-sidebar__rank-crest {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.accounts-sidebar__rank-name {
+  font-family: 'Spiegel', sans-serif;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accounts-sidebar__rank-count {
+  font-size: 12px;
+  font-family: 'Beaufort', serif;
+  font-weight: 700;
+  color: #64737d;
+  min-width: 18px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.accounts-sidebar__rank-count.is-nonzero {
+  color: #e4cf9f;
+}
+
+/* Sidebar Footer: Import & Export */
 .accounts-sidebar__footer {
   margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
-  padding-top: 14px;
+  padding-top: 12px;
 }
 
-.accounts-sidebar__footer-link {
+.accounts-sidebar__footer-btn {
   display: flex;
   align-items: center;
   gap: 8px;
+  height: 30px;
+  padding: 0 8px;
   font-size: 12px;
-  color: #a1afb4;
-  padding: 6px 8px;
+  font-family: 'Spiegel', sans-serif;
+  color: #8fa0a6;
   border-radius: 4px;
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
   cursor: pointer;
   text-align: left;
-  transition: color 0.15s, background 0.15s;
+  transition: all 0.15s;
 }
 
-.accounts-sidebar__footer-link:hover {
+.accounts-sidebar__footer-btn:hover {
   color: #f0e6d2;
-  background: rgba(200, 170, 110, 0.08);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 /* ─────────────────────────────────────────────────────────────
-   MAIN CONTENT AREA
+   MAIN CONTENT AREA (Scrollable, Starts Flush at Top)
    ───────────────────────────────────────────────────────────── */
 .accounts-main {
   position: relative;
   z-index: 1;
-  flex: 1;
+  flex: 1 1 0%;
+  min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   padding: 24px 32px 36px;
   overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-gutter: stable;
 }
 
@@ -261,9 +330,9 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 300px;
+  height: 260px;
   pointer-events: none;
-  background: linear-gradient(90deg, #08121b 10%, rgba(8, 18, 27, 0.3) 80%),
+  background: linear-gradient(90deg, #08121b 15%, rgba(8, 18, 27, 0.3) 80%),
               url('/league/backgrounds/collection.jpg') right 30% / cover no-repeat;
   opacity: 0.35;
   z-index: -1;
@@ -273,7 +342,7 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  margin-bottom: 22px;
+  margin-bottom: 20px;
   gap: 16px;
 }
 
@@ -289,7 +358,7 @@
 
 .accounts-header__title {
   font-family: 'Beaufort', serif;
-  font-size: 30px;
+  font-size: 28px;
   line-height: 1.1;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -315,14 +384,14 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
-   TOOLBAR
+   TOOLBAR (Search & Filters)
    ───────────────────────────────────────────────────────────── */
 .accounts-toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 24px;
-  padding-bottom: 18px;
+  margin-bottom: 22px;
+  padding-bottom: 16px;
   border-bottom: 1px solid rgba(200, 170, 110, 0.18);
   flex-wrap: wrap;
 }
@@ -335,7 +404,7 @@
 
 .accounts-toolbar__search input {
   width: 100%;
-  height: 34px;
+  height: 36px;
   padding: 0 12px 0 34px;
   background: rgba(7, 15, 24, 0.85);
   border: 1px solid #344046;
@@ -362,8 +431,19 @@
   pointer-events: none;
 }
 
+.accounts-toolbar__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.accounts-toolbar__select-wrap {
+  position: relative;
+}
+
 .accounts-toolbar__select {
-  height: 34px;
+  height: 36px;
   background: rgba(7, 15, 24, 0.85);
   border: 1px solid #344046;
   border-radius: 4px;
@@ -396,8 +476,8 @@
 .accounts-toolbar__view-btn {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 28px;
+  width: 32px;
+  height: 30px;
   background: transparent;
   border: 0;
   color: #7c8d98;
@@ -412,16 +492,35 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
-   ACCOUNTS GRID CARDS
+   PRIORITY 3: RESPONSIVE ACCOUNTS GRID (~3 columns at 1650px)
    ───────────────────────────────────────────────────────────── */
 .accounts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(295px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 18px;
+  align-items: stretch;
 }
 
+@media (max-width: 1400px) {
+  .accounts-grid {
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (max-width: 900px) {
+  .accounts-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   PRIORITY 5: ACCOUNT CARD (Balanced Composition & Hextech Chrome)
+   ───────────────────────────────────────────────────────────── */
 .account-card {
   position: relative;
+  height: 100%;
   background: linear-gradient(175deg, rgba(8, 20, 32, 0.95) 0%, rgba(3, 11, 20, 0.98) 100%);
   border: 1px solid rgba(200, 170, 110, 0.22);
   border-radius: 8px;
@@ -464,7 +563,7 @@
 .account-card__corner--bl { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; }
 .account-card__corner--br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
 
-/* Card Header */
+/* 1. Header Area: Riot ID, Tag, Badges & Actions */
 .account-card__header {
   display: flex;
   align-items: flex-start;
@@ -476,17 +575,19 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  flex: 1;
 }
 
 .account-card__name-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .account-card__summoner-name {
   font-family: 'Beaufort', serif;
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.025em;
   color: #f0e6d2;
@@ -500,6 +601,7 @@
   font-size: 13px;
   font-weight: 700;
   color: #7c8d98;
+  flex-shrink: 0;
 }
 
 .account-card__copy-btn {
@@ -512,6 +614,7 @@
   display: flex;
   align-items: center;
   transition: all 0.15s;
+  flex-shrink: 0;
 }
 
 .account-card__copy-btn:hover {
@@ -611,6 +714,11 @@
   background: rgba(200, 170, 110, 0.08);
 }
 
+.account-card__menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .account-card__menu-btn {
   background: transparent;
   border: 0;
@@ -627,16 +735,16 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
-   HERO RANK SECTION (Prominent Anchor with Large Wing)
+   PRIORITY 4: HERO RANK SECTION (Commanding 105px+ Artwork)
    ───────────────────────────────────────────────────────────── */
 .account-card__hero {
   display: grid;
-  grid-template-columns: 135px minmax(0, 1fr);
+  grid-template-columns: 140px minmax(0, 1fr);
   align-items: center;
   gap: 16px;
   margin: 14px 0 16px;
   padding: 12px 14px;
-  background: rgba(4, 15, 26, 0.5);
+  background: rgba(4, 15, 26, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 8px;
   position: relative;
@@ -646,14 +754,14 @@
 .account-card__hero::before {
   content: '';
   position: absolute;
-  left: 20px;
+  left: 10px;
   top: 50%;
   transform: translateY(-50%);
   width: 130px;
-  height: 130px;
-  background: radial-gradient(circle, var(--tier-glow, rgba(200, 170, 110, 0.2)) 0%, transparent 70%);
+  height: 120px;
+  background: radial-gradient(circle, var(--tier-glow, rgba(200, 170, 110, 0.18)) 0%, transparent 70%);
   pointer-events: none;
-  filter: blur(10px);
+  filter: blur(8px);
   z-index: 0;
 }
 
@@ -663,22 +771,24 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 110px;
-  width: 135px;
+  height: 108px;
+  width: 140px;
   flex-shrink: 0;
 }
 
 .account-card__wing-img {
-  max-width: 100%;
-  max-height: 100%;
+  width: auto;
+  height: auto;
+  max-width: 138px;
+  max-height: 105px;
   object-fit: contain;
   pointer-events: none;
-  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.85));
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.85));
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .account-card:hover .account-card__wing-img {
-  transform: scale(1.08) translateY(-2px);
+  transform: scale(1.06);
 }
 
 .account-card__rank-details {
@@ -701,8 +811,8 @@
 
 .account-card__tier-title {
   font-family: 'Beaufort', serif;
-  font-size: 23px;
-  line-height: 1.1;
+  font-size: clamp(17px, 1.3vw, 21px);
+  line-height: 1.15;
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -759,7 +869,7 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
-   CARD FOOTER / BALANCED ACTION ROW
+   3. CARD FOOTER: BALANCED ACTION ROW
    ───────────────────────────────────────────────────────────── */
 .account-card__footer {
   margin-top: auto;
@@ -776,7 +886,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: 36px;
+  height: 38px;
   font-family: 'Beaufort', serif;
   font-weight: 800;
   font-size: 12px;
@@ -804,14 +914,14 @@
   border-color: #2fb591;
   color: #92e0c8;
   cursor: default;
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .account-card__btn-edit {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #899da5;
@@ -845,17 +955,24 @@
   min-height: 72px;
 }
 
-.accounts-list .account-card__rank {
-  grid-template-columns: 60px minmax(0, 1fr);
+.accounts-list .account-card__hero {
+  grid-template-columns: 50px minmax(0, 1fr);
   margin: 0;
-  min-height: 50px;
+  padding: 0;
+  background: transparent;
+  border: 0;
 }
 
-.accounts-list .account-card__wing-wrap {
+.accounts-list .account-card__hero::before {
+  display: none;
+}
+
+.accounts-list .account-card__wing-hero {
+  width: 48px;
   height: 48px;
 }
 
-.accounts-list .account-card__tier-name {
+.accounts-list .account-card__tier-title {
   font-size: 15px;
 }
 
@@ -863,7 +980,36 @@
   margin: 0;
   padding: 0;
   border: 0;
-  min-width: 160px;
+  min-width: 170px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   EMPTY STATE
+   ───────────────────────────────────────────────────────────── */
+.accounts-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 24px;
+  text-align: center;
+  background: rgba(4, 15, 26, 0.4);
+  border: 1px dashed rgba(200, 170, 110, 0.2);
+  border-radius: 12px;
+  margin-top: 20px;
+}
+
+.accounts-empty-state h3 {
+  font-family: 'Beaufort', serif;
+  font-size: 18px;
+  color: #f0e6d2;
+  margin: 8px 0 4px;
+}
+
+.accounts-empty-state p {
+  color: #8f9ca3;
+  font-size: 13px;
+  margin: 0;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -872,8 +1018,8 @@
 .accounts-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(2, 9, 17, 0.75);
-  backdrop-filter: blur(5px);
+  background: rgba(2, 9, 17, 0.78);
+  backdrop-filter: blur(6px);
   z-index: 100;
   display: grid;
   place-items: center;
@@ -887,32 +1033,55 @@
   border: 2px solid transparent;
   border-image: linear-gradient(to top, #785a28, #463714 50%) 1;
   box-shadow: 0 0 0 1px rgba(1, 10, 19, 0.7), 0 0 20px rgba(0, 0, 0, 0.8), 0 24px 90px rgba(0, 0, 0, 0.9);
-  padding: 28px 32px 30px;
+  padding: 26px 30px 28px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
-.accounts-modal__title {
+.accounts-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(200, 170, 110, 0.2);
+  padding-bottom: 12px;
+}
+
+.accounts-modal__header h3 {
   font-family: 'Beaufort', serif;
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #f0e6d2;
-  margin: 0 0 4px;
+  margin: 0;
 }
 
-.accounts-modal__subtitle {
-  color: #a1afb4;
-  font-size: 12px;
-  margin: 0;
+.accounts-modal__close-btn {
+  background: transparent;
+  border: 0;
+  color: #7c8d98;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.accounts-modal__close-btn:hover {
+  color: #f0e6d2;
+}
+
+.accounts-modal__detected {
+  padding: 10px 14px;
+  background: rgba(10, 200, 185, 0.08);
+  border: 1px solid rgba(10, 200, 185, 0.25);
+  border-radius: 6px;
 }
 
 .accounts-modal__form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 13px;
 }
 
 .accounts-modal__field {
@@ -935,11 +1104,12 @@
   height: 36px;
   background: #050e16;
   border: 1px solid #455159;
-  border-radius: 2px;
+  border-radius: 4px;
   padding: 0 12px;
   color: #f0e6d2;
   font-size: 13px;
   outline: none;
+  transition: border-color 0.2s;
 }
 
 .accounts-modal__field input:focus,
@@ -954,4 +1124,46 @@
   justify-content: flex-end;
   gap: 10px;
   margin-top: 10px;
+}
+
+.accounts-modal__btn-secondary {
+  height: 36px;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #aebbc1;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.accounts-modal__btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f0e6d2;
+}
+
+.accounts-modal__btn-primary {
+  height: 36px;
+  padding: 0 18px;
+  background: linear-gradient(180deg, #e4cf9f, #b89858);
+  border: 1px solid #c8aa6e;
+  color: #010a13;
+  border-radius: 4px;
+  font-family: 'Beaufort', serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.accounts-modal__btn-primary:hover {
+  background: linear-gradient(180deg, #f7e7c4, #c9aa66);
+  box-shadow: 0 0 12px rgba(200, 170, 110, 0.4);
 }

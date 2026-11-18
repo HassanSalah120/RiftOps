@@ -529,7 +529,7 @@ export default function AccountsHubPage({
                   type="button"
                   key={tier}
                   onClick={() => setSelectedTierFilter(isSelected ? null : tier)}
-                  className={`accounts-sidebar__rank-item ${isSelected ? 'is-selected' : ''}`}
+                  className={`accounts-sidebar__rank-item ${isSelected ? 'is-selected' : ''} ${count === 0 ? 'is-zero' : ''}`}
                 >
                   <div className="accounts-sidebar__rank-left">
                     <img
