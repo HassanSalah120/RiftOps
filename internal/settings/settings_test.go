@@ -146,3 +146,68 @@ func TestLaunchProfileRejectsCredentialArguments(t *testing.T) {
 		t.Fatal("expected credential-bearing arguments to be rejected")
 	}
 }
+
+func TestUpsertProfilePreservesExistingMetadata(t *testing.T) {
+	s := Default()
+	p := NewProfile("Full Custom")
+	p.StartupStatus = StartupStatus(model.StatusMobile)
+	p.Status = model.StatusMobile
+	p.DefaultGame = model.GameLeague
+	p.Patchline = "pbe"
+	p.LeagueLocale = "fr_FR"
+	p.ConnectToMUC = true
+	p.RiotClientArgs = []string{"--no-screensaver"}
+	p.GameArgs = []string{"-novid"}
+	p.GameStatuses = map[model.Game]model.Status{model.GameLeague: model.StatusMobile}
+
+	if err := s.UpsertProfile(p); err != nil {
+		t.Fatalf("failed to insert initial profile: %v", err)
+	}
+
+	// Partial update omitting all the technical settings
+	partial := LaunchProfile{
+		ID:            p.ID,
+		Name:          "Full Custom Renamed",
+		RiotID:        "Custom#FR1",
+		Region:        "EUW",
+		AccountLabel:  "New Label",
+		LoginUsername: "custom_user",
+	}
+
+	if err := s.UpsertProfile(partial); err != nil {
+		t.Fatalf("failed to upsert partial profile: %v", err)
+	}
+
+	var found LaunchProfile
+	for _, cand := range s.Profiles {
+		if cand.ID == p.ID {
+			found = cand
+			break
+		}
+	}
+
+	if found.Name != "Full Custom Renamed" || found.RiotID != "Custom#FR1" || found.Region != "EUW" || found.AccountLabel != "New Label" || found.LoginUsername != "custom_user" {
+		t.Fatalf("identity fields not updated properly: %+v", found)
+	}
+	if found.Patchline != "pbe" {
+		t.Errorf("patchline not preserved: expected 'pbe', got %q", found.Patchline)
+	}
+	if found.StartupStatus != StartupStatus(model.StatusMobile) {
+		t.Errorf("startupStatus not preserved: expected 'mobile', got %q", found.StartupStatus)
+	}
+	if found.Status != model.StatusMobile {
+		t.Errorf("status not preserved: expected 'mobile', got %q", found.Status)
+	}
+	if found.LeagueLocale != "fr_FR" {
+		t.Errorf("leagueLocale not preserved: expected 'fr_FR', got %q", found.LeagueLocale)
+	}
+	if !found.ConnectToMUC {
+		t.Errorf("connectToMUC not preserved")
+	}
+	if len(found.RiotClientArgs) != 1 || found.RiotClientArgs[0] != "--no-screensaver" {
+		t.Errorf("riotClientArgs not preserved: %+v", found.RiotClientArgs)
+	}
+	if len(found.GameArgs) != 1 || found.GameArgs[0] != "-novid" {
+		t.Errorf("gameArgs not preserved: %+v", found.GameArgs)
+	}
+}

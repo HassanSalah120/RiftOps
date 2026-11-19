@@ -903,3 +903,67 @@ func TestDraftEventsRecordingAndRetrieval(t *testing.T) {
 		t.Fatalf("expected lastConfirmedAt preserved from archive, got %v", snapAfterArchive.LastConfirmedAt)
 	}
 }
+
+func TestDraftEventsBufferBoundedAndThreadSafe(t *testing.T) {
+	svc := New(func() Client { return nil }, qol.DefaultPlayFlowPreferences)
+
+	// Test 1: Concurrency and Thread Safety
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				svc.recordDraftEvent(DraftEvent{
+					SessionID:  "concurrent-session",
+					Timestamp:  time.Now(),
+					Phase:      "BAN_PICK",
+					Type:       EventHoverAttempt,
+					ActionID:   workerID*10 + j,
+					ActionType: "pick",
+					Outcome:    "sent",
+				})
+				_ = svc.DraftEvents()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	snap := svc.DraftEvents()
+	// Total recorded was 200, but live buffer is bounded to 100
+	if len(snap.Events) != 100 {
+		t.Fatalf("expected bounded live buffer of 100, got %d", len(snap.Events))
+	}
+
+	// Test 2: Archiving Bounding
+	// Record another batch and archive repeatedly
+	for k := 0; k < 5; k++ {
+		for m := 0; m < 50; m++ {
+			svc.recordDraftEvent(DraftEvent{
+				SessionID: "archive-test",
+				Timestamp: time.Now(),
+				Type:      EventLockConfirmed,
+				Outcome:   "confirmed",
+			})
+		}
+		svc.archiveDraftEvents()
+	}
+
+	snapArchived := svc.DraftEvents()
+	// Archived buffer is bounded to 200
+	if len(snapArchived.ArchivedEvents) != 200 {
+		t.Fatalf("expected bounded archived buffer of 200, got %d", len(snapArchived.ArchivedEvents))
+	}
+
+	// Test 3: Verify JSON marshaling does not expose secrets or sensitive fields
+	marshaled, err := json.Marshal(snapArchived)
+	if err != nil {
+		t.Fatalf("failed to marshal DraftEventsSnapshot: %v", err)
+	}
+	raw := string(marshaled)
+	for _, forbidden := range []string{"password", "token", "cookie", "puuid", "authorization", "secret"} {
+		if strings.Contains(strings.ToLower(raw), forbidden) {
+			t.Fatalf("marshaled DraftEventsSnapshot contains sensitive keyword %q: %s", forbidden, raw)
+		}
+	}
+}

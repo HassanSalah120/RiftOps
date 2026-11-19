@@ -842,28 +842,12 @@ func saveProfile(w http.ResponseWriter, r *http.Request) {
 	isNew := profile.ID == ""
 	if isNew {
 		profile.ID = settings.NewProfileID()
-	}
-	switch strings.ToLower(strings.TrimSpace(string(profile.StartupStatus))) {
-	case "online", "chat":
-		profile.StartupStatus = "chat"
-	case "offline":
-		profile.StartupStatus = "offline"
-	case "mobile":
-		profile.StartupStatus = "mobile"
-	default:
-		profile.StartupStatus = settings.StartupLast
-	}
-	switch strings.ToLower(strings.TrimSpace(string(profile.Status))) {
-	case "online", "chat":
-		profile.Status = model.StatusOnline
-	case "mobile":
-		profile.Status = model.StatusMobile
-	case "offline":
-		profile.Status = model.StatusOffline
-	}
-	if !isNew {
+	} else {
 		for _, existing := range backendEngine.LaunchProfiles() {
 			if existing.ID == profile.ID {
+				if strings.TrimSpace(string(profile.StartupStatus)) == "" {
+					profile.StartupStatus = existing.StartupStatus
+				}
 				if profile.Status == "" || !profile.Status.Valid() {
 					profile.Status = existing.Status
 				}
@@ -875,6 +859,9 @@ func saveProfile(w http.ResponseWriter, r *http.Request) {
 				}
 				if profile.LeagueLocale == "" {
 					profile.LeagueLocale = existing.LeagueLocale
+				}
+				if !profile.ConnectToMUC && existing.ConnectToMUC {
+					profile.ConnectToMUC = existing.ConnectToMUC
 				}
 				if len(profile.RiotClientArgs) == 0 {
 					profile.RiotClientArgs = existing.RiotClientArgs
@@ -888,6 +875,26 @@ func saveProfile(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+	}
+	switch strings.ToLower(strings.TrimSpace(string(profile.StartupStatus))) {
+	case "online", "chat":
+		profile.StartupStatus = "chat"
+	case "offline":
+		profile.StartupStatus = "offline"
+	case "mobile":
+		profile.StartupStatus = "mobile"
+	default:
+		if profile.StartupStatus != settings.StartupLast {
+			profile.StartupStatus = settings.StartupLast
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(string(profile.Status))) {
+	case "online", "chat":
+		profile.Status = model.StatusOnline
+	case "mobile":
+		profile.Status = model.StatusMobile
+	case "offline":
+		profile.Status = model.StatusOffline
 	}
 	if !profile.Status.Valid() {
 		profile.Status = model.StatusOffline

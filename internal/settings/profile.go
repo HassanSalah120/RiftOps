@@ -164,6 +164,46 @@ func (s *Settings) UpsertProfile(profile LaunchProfile) error {
 	profile.LoginUsername = strings.TrimSpace(profile.LoginUsername)
 	profile.RiotID = strings.TrimSpace(profile.RiotID)
 	profile.Region = strings.ToUpper(strings.TrimSpace(profile.Region))
+
+	existingIndex := -1
+	for index := range s.Profiles {
+		if s.Profiles[index].ID == profile.ID {
+			existingIndex = index
+			break
+		}
+	}
+
+	if existingIndex >= 0 {
+		existing := s.Profiles[existingIndex]
+		if profile.Patchline == "" {
+			profile.Patchline = existing.Patchline
+		}
+		if profile.DefaultGame == "" {
+			profile.DefaultGame = existing.DefaultGame
+		}
+		if profile.StartupStatus == "" {
+			profile.StartupStatus = existing.StartupStatus
+		}
+		if profile.Status == "" || !profile.Status.Valid() {
+			profile.Status = existing.Status
+		}
+		if profile.LeagueLocale == "" {
+			profile.LeagueLocale = existing.LeagueLocale
+		}
+		if !profile.ConnectToMUC && existing.ConnectToMUC {
+			profile.ConnectToMUC = existing.ConnectToMUC
+		}
+		if len(profile.RiotClientArgs) == 0 && len(existing.RiotClientArgs) > 0 {
+			profile.RiotClientArgs = existing.RiotClientArgs
+		}
+		if len(profile.GameArgs) == 0 && len(existing.GameArgs) > 0 {
+			profile.GameArgs = existing.GameArgs
+		}
+		if len(profile.GameStatuses) == 0 && len(existing.GameStatuses) > 0 {
+			profile.GameStatuses = existing.GameStatuses
+		}
+	}
+
 	profile.Patchline = strings.TrimSpace(profile.Patchline)
 	if profile.Patchline == "" {
 		profile.Patchline = "live"
@@ -172,6 +212,16 @@ func (s *Settings) UpsertProfile(profile LaunchProfile) error {
 	if profile.LeagueLocale == "" {
 		profile.LeagueLocale = DefaultLeagueLocale
 	}
+	if profile.DefaultGame == "" {
+		profile.DefaultGame = model.GameLeague
+	}
+	if !profile.Status.Valid() {
+		profile.Status = model.StatusOffline
+	}
+	if profile.StartupStatus == "" {
+		profile.StartupStatus = StartupLast
+	}
+
 	if err := profile.Validate(); err != nil {
 		return err
 	}
@@ -180,14 +230,12 @@ func (s *Settings) UpsertProfile(profile LaunchProfile) error {
 			return fmt.Errorf("a launch profile named %q already exists", profile.Name)
 		}
 	}
-	for index := range s.Profiles {
-		if s.Profiles[index].ID == profile.ID {
-			s.Profiles[index] = profile
-			if s.ActiveProfileID == profile.ID {
-				s.applyProfile(profile)
-			}
-			return nil
+	if existingIndex >= 0 {
+		s.Profiles[existingIndex] = profile
+		if s.ActiveProfileID == profile.ID {
+			s.applyProfile(profile)
 		}
+		return nil
 	}
 	s.Profiles = append(s.Profiles, profile)
 	return nil

@@ -468,3 +468,95 @@ func TestSaveProfileDefaultsMissingPatchline(t *testing.T) {
 		t.Fatalf("expected default patchline 'live', got %q", saved.Patchline)
 	}
 }
+
+func TestSaveProfilePreservesMetadataOnRepeatedEdits(t *testing.T) {
+	tempDir := t.TempDir()
+	eng, err := engine.New(settings.Store{Path: filepath.Join(tempDir, "settings.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := backendEngine
+	backendEngine = eng
+	defer func() { backendEngine = prev }()
+
+	initialProfile := settings.LaunchProfile{
+		ID:             "profile-custom-1",
+		Name:           "Original Account",
+		AccountLabel:   "Initial Label",
+		LoginUsername:  "orig_user",
+		RiotID:         "Orig#123",
+		Region:         "NA",
+		Enabled:        true,
+		Status:         model.StatusMobile,
+		DefaultGame:    model.GameLeague,
+		StartupStatus:  settings.StartupStatus(model.StatusMobile),
+		ConnectToMUC:   true,
+		Patchline:      "pbe",
+		LeagueLocale:   "ja_JP",
+		RiotClientArgs: []string{"--disable-screensaver"},
+		GameArgs:       []string{"-skip-intro"},
+		GameStatuses:   map[model.Game]model.Status{model.GameLeague: model.StatusMobile},
+	}
+	if err := eng.SaveLaunchProfile(initialProfile); err != nil {
+		t.Fatalf("failed to seed initial profile: %v", err)
+	}
+
+	// 1st Edit: Only change nickname, riotId, region, username, label
+	edit1 := `{"id":"profile-custom-1","name":"Renamed Account","riotId":"Renamed#999","region":"EUW","loginUsername":"renamed_user","accountLabel":"Updated Label"}`
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodPost, "/api/save-profile", bytes.NewBufferString(edit1))
+	saveProfile(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("edit 1 returned status %d: %s", rec1.Code, rec1.Body.String())
+	}
+	var res1 settings.LaunchProfile
+	if err := json.NewDecoder(rec1.Body).Decode(&res1); err != nil {
+		t.Fatal(err)
+	}
+	if res1.Name != "Renamed Account" || res1.RiotID != "Renamed#999" || res1.Region != "EUW" || res1.AccountLabel != "Updated Label" {
+		t.Fatalf("edit 1 fields were not updated properly: %+v", res1)
+	}
+	if res1.Patchline != "pbe" {
+		t.Errorf("patchline changed: expected 'pbe', got %q", res1.Patchline)
+	}
+	if res1.StartupStatus != settings.StartupStatus(model.StatusMobile) {
+		t.Errorf("startupStatus changed: expected 'mobile', got %q", res1.StartupStatus)
+	}
+	if res1.Status != model.StatusMobile {
+		t.Errorf("status changed: expected 'mobile', got %q", res1.Status)
+	}
+	if res1.LeagueLocale != "ja_JP" {
+		t.Errorf("leagueLocale changed: expected 'ja_JP', got %q", res1.LeagueLocale)
+	}
+	if !res1.ConnectToMUC {
+		t.Errorf("connectToMUC was unexpectedly turned off")
+	}
+	if len(res1.RiotClientArgs) != 1 || res1.RiotClientArgs[0] != "--disable-screensaver" {
+		t.Errorf("riotClientArgs not preserved: %+v", res1.RiotClientArgs)
+	}
+	if len(res1.GameArgs) != 1 || res1.GameArgs[0] != "-skip-intro" {
+		t.Errorf("gameArgs not preserved: %+v", res1.GameArgs)
+	}
+
+	// 2nd Edit: Repeated edit only updating the note/label
+	edit2 := `{"id":"profile-custom-1","name":"Renamed Account","riotId":"Renamed#999","region":"EUW","loginUsername":"renamed_user","accountLabel":"Second Label Update"}`
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/save-profile", bytes.NewBufferString(edit2))
+	saveProfile(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("edit 2 returned status %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var res2 settings.LaunchProfile
+	if err := json.NewDecoder(rec2.Body).Decode(&res2); err != nil {
+		t.Fatal(err)
+	}
+	if res2.AccountLabel != "Second Label Update" {
+		t.Fatalf("edit 2 label not updated: %q", res2.AccountLabel)
+	}
+	if res2.LoginUsername != "renamed_user" {
+		t.Errorf("loginUsername lost on second edit: %q", res2.LoginUsername)
+	}
+	if res2.Patchline != "pbe" || res2.StartupStatus != settings.StartupStatus(model.StatusMobile) || res2.Status != model.StatusMobile || res2.LeagueLocale != "ja_JP" || !res2.ConnectToMUC {
+		t.Errorf("metadata altered on repeated edit: %+v", res2)
+	}
+}
