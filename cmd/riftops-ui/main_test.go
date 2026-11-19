@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/HassanSalah120/RiftOps/internal/engine"
 	"github.com/HassanSalah120/RiftOps/internal/model"
 	"github.com/HassanSalah120/RiftOps/internal/playflow"
 	"github.com/HassanSalah120/RiftOps/internal/qol"
@@ -222,6 +223,20 @@ func TestPlayFlowRuntimeHandlersValidateMethodAndCycleMode(t *testing.T) {
 	if remoteRecorder.Code != http.StatusForbidden {
 		t.Fatalf("remote runtime start returned %d, want %d", remoteRecorder.Code, http.StatusForbidden)
 	}
+
+	eventsRecorder := httptest.NewRecorder()
+	playFlowDraftEventsHandler(eventsRecorder, httptest.NewRequest(http.MethodGet, "/api/play-flow/draft/events", nil))
+	if eventsRecorder.Code != http.StatusOK {
+		t.Fatalf("draft events returned %d: %s", eventsRecorder.Code, eventsRecorder.Body.String())
+	}
+
+	remoteEventsRecorder := httptest.NewRecorder()
+	remoteEventsReq := httptest.NewRequest(http.MethodGet, "/api/play-flow/draft/events", nil)
+	remoteEventsReq = remoteEventsReq.WithContext(context.WithValue(remoteEventsReq.Context(), remoteRequestKey{}, true))
+	playFlowDraftEventsHandler(remoteEventsRecorder, remoteEventsReq)
+	if remoteEventsRecorder.Code != http.StatusForbidden {
+		t.Fatalf("remote draft events returned %d, want %d", remoteEventsRecorder.Code, http.StatusForbidden)
+	}
 }
 
 func TestMergeQoLPreferencesRejectsInvalidPlayFlowPolicy(t *testing.T) {
@@ -425,5 +440,31 @@ func TestQoLQueuePresetHandlerRejectsInvalidPolicyBeforePersistence(t *testing.T
 	}
 	if manager.Preferences().RolePresets != nil {
 		t.Fatalf("invalid queue presets were persisted: %#v", manager.Preferences().RolePresets)
+	}
+}
+
+func TestSaveProfileDefaultsMissingPatchline(t *testing.T) {
+	tempDir := t.TempDir()
+	eng, err := engine.New(settings.Store{Path: filepath.Join(tempDir, "settings.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := backendEngine
+	backendEngine = eng
+	defer func() { backendEngine = prev }()
+
+	body := bytes.NewBufferString(`{"name":"Kingof30 Mena","riotId":"Kingof30#KO3ME","region":"ME","loginUsername":"Kingof3oo"}`)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/save-profile", body)
+	saveProfile(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("saveProfile returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var saved settings.LaunchProfile
+	if err := json.NewDecoder(recorder.Body).Decode(&saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Patchline != "live" {
+		t.Fatalf("expected default patchline 'live', got %q", saved.Patchline)
 	}
 }

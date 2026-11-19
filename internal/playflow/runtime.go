@@ -100,17 +100,20 @@ type ClientProvider func() Client
 type PreferencesProvider func() qol.PlayFlowPreferences
 
 type Service struct {
-	mu          sync.RWMutex
-	status      Status
-	cancel      context.CancelFunc
-	clients     ClientProvider
-	preferences PreferencesProvider
-	runSequence atomic.Uint64
-	now         func() time.Time
-	requestWait time.Duration
-	champWait   time.Duration
-	inGameWait  time.Duration
-	onActive    func(bool)
+	mu             sync.RWMutex
+	status         Status
+	cancel         context.CancelFunc
+	clients        ClientProvider
+	preferences    PreferencesProvider
+	runSequence    atomic.Uint64
+	now            func() time.Time
+	requestWait    time.Duration
+	champWait      time.Duration
+	inGameWait     time.Duration
+	onActive       func(bool)
+	draftEventsMu  sync.RWMutex
+	draftEvents    []DraftEvent
+	archivedEvents []DraftEvent
 }
 
 // SetActiveChangeHook reports ownership changes to adjacent background
@@ -145,10 +148,69 @@ func (s *Service) Status() Status {
 	return s.status
 }
 
+func (s *Service) recordDraftEvent(e DraftEvent) {
+	s.draftEventsMu.Lock()
+	defer s.draftEventsMu.Unlock()
+	s.draftEvents = append(s.draftEvents, e)
+	if len(s.draftEvents) > 100 {
+		s.draftEvents = s.draftEvents[len(s.draftEvents)-100:]
+	}
+}
+
+func (s *Service) archiveDraftEvents() {
+	s.draftEventsMu.Lock()
+	defer s.draftEventsMu.Unlock()
+	if len(s.draftEvents) > 0 {
+		s.archivedEvents = append(s.archivedEvents, s.draftEvents...)
+		if len(s.archivedEvents) > 200 {
+			s.archivedEvents = s.archivedEvents[len(s.archivedEvents)-200:]
+		}
+		s.draftEvents = nil
+	}
+}
+
+func (s *Service) DraftEvents() DraftEventsSnapshot {
+	s.draftEventsMu.RLock()
+	defer s.draftEventsMu.RUnlock()
+	events := make([]DraftEvent, len(s.draftEvents))
+	copy(events, s.draftEvents)
+	archived := make([]DraftEvent, len(s.archivedEvents))
+	copy(archived, s.archivedEvents)
+
+	var lastConfirmedAt *time.Time
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type == EventLockConfirmed {
+			t := events[i].Timestamp
+			lastConfirmedAt = &t
+			break
+		}
+	}
+	if lastConfirmedAt == nil {
+		for i := len(archived) - 1; i >= 0; i-- {
+			if archived[i].Type == EventLockConfirmed {
+				t := archived[i].Timestamp
+				lastConfirmedAt = &t
+				break
+			}
+		}
+	}
+	sessionKey := ""
+	if len(events) > 0 {
+		sessionKey = events[len(events)-1].SessionID
+	}
+	return DraftEventsSnapshot{
+		SessionKey:      sessionKey,
+		Events:          events,
+		ArchivedEvents:  archived,
+		LastConfirmedAt: lastConfirmedAt,
+	}
+}
+
 func (s *Service) Start(cycleMode CycleMode) (Status, error) {
 	if cycleMode != CycleSingle && cycleMode != CycleRepeat {
 		return s.Status(), ErrInvalidCycle
 	}
+	s.archiveDraftEvents()
 	s.mu.Lock()
 	if s.status.Active {
 		status := s.status
@@ -277,7 +339,10 @@ func (s *Service) step(ctx context.Context, runID string, cycleMode CycleMode, p
 
 	if state.lastPhase == "ChampSelect" && phase != "ChampSelect" {
 		state.draft.reset()
+		s.archiveDraftEvents()
 	}
+	state.draft.onEvent = s.recordDraftEvent
+	state.draft.logger = slog.Default() 
 	state.lastPhase = phase
 
 	switch phase {

@@ -165,6 +165,9 @@ func (s *Settings) UpsertProfile(profile LaunchProfile) error {
 	profile.RiotID = strings.TrimSpace(profile.RiotID)
 	profile.Region = strings.ToUpper(strings.TrimSpace(profile.Region))
 	profile.Patchline = strings.TrimSpace(profile.Patchline)
+	if profile.Patchline == "" {
+		profile.Patchline = "live"
+	}
 	profile.LeagueLocale = strings.TrimSpace(profile.LeagueLocale)
 	if profile.LeagueLocale == "" {
 		profile.LeagueLocale = DefaultLeagueLocale

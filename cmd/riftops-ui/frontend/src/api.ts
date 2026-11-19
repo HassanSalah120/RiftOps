@@ -1,4 +1,4 @@
-import type { Release, Snapshot } from './types';
+import type { Release, Snapshot, DraftEventsSnapshot } from './types';
 import type { PickRole, RolePickPlan } from './champSelectFlow';
 
 type JsonCacheEntry = { expiresAt: number; value: unknown };
@@ -965,6 +965,13 @@ export function stopPlayFlowRuntime(): Promise<PlayFlowRuntimeStatus> {
   return fetch('/api/play-flow/runtime/stop', { method: 'POST' }).then(async (response) => {
     if (!response.ok) throw new Error((await response.text()).trim() || 'Full Auto could not stop');
     return response.json() as Promise<PlayFlowRuntimeStatus>;
+  });
+}
+
+export function fetchPlayFlowDraftEvents(): Promise<DraftEventsSnapshot> {
+  return fetch('/api/play-flow/draft/events', { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Draft events are unavailable');
+    return response.json() as Promise<DraftEventsSnapshot>;
   });
 }
 

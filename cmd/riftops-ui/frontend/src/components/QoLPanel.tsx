@@ -1,43 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  BellRing,
   Check,
   CheckCircle2,
-  ChevronRight,
   CircleStop,
-  Flame,
   Gift,
   Heart,
   Loader2,
-  MessageSquareText,
   Play,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   Swords,
-  XCircle,
+  Zap,
+  ArrowRight,
+  Sparkles,
 } from 'lucide-react';
 import {
   fetchHonorBallot,
   fetchQoLPreferences,
   honorPlayer,
-  lcuAutoAccept,
-  lcuAutoRequeue,
   lcuClaimEventRewards,
   lcuDodge,
   lcuPlayAgain,
   lcuQuitCustomSession,
   lcuSetAvailability,
   lcuSetStatusMessage,
-  lcuStopQueue,
   saveQoLPreferences,
   type QoLPreferences,
   type QoLState,
 } from '../api';
-import PageHeader from './PageHeader';
 import ConfirmModal from './ConfirmModal';
 import SafeToolsPanel from './SafeToolsPanel';
-import { StatusBadge, ActionFeedback } from './DesignPrimitives';
+import { StatusBadge, WorkspaceSection } from './DesignPrimitives';
 import { useLCUConnection } from './lcuConnectionContext';
 import type { ConfirmAction } from '../types';
 
@@ -95,7 +88,6 @@ function formatDisplayStatus(rawPhase?: string, rawQueueState?: string, connecte
   }
 }
 
-
 function SwitchRow({
   title,
   description,
@@ -117,7 +109,15 @@ function SwitchRow({
         <strong>{title}</strong>
         <span>{description}</span>
       </div>
-      <button type="button" role="switch" aria-label={title} aria-checked={checked} disabled={disabled} onClick={onChange} className="qol-switch">
+      <button
+        type="button"
+        role="switch"
+        aria-label={title}
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={onChange}
+        className="qol-switch cursor-pointer"
+      >
         <span className="qol-switch__track"><span /></span>
         <b>{checked ? 'On' : 'Off'}</b>
       </button>
@@ -229,133 +229,334 @@ export default function QoLPanel({ onOpenLive, onOpenPlayFlow }: { onOpenLive?: 
   }));
 
   const phase = state?.phase || 'Disconnected';
-  const inLobby = phase === 'Lobby';
-  const inQueue = phase === 'Matchmaking';
-  const readyCheck = phase === 'ReadyCheck';
   const inChampSelect = phase === 'ChampSelect';
   const postGame = ['EndOfGame', 'PreEndOfGame', 'WaitingForStats'].includes(phase);
   const customSession = Boolean(state?.isCustom || state?.queueId === 3140);
   const customQuitAvailable = customSession && ['Lobby', 'Matchmaking', 'ChampSelect', 'GameStart', 'Loading', 'InProgress', 'Reconnect'].includes(phase);
-  const automationCount = [preferences.autoPlayAgain, preferences.autoHonor, preferences.autoClaimRewards, preferences.grindMode].filter(Boolean).length;
-
-  const primaryAction = !connected
-    ? { label: 'Reconnect to League', tone: 'neutral' as const, action: () => void refreshState(true) }
-    : readyCheck
-      ? { label: 'Accept ready check', tone: 'success' as const, action: () => void runAction('accept', 'Ready check accepted.', lcuAutoAccept) }
-      : inLobby
-        ? { label: 'Start matchmaking', tone: 'gold' as const, action: () => void runAction('queue-start', 'Matchmaking started.', lcuAutoRequeue) }
-        : inQueue
-          ? { label: 'Cancel queue', tone: 'danger' as const, action: () => void runAction('queue-stop', 'Matchmaking stopped.', lcuStopQueue) }
-          : inChampSelect
-            ? { label: 'Open live draft', tone: 'rose' as const, action: () => onOpenLive?.() }
-            : postGame
-              ? { label: 'Return to lobby', tone: 'gold' as const, action: () => void runAction('play-again', 'Returning to lobby.', lcuPlayAgain) }
-              : { label: 'Refresh status', tone: 'neutral' as const, action: () => void refreshState(true) };
-
-  const primaryClass = `qol-primary-action tone-${primaryAction.tone}`;
-  const updateStatus = () => {
-    const next = statusMessage.trim();
-    if (!next) return;
-    void runAction('status', 'Status message updated.', () => lcuSetStatusMessage(next));
-  };
 
   return (
-    <div className="qol-page">
+    <div className="home-command-center">
       {confirmAction && <ConfirmModal action={confirmAction} onClose={() => setConfirmAction(null)} />}
 
-      <PageHeader
-        icon={Sparkles}
-        eyebrow="AUTOMATIONS & UTILITIES"
-        title="Automations"
-        description="Keep the routine parts of a League session quiet, visible, and under your control."
-        meta={<StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>{connected ? formatPhaseLabel(phase) : 'League offline'}</StatusBadge>}
-        actions={<button type="button" className="page-header__button" onClick={() => void refreshState(true)} disabled={refreshing}><RefreshCw className={refreshing ? 'animate-spin' : ''} /> Refresh</button>}
-      />
+      <div className="home-phase-strip">
+        <div className="home-phase-strip__left">
+          <StatusBadge tone={connected ? 'live' : 'neutral'} pulse={connected}>{connected ? formatPhaseLabel(phase) : 'League offline'}</StatusBadge>
+          <div className="home-phase-strip__details">
+            <div className="home-phase-strip__title">Automations Hub</div>
+            <div className="home-phase-strip__desc">{connected ? formatDisplayStatus(state?.phase, state?.queueState, connected) : 'League client offline'}</div>
+          </div>
+        </div>
+        <div className="home-phase-strip__right">
+          <button type="button" className="home-phase-strip__action-btn home-phase-strip__action-btn--secondary cursor-pointer" onClick={() => void refreshState(true)} disabled={refreshing}>
+            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh
+          </button>
+        </div>
+      </div>
 
       {toast && (
-        <div className={`qol-inline-feedback ${toast.ok ? 'is-success' : 'is-error'}`} role="status" aria-live="polite">
-          {toast.ok ? <CheckCircle2 /> : <XCircle />}
+        <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${toast.ok ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300' : 'bg-red-950/40 border-red-500/30 text-red-300'}`}>
+          {toast.ok ? <CheckCircle2 size={14} /> : <CircleStop size={14} />}
           <span>{toast.message}</span>
         </div>
       )}
 
-      <section className="qol-status-strip" aria-label="League client status">
-        <div className="qol-status-strip__phase">
-          <span className={`qol-status-dot ${connected ? 'is-live' : ''}`} />
-          <div><small>{connected ? 'League client' : 'Connection'}</small><strong>{formatDisplayStatus(state?.phase, state?.queueState, connected)}</strong></div>
-        </div>
-        <div className="qol-status-strip__metrics">
-          <span><b>{automationCount}/4</b> routine automations</span>
-          <span><b>{state?.firstRole || '—'}</b> / {state?.secondRole || '—'}</span>
-        </div>
-        <button type="button" className={primaryClass} onClick={primaryAction.action} disabled={activeAction !== ''}>
-          {activeAction ? <Loader2 className="animate-spin" /> : <ChevronRight />}
-          {primaryAction.label}
-        </button>
-      </section>
+      <div className="home-dashboard-grid">
+        <div className="home-col-primary space-y-4">
+          <WorkspaceSection eyebrow="BACKGROUND ROUTINES" title="Match automations" id="qol-match-heading">
+            <SwitchRow
+              title="Grind mode"
+              description="Automates the full post-game cycle: return to lobby, honor first teammate, requeue, and claim rewards."
+              checked={preferences.grindMode}
+              disabled={preferencesLoading || savingPreferences}
+              accent="gold"
+              onChange={() => preferences.grindMode
+                ? void updatePreferences({ ...preferences, grindMode: false })
+                : setConfirmAction({
+                    open: true,
+                    title: 'Enable Grind mode?',
+                    message: 'After each match, Grind mode automatically returns to the lobby, honors an ally, requeues, and claims battle-pass rewards. Queue and draft configurations are managed in Play & Queue.',
+                    actionLabel: 'Enable Grind mode',
+                    danger: false,
+                    onConfirm: () => {
+                      setConfirmAction(null);
+                      void updatePreferences({ ...preferences, grindMode: true });
+                    },
+                  })
+              }
+            />
 
-      <nav className="workflow-anchor-nav" aria-label="Automation sections"><a href="#qol-match-heading">Match routines</a><a href="#qol-presence-heading">Presence</a><a href="#qol-safety-heading">Session tools</a></nav>
-      {savingPreferences && <ActionFeedback state={{ tone: 'working', message: 'Saving automation rules…' }} />}
-      {activeAction && <ActionFeedback state={{ tone: 'working', message: 'Applying the selected action in League…' }} />}
-      <div className="qol-task-list">
-        <section className="qol-task-group qol-task-group--match" aria-labelledby="qol-match-heading">
-          <header className="qol-task-group__header">
-            <div className="qol-task-group__icon"><BellRing /></div>
-            <div><h2 id="qol-match-heading">Match flow</h2><p>Return, honor, and reward actions that happen after a match.</p></div>
-            <span className="qol-task-group__summary"><Flame /> {preferences.grindMode ? 'Grind mode on' : 'Manual session'}</span>
-          </header>
+            <div className="qol-rule-list space-y-2 mt-3" aria-label="Individual background automation rules">
+              <SwitchRow
+                title="Auto-accept ready checks"
+                description="Automatically accept ready checks when matchmaking finds a game."
+                checked={preferences.autoAccept}
+                disabled={preferencesLoading || savingPreferences}
+                accent="teal"
+                onChange={() => void updatePreferences({ ...preferences, autoAccept: !preferences.autoAccept })}
+              />
+              <SwitchRow
+                title="Return to lobby"
+                description="Click Play Again when the post-game summary appears."
+                checked={preferences.autoPlayAgain}
+                disabled={preferencesLoading || savingPreferences}
+                accent="teal"
+                onChange={() => void updatePreferences({ ...preferences, autoPlayAgain: !preferences.autoPlayAgain })}
+              />
+              <SwitchRow
+                title="Honor first teammate"
+                description="Honor the first eligible ally after each completed match."
+                checked={preferences.autoHonor}
+                disabled={preferencesLoading || savingPreferences}
+                accent="rose"
+                onChange={() => void updatePreferences({ ...preferences, autoHonor: !preferences.autoHonor })}
+              />
+              <SwitchRow
+                title="Claim event rewards"
+                description="Claim unlocked battle-pass and event-track rewards after each game."
+                checked={preferences.autoClaimRewards}
+                disabled={preferencesLoading || savingPreferences}
+                accent="violet"
+                onChange={() => void updatePreferences({ ...preferences, autoClaimRewards: !preferences.autoClaimRewards })}
+              />
+            </div>
+          </WorkspaceSection>
 
-          <div className="qol-task-group__body">
-            <SwitchRow title="Grind mode" description="Run the full post-game loop: return, honor, requeue, and claim rewards." checked={preferences.grindMode} disabled={preferencesLoading || savingPreferences} accent="gold" onChange={() => preferences.grindMode ? void updatePreferences({ ...preferences, grindMode: false }) : setConfirmAction({ open: true, title: 'Enable Grind mode?', message: 'After each match, this mode returns to the lobby, honors a teammate, requeues, and claims rewards. Review queue and draft rules in Play & Queue first.', actionLabel: 'Enable Grind mode', danger: false, onConfirm: () => { setConfirmAction(null); void updatePreferences({ ...preferences, grindMode: true }); } })} />
-
-            <div className="qol-owner-link">
-              <div><strong>Queue automation lives in Play & Queue</strong><span>Auto-accept, roles, picks, bans, and full auto stay beside your queue choices.</span></div>
-              {onOpenPlayFlow && <button type="button" className="btn-secondary" onClick={onOpenPlayFlow}><Swords /> Open Play & Queue</button>}
+          {/* Compact Routine Execution Summary Card */}
+          <div className="p-4 rounded-2xl border border-white/10 bg-gradient-to-b from-dark-card/80 to-dark-bg/90 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-white">
+                <Zap size={14} className="text-hextech-gold" />
+                <span>Background Rules Execution Summary</span>
+              </div>
+              <span className="text-[10px] text-text-dim uppercase font-semibold">Active Engine</span>
             </div>
 
-            <div className="qol-rule-list" aria-label="Post-game automation rules">
-              <SwitchRow title="Return to lobby" description="Use Play Again when the post-game summary is ready." checked={preferences.autoPlayAgain} disabled={preferencesLoading || savingPreferences} accent="teal" onChange={() => void updatePreferences({ ...preferences, autoPlayAgain: !preferences.autoPlayAgain })} />
-              <SwitchRow title="Honor first teammate" description="Honor the first eligible ally after each completed match." checked={preferences.autoHonor} disabled={preferencesLoading || savingPreferences} accent="rose" onChange={() => void updatePreferences({ ...preferences, autoHonor: !preferences.autoHonor })} />
-              <SwitchRow title="Claim event rewards" description="Claim unlocked battle-pass and event-track rewards after a game." checked={preferences.autoClaimRewards} disabled={preferencesLoading || savingPreferences} accent="violet" onChange={() => void updatePreferences({ ...preferences, autoClaimRewards: !preferences.autoClaimRewards })} />
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
+                <span className="text-[10px] text-text-dim block">Auto Accept</span>
+                <span className={`font-bold ${preferences.autoAccept ? 'text-teal-400' : 'text-text-muted'}`}>
+                  {preferences.autoAccept ? 'Ready' : 'Off'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
+                <span className="text-[10px] text-text-dim block">Play Again</span>
+                <span className={`font-bold ${preferences.autoPlayAgain || preferences.grindMode ? 'text-teal-400' : 'text-text-muted'}`}>
+                  {preferences.autoPlayAgain || preferences.grindMode ? 'Ready' : 'Off'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
+                <span className="text-[10px] text-text-dim block">Auto Honor</span>
+                <span className={`font-bold ${preferences.autoHonor || preferences.grindMode ? 'text-rose-400' : 'text-text-muted'}`}>
+                  {preferences.autoHonor || preferences.grindMode ? 'Ready' : 'Off'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
+                <span className="text-[10px] text-text-dim block">Claim Rewards</span>
+                <span className={`font-bold ${preferences.autoClaimRewards || preferences.grindMode ? 'text-purple-400' : 'text-text-muted'}`}>
+                  {preferences.autoClaimRewards || preferences.grindMode ? 'Ready' : 'Off'}
+                </span>
+              </div>
             </div>
 
+            {/* Seamless Link to Play & Queue Draft Execution Monitor */}
+            <div className="pt-2 border-t border-white/5 flex items-center justify-between text-xs">
+              <span className="text-text-dim text-[11px]">
+                Draft execution diagnostics &amp; pick/ban timeline:
+              </span>
+              {onOpenPlayFlow && (
+                <button
+                  type="button"
+                  onClick={onOpenPlayFlow}
+                  className="inline-flex items-center gap-1.5 text-hextech-gold hover:text-white font-bold text-xs transition cursor-pointer"
+                >
+                  <Swords size={13} />
+                  <span>Open Draft Monitor in Play &amp; Queue</span>
+                  <ArrowRight size={13} />
+                </button>
+              )}
+            </div>
           </div>
-        </section>
+        </div>
 
-        <section className="qol-task-group" aria-labelledby="qol-presence-heading">
-          <header className="qol-task-group__header">
-            <div className="qol-task-group__icon is-teal"><MessageSquareText /></div>
-            <div><h2 id="qol-presence-heading">Social presence</h2><p>Control how your connected League client appears to friends.</p></div>
-            <span className="qol-task-group__summary">{state?.availability || 'Unavailable'}</span>
-          </header>
-          <div className="qol-task-group__body">
+        <div className="home-col-secondary space-y-4">
+          <WorkspaceSection eyebrow="SOCIAL" title="Presence" id="qol-presence-heading">
             <div className="qol-availability" role="group" aria-label="Availability">
-              {AVAILABILITY_OPTIONS.map(({ value, label, color }) => <button key={value} type="button" disabled={!connected || activeAction !== ''} className={state?.availability === value ? 'is-selected' : ''} onClick={() => void runAction('presence', `Availability set to ${label}.`, () => lcuSetAvailability(value))}><span style={{ backgroundColor: color }} />{label}</button>)}
+              {AVAILABILITY_OPTIONS.map(({ value, label, color }) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={!connected || activeAction !== ''}
+                  className={`${state?.availability === value ? 'is-selected' : ''} cursor-pointer`}
+                  onClick={() => void runAction('presence', `Availability set to ${label}.`, () => lcuSetAvailability(value))}
+                >
+                  <span style={{ backgroundColor: color }} />
+                  {label}
+                </button>
+              ))}
             </div>
-            <div className="qol-status-editor">
-              <label htmlFor="qol-status-input">Custom status <small>{statusMessage.length}/255</small></label>
-              <div><input id="qol-status-input" value={statusMessage} maxLength={255} disabled={!connected} placeholder="What should friends see?" onChange={(event) => setStatusMessage(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') updateStatus(); }} /><button type="button" className="btn-primary" disabled={!connected || !statusMessage.trim() || activeAction === 'status'} onClick={updateStatus}>{activeAction === 'status' ? <Loader2 className="animate-spin" /> : <Check />} Update</button></div>
+            <div className="qol-status-editor mt-3">
+              <label htmlFor="qol-status-input" className="text-xs text-text-muted block mb-1">
+                Custom status <small className="text-text-dim">{statusMessage.length}/255</small>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="qol-status-input"
+                  className="flex-grow px-3 py-1.5 rounded-xl bg-dark-card border border-white/10 text-white text-xs focus:outline-none"
+                  value={statusMessage}
+                  maxLength={255}
+                  disabled={!connected}
+                  placeholder="What should friends see?"
+                  onChange={(event) => setStatusMessage(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void runAction('status', 'Status message updated.', () => lcuSetStatusMessage(statusMessage.trim()));
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn-primary px-3 py-1.5 text-xs rounded-xl cursor-pointer"
+                  disabled={!connected || !statusMessage.trim() || activeAction === 'status'}
+                  onClick={() => void runAction('status', 'Status message updated.', () => lcuSetStatusMessage(statusMessage.trim()))}
+                >
+                  {activeAction === 'status' ? <Loader2 className="animate-spin h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+                </button>
+              </div>
             </div>
-          </div>
-        </section>
+          </WorkspaceSection>
 
-        <section className="qol-task-group" aria-labelledby="qol-safety-heading">
-          <header className="qol-task-group__header">
-            <div className="qol-task-group__icon is-rose"><ShieldCheck /></div>
-            <div><h2 id="qol-safety-heading">Safety & session</h2><p>Phase-aware actions and reviewed client utilities, shown when you need them.</p></div>
-            <span className="qol-task-group__summary">{formatPhaseLabel(phase)}</span>
-          </header>
-          <div className="qol-task-group__body">
-            {inChampSelect && <div className="qol-context-callout is-rose"><div><strong>Champion select is live</strong><span>Open the live draft workspace or apply a standard queue dodge.</span></div><div className="qol-context-callout__actions">{onOpenLive && <button type="button" className="btn-primary" onClick={onOpenLive}><Swords /> Open live draft</button>}<button type="button" className="btn-danger" onClick={() => setConfirmAction({ open: true, title: 'Dodge this champion select?', message: 'League will apply standard queue dodge penalties. This action cannot be undone.', actionLabel: 'Dodge game', danger: true, onConfirm: () => { setConfirmAction(null); void runAction('dodge', 'Dodge request sent to League.', lcuDodge); } })}><CircleStop /> Dodge game</button></div></div>}
-            {customSession && customQuitAvailable && !inChampSelect && <div className="qol-context-callout is-gold"><div><strong>Custom or practice session</strong><span>Leave the custom lobby without sending a dodge penalty.</span></div><button type="button" className="btn-danger" disabled={activeAction === 'quit-custom'} onClick={() => void runAction('quit-custom', 'Custom session closed.', lcuQuitCustomSession)}><CircleStop /> Quit custom</button></div>}
-            {postGame && <div className="qol-postgame"><div className="qol-subsection__heading"><strong>Post-game actions</strong><span>Match finished</span></div><div className="qol-action-grid"><button type="button" className="btn-primary" disabled={activeAction !== ""} onClick={() => void runAction('play-again', 'Returning to lobby.', lcuPlayAgain)}><Play /> Play again</button><button type="button" className="btn-secondary" disabled={activeAction !== ""} onClick={() => void loadHonorBallot()}><Heart /> Load honor ballot</button><button type="button" className="btn-secondary" disabled={activeAction !== ""} onClick={() => void runAction('rewards', 'Event rewards checked.', lcuClaimEventRewards)}><Gift /> Claim rewards</button></div>{honorBallot && <div className="qol-honor-grid">{[...(honorBallot.eligibleAllies || []), ...(honorBallot.eligibleOpponents || [])].map((player) => <button type="button" key={player.puuid} disabled={activeAction !== ""} onClick={() => void honorPlayerAction(player)}><span><small>{player.championName}</small><strong>{player.summonerName}</strong></span><Heart /></button>)}</div>}</div>}
-            {!inChampSelect && !customSession && !postGame && <div className="qol-standby"><span className="qol-status-dot is-live" /><div><strong>{connected ? 'Client standing by' : 'Connect League to unlock actions'}</strong><small>{connected ? `Current phase: ${formatPhaseLabel(phase)}` : 'Open Riot Client and sign in.'}</small></div></div>}
-            <details className="qol-disclosure">
-              <summary><span><ShieldCheck /> Reviewed client utilities</span><small>Snapshots, rewards, capabilities, and identifiers</small></summary>
-              <div className="qol-disclosure__body"><SafeToolsPanel /></div>
-            </details>
-          </div>
-        </section>
+          <WorkspaceSection eyebrow="SESSION" title="Safety & Utilities" id="qol-safety-heading">
+            <div className="qol-task-group__body space-y-3">
+              {inChampSelect && (
+                <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-xs space-y-2">
+                  <div className="flex items-center gap-2 text-rose-300 font-bold">
+                    <Swords size={14} />
+                    <span>Champion select is live</span>
+                  </div>
+                  <p className="text-text-dim text-[11px]">
+                    Open the live draft workspace or apply a standard queue dodge.
+                  </p>
+                  <div className="flex gap-2 pt-1">
+                    {onOpenLive && (
+                      <button type="button" className="btn-primary text-xs px-3 py-1.5 cursor-pointer" onClick={onOpenLive}>
+                        <Swords size={13} className="inline mr-1" /> Open live draft
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-danger text-xs px-3 py-1.5 cursor-pointer"
+                      onClick={() => setConfirmAction({
+                        open: true,
+                        title: 'Dodge this champion select?',
+                        message: 'League will apply standard queue dodge penalties. This action cannot be undone.',
+                        actionLabel: 'Dodge game',
+                        danger: true,
+                        onConfirm: () => {
+                          setConfirmAction(null);
+                          void runAction('dodge', 'Dodge request sent to League.', lcuDodge);
+                        },
+                      })}
+                    >
+                      <CircleStop size={13} className="inline mr-1" /> Dodge game
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {customSession && customQuitAvailable && !inChampSelect && (
+                <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 text-xs space-y-2">
+                  <div className="text-amber-300 font-bold">Custom or practice session</div>
+                  <p className="text-text-dim text-[11px]">Leave the custom lobby without sending a dodge penalty.</p>
+                  <button
+                    type="button"
+                    className="btn-danger text-xs px-3 py-1.5 cursor-pointer"
+                    disabled={activeAction === 'quit-custom'}
+                    onClick={() => void runAction('quit-custom', 'Custom session closed.', lcuQuitCustomSession)}
+                  >
+                    <CircleStop size={13} className="inline mr-1" /> Quit custom
+                  </button>
+                </div>
+              )}
+
+              {postGame && (
+                <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Sparkles size={13} className="text-hextech-gold" />
+                    <span>Post-game actions</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn-primary text-xs px-3 py-1.5 cursor-pointer"
+                      disabled={activeAction !== ''}
+                      onClick={() => void runAction('play-again', 'Returning to lobby.', lcuPlayAgain)}
+                    >
+                      <Play size={13} className="inline mr-1" /> Play again
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs px-3 py-1.5 cursor-pointer"
+                      disabled={activeAction !== ''}
+                      onClick={() => void loadHonorBallot()}
+                    >
+                      <Heart size={13} className="inline mr-1" /> Load honor ballot
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs px-3 py-1.5 cursor-pointer"
+                      disabled={activeAction !== ''}
+                      onClick={() => void runAction('rewards', 'Event rewards checked.', lcuClaimEventRewards)}
+                    >
+                      <Gift size={13} className="inline mr-1" /> Claim rewards
+                    </button>
+                  </div>
+                  {honorBallot && (
+                    <div className="pt-2 border-t border-white/5 space-y-1">
+                      <span className="text-[10px] text-text-dim block uppercase font-bold">Eligible Players</span>
+                      {[...(honorBallot.eligibleAllies || []), ...(honorBallot.eligibleOpponents || [])].map((player) => (
+                        <button
+                          type="button"
+                          key={player.puuid}
+                          disabled={activeAction !== ''}
+                          onClick={() => void honorPlayerAction(player)}
+                          className="w-full flex items-center justify-between p-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] text-xs text-left cursor-pointer"
+                        >
+                          <span>
+                            <strong className="text-white block">{player.summonerName}</strong>
+                            <small className="text-text-dim">{player.championName}</small>
+                          </span>
+                          <Heart size={14} className="text-rose-400" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!inChampSelect && !customSession && !postGame && (
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+                  <div>
+                    <strong className="text-xs text-white block">
+                      {connected ? 'Automations standing by' : 'Connect League to unlock actions'}
+                    </strong>
+                    <small className="text-text-dim text-[11px]">
+                      {connected ? `Phase: ${formatPhaseLabel(phase)}` : 'Launch Riot Client to begin.'}
+                    </small>
+                  </div>
+                </div>
+              )}
+
+              <details className="qol-disclosure mt-4">
+                <summary className="cursor-pointer text-xs font-semibold text-text-muted hover:text-white flex items-center gap-1.5">
+                  <ShieldCheck size={14} className="text-hextech-cyan" />
+                  <span>Reviewed client utilities</span>
+                </summary>
+                <div className="qol-disclosure__body mt-3">
+                  <SafeToolsPanel />
+                </div>
+              </details>
+            </div>
+          </WorkspaceSection>
+        </div>
       </div>
     </div>
   );

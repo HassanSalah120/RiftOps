@@ -691,6 +691,98 @@ func TestDraftNeverOverwritesManualHover(t *testing.T) {
 	}
 }
 
+func TestDraftAutoBanNotBlockedByDeclaredPickIntent(t *testing.T) {
+	client := &fakeClient{
+		bannable: []byte(`[103,238]`),
+		champSession: []byte(`{
+			"id":"draft-ban-intent","queueId":420,"localPlayerCellId":0,
+			"actions":[[{"id":1,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"ban"}]],
+			"myTeam":[{"cellId":0,"assignedPosition":"TOP","championPickIntent":22}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":15000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.AutoBan = true
+	prefs.BanChampionID = 238
+	prefs.BanTimingMode = "immediate"
+	var runtime draftRuntime
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueRoleBased, 420, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.updates) == 0 {
+		t.Fatalf("auto-ban was not attempted! message = %q, updates = %#v", message, client.updates)
+	}
+	if client.updates[0].champion != 238 {
+		t.Fatalf("expected ban champion 238, got %d", client.updates[0].champion)
+	}
+}
+
+func TestDraftAutoPickNotBlockedByDeclaredPickIntent(t *testing.T) {
+	client := &fakeClient{
+		pickable: []byte(`[103,22]`),
+		champSession: []byte(`{
+			"id":"draft-pick-intent","queueId":420,"localPlayerCellId":0,
+			"actions":[[{"id":2,"actorCellId":0,"championId":0,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"assignedPosition":"MIDDLE","championPickIntent":22}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":15000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.AutoPick = true
+	prefs.PickChampionID = 103
+	prefs.PickTimingMode = "immediate"
+	var runtime draftRuntime
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueRoleBased, 420, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.updates) == 0 {
+		t.Fatalf("auto-pick was not attempted! message = %q, updates = %#v", message, client.updates)
+	}
+	if client.updates[0].champion != 103 {
+		t.Fatalf("expected pick champion 103, got %d", client.updates[0].champion)
+	}
+}
+
+func TestDraftLastSecondLockAttemptsEvenWhenTimerAtZero(t *testing.T) {
+	client := &fakeClient{
+		pickable: []byte(`[103]`),
+		champSession: []byte(`{
+			"id":"draft-zero-timer","queueId":420,"localPlayerCellId":0,
+			"actions":[[{"id":3,"actorCellId":0,"championId":103,"completed":false,"isInProgress":true,"type":"pick"}]],
+			"myTeam":[{"cellId":0,"assignedPosition":"MIDDLE","championPickIntent":0}],
+			"timer":{"phase":"BAN_PICK","adjustedTimeLeftInPhase":0,"internalNowInEpochMs":100000}
+		}`),
+	}
+	prefs := qol.DefaultPlayFlowPreferences()
+	prefs.AutoPick = true
+	prefs.PickChampionID = 103
+	prefs.PickTimingMode = "last-second"
+	prefs.PickTimingSeconds = 2
+	var runtime draftRuntime
+	runtime.sessionKey = "draft-zero-timer"
+	runtime.attempt.ownHoverID = 103
+	runtime.attempt.hoverConfirmed = true
+	runtime.attempt.championID = 103
+	runtime.attempt.actionID = 3
+	runtime.attempt.actionType = "pick"
+	runtime.attempt.key = "draft-zero-timer:3:pick:role-based:MIDDLE"
+	message, _, err := runtime.step(context.Background(), client, prefs, QueueRoleBased, 420, time.UnixMilli(100_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.updates) == 0 {
+		t.Fatalf("lock was refused at deadline! message = %q", message)
+	}
+}
+
 func TestDraftObservesDelayedLockConfirmationWithoutRetry(t *testing.T) {
 	client := &fakeClient{
 		suppressComplete: true,
@@ -763,5 +855,51 @@ func TestArenaBraveryRejectionFallsThroughToNextPriority(t *testing.T) {
 	defer client.mu.Unlock()
 	if len(client.updates) < 2 || client.updates[0].champion != arenaBraveryChampionID || client.updates[1].champion != 103 {
 		t.Fatalf("Arena updates = %#v", client.updates)
+	}
+}
+
+func TestDraftEventsRecordingAndRetrieval(t *testing.T) {
+	svc := New(func() Client { return nil }, qol.DefaultPlayFlowPreferences)
+
+	svc.recordDraftEvent(DraftEvent{
+		SessionID:  "session-1",
+		Timestamp:  time.Now(),
+		Phase:      "BAN_PICK",
+		Type:       EventActionDetected,
+		ActionID:   1,
+		ActionType: "pick",
+		Outcome:    "detected",
+	})
+
+	lockTime := time.Now().Truncate(time.Millisecond)
+	svc.recordDraftEvent(DraftEvent{
+		SessionID:  "session-1",
+		Timestamp:  lockTime,
+		Phase:      "BAN_PICK",
+		Type:       EventLockConfirmed,
+		ActionID:   1,
+		ActionType: "pick",
+		ChampionID: 103,
+		Outcome:    "confirmed",
+	})
+
+	snap := svc.DraftEvents()
+	if len(snap.Events) != 2 {
+		t.Fatalf("expected 2 live events, got %d", len(snap.Events))
+	}
+	if snap.LastConfirmedAt == nil || !snap.LastConfirmedAt.Equal(lockTime) {
+		t.Fatalf("expected lastConfirmedAt %v, got %v", lockTime, snap.LastConfirmedAt)
+	}
+
+	svc.archiveDraftEvents()
+	snapAfterArchive := svc.DraftEvents()
+	if len(snapAfterArchive.Events) != 0 {
+		t.Fatalf("expected 0 live events after archive, got %d", len(snapAfterArchive.Events))
+	}
+	if len(snapAfterArchive.ArchivedEvents) != 2 {
+		t.Fatalf("expected 2 archived events, got %d", len(snapAfterArchive.ArchivedEvents))
+	}
+	if snapAfterArchive.LastConfirmedAt == nil || !snapAfterArchive.LastConfirmedAt.Equal(lockTime) {
+		t.Fatalf("expected lastConfirmedAt preserved from archive, got %v", snapAfterArchive.LastConfirmedAt)
 	}
 }

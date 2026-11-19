@@ -1,12 +1,9 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { Play, Square, Shield, RotateCcw, Swords, ArrowRight } from 'lucide-react';
 import type { Tab, Snapshot, LogLine } from './types';
 import type { ConfirmAction, Notification, Release } from './types';
-import GameSelector from './components/GameSelector';
 import { presenceRuntimeLabel } from './presenceStatus';
 import Toast from './components/Toast';
 import Sidebar from './components/Sidebar';
-import QuickActions from './components/QuickActions';
 import CommandPalette from './components/CommandPalette';
 import WorkspaceHeader from './components/WorkspaceHeader';
 import TitleBar from './components/TitleBar';
@@ -16,15 +13,12 @@ import UpdateDialog from './components/UpdateDialog';
 import NotificationCenter from './components/NotificationCenter';
 import type { NotificationEntry } from './components/NotificationCenter';
 import { useLCUConnection } from './components/lcuConnectionContext';
-import AccountSummary from './components/AccountSummary';
-import { GAMES, gameLabel } from './types';
-import { StatusBadge, type FeedbackState } from './components/DesignPrimitives';
-import PageHeader from './components/PageHeader';
+import HomePage from './components/HomePage';
+import { GAMES } from './types';
+import type { FeedbackState } from './components/DesignPrimitives';
 import { ALL_TABS, availableTabs, tabAvailable } from './clientCapabilities';
-import PhoneCompanionPanel from './components/PhoneCompanionPanel';
-import FriendsPanel from './components/FriendsPanel';
 import { useLocale } from './localeContext';
-import { normalizeLivePhase, livePhaseLabel, isActiveLivePhase, livePhaseDescription } from './liveSession';
+import { livePhaseLabel, normalizeLivePhase } from './liveSession';
 import FirstRunSetup from './components/FirstRunSetup';
 
 const MatchHistory = lazy(() => import('./components/MatchHistory'));
@@ -38,19 +32,6 @@ const RemoteAccessPage = lazy(() => import('./components/RemoteAccessPage'));
 const SocialCenter = lazy(() => import('./components/SocialCenter'));
 const AccountsHubPage = lazy(() => import('./components/AccountsHubPage'));
 const SettingsPage = lazy(() => import('./components/SettingsPage'));
-
-function timeAgo(startedAt: string): string {
-  if (!startedAt) return '';
-  const then = new Date(startedAt).getTime();
-  if (isNaN(then) || then <= 0 || startedAt.startsWith('0001-')) return '';
-  const diff = Date.now() - then;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
 
 export default function App() {
   const { locale, setLocale, t } = useLocale();
@@ -613,161 +594,31 @@ export default function App() {
           )}
 
           {/* ═══════════════════════════════════════════════
-             COMMAND CENTER (DASHBOARD)
+             COMMAND CENTER (DASHBOARD / HOME)
              ═══════════════════════════════════════════════ */}
           {activeTab === 'dashboard' && (
             <div className="home-workspace workspace-stage flex-1 min-h-0 overflow-y-auto">
-              <PageHeader
-                icon={Play}
-                eyebrow="HOME"
-                title="Home"
-                description="Your game command center. Switch accounts, launch League, and manage your team."
-                meta={<StatusBadge tone={lcuConnected ? 'live' : 'neutral'}>{leagueStatus}</StatusBadge>}
+              <HomePage
+                snapshot={snapshot}
+                lcuConnected={lcuConnected}
+                leaguePhase={leaguePhase}
+                leagueStatus={leagueStatus}
+                remoteClient={remoteClient}
+                activeProfileId={snapshot.ActiveProfileID}
+                onRefreshSnapshot={async () => {
+                  setSnapshot(await api.fetchSnapshot());
+                }}
+                setActiveTab={setActiveTab}
+                showToast={showToast}
+                handleLaunch={handleLaunch}
+                handleStop={handleStop}
+                handleSetGame={handleSetGame}
+                selectedGame={selectedGame}
+                gameInfo={gameInfo}
+                launchStage={launchStage}
+                homeAction={homeAction}
+                isIdle={isIdle}
               />
-
-              {remoteClient && (
-                <div className="phone-session-banner">
-                  <Shield />
-                  <span>
-                    <strong>Phone session connected</strong>
-                    <small>Live League controls are routed through your paired RiftOps desktop.</small>
-                  </span>
-                </div>
-              )}
-
-              {/* ═══════════════════════════════════════════════
-                 ADAPTIVE HERO CARD
-                 ═══════════════════════════════════════════════ */}
-              {!lcuConnected ? (
-                !remoteClient && (
-                  <section className="home-hero home-hero--launch" aria-labelledby="home-launch-title">
-                    <div className="home-hero__content">
-                      <div className="home-hero__info">
-                        <div className="home-hero__header">
-                          <div className="home-hero__icon">
-                            <Play className="fill-current" />
-                          </div>
-                          <div>
-                            <div className="home-hero__eyebrow">Riot Games Launcher</div>
-                            <h2 id="home-launch-title" className="home-hero__title">{gameInfo?.label || 'League of Legends'}</h2>
-                          </div>
-                        </div>
-                        <p className="home-hero__description">
-                          {snapshot.Detail || 'Safe masking proxy active. Launch into client with protected chat credentials.'}
-                        </p>
-                        <div className="home-hero__meta">
-                          <GameSelector value={selectedGame} onChange={handleSetGame} disabled={!isIdle} />
-                          {timeAgo(snapshot.StartedAt) && (
-                            <span className="home-hero__last-launch">
-                              Last launch {timeAgo(snapshot.StartedAt)}{snapshot.Game ? ` · ${gameLabel(snapshot.Game)}` : ''}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="home-hero__actions">
-                        <button
-                          type="button"
-                          onClick={() => handleLaunch()}
-                          disabled={!isIdle || launchStage !== 'idle' || homeAction !== ''}
-                          className="btn-primary home-hero__btn-launch"
-                        >
-                          {launchStage !== 'idle' ? <RotateCcw className="animate-spin" /> : <Play className="fill-current" />}
-                          {launchStage === 'checking' ? 'Checking…' : launchStage === 'starting' ? 'Starting…' : launchStage === 'waiting' ? 'Connecting…' : launchStage === 'ready' ? 'Ready' : `Launch ${gameInfo?.label || 'game'}`}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleStop}
-                          disabled={isIdle || homeAction !== ''}
-                          className="btn-secondary"
-                          title="Stop the RiftOps chat proxy"
-                        >
-                          {homeAction === 'stop' ? <RotateCcw className="animate-spin" /> : <Square />}
-                          {homeAction === 'stop' ? 'Stopping…' : 'Stop proxy'}
-                        </button>
-                      </div>
-                    </div>
-                    {launchStage !== 'idle' && (
-                      <div className="launch-progress" role="status" aria-live="polite">
-                        <div className="launch-progress__track">
-                          <span style={{ width: launchStage === 'checking' ? '25%' : launchStage === 'starting' ? '50%' : launchStage === 'waiting' ? '78%' : '100%' }} />
-                        </div>
-                        <span>
-                          {launchStage === 'checking' ? 'Preflight checks in progress' : launchStage === 'starting' ? 'Starting the selected Riot game' : launchStage === 'waiting' ? 'Waiting for the local client to become ready' : 'RiftOps is connected'}
-                        </span>
-                      </div>
-                    )}
-                  </section>
-                )
-              ) : (
-                <section className="home-hero home-hero--live" aria-labelledby="home-live-title">
-                  <div className="home-hero__content">
-                    <div className="home-hero__info">
-                      <div className="home-hero__header">
-                        <div className="home-hero__icon home-hero__icon--live">
-                          <Swords />
-                        </div>
-                        <div>
-                          <div className="home-hero__eyebrow flex items-center gap-2">
-                            <span className="live-pulse-dot" />
-                            <span>LEAGUE ACTIVE · {livePhaseLabel(leaguePhase).toUpperCase()}</span>
-                          </div>
-                          <h2 id="home-live-title" className="home-hero__title">
-                            {isActiveLivePhase(leaguePhase) ? livePhaseDescription(leaguePhase) : 'League of Legends is Connected'}
-                          </h2>
-                        </div>
-                      </div>
-                      <p className="home-hero__description">
-                        {isActiveLivePhase(leaguePhase)
-                          ? 'Live match session is in progress. View real-time match stats, lane matchups, and runes in Live Game.'
-                          : 'Ready for your next game. Pick your queue, configure automations, or invite friends.'}
-                      </p>
-                    </div>
-                    <div className="home-hero__actions">
-                      <button
-                        type="button"
-                        className="btn-primary home-hero__btn-action"
-                        onClick={() => setActiveTab(isLive ? 'live' : 'play')}
-                      >
-                        <span>{isLive ? 'Open Live Game' : 'Open Play & Queue'}</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </section>
-              )}
-
-              {/* ═══════════════════════════════════════════════
-                 2-COLUMN BALANCED COMMAND CENTER
-                 ═══════════════════════════════════════════════ */}
-              <div className="home-grid">
-                {/* Left Column (Main): Active Profile Quick Switcher & Quick Automations */}
-                <div className="home-col-main">
-                  <AccountSummary
-                    activeProfileId={snapshot.ActiveProfileID}
-                    onRefreshSnapshot={async () => {
-                      setSnapshot(await api.fetchSnapshot());
-                    }}
-                    onOpenAccountsHub={() => setActiveTab('accounts')}
-                    showToast={showToast}
-                  />
-
-                  {!remoteClient && (
-                    <QuickActions
-                      onOpenQoL={() => setActiveTab('qol')}
-                      showToast={(message, type = 'info') => showToast('League Client', message, type)}
-                    />
-                  )}
-                </div>
-
-                {/* Right Column (Side): Friends & Lobby Invites or Phone Companion */}
-                <div className="home-col-side">
-                  {remoteClient ? (
-                    <PhoneCompanionPanel showToast={(message, type = 'info') => showToast('League Client', message, type)} />
-                  ) : (
-                    <FriendsPanel id="dashboard-friends" connected={lcuConnected} />
-                  )}
-                </div>
-              </div>
             </div>
           )}
 

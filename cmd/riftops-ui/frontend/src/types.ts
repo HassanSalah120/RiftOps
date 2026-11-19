@@ -1,3 +1,24 @@
+export interface DraftEvent {
+  sessionId?: string;
+  timestamp: string;
+  phase?: string;
+  type: string;
+  actionId?: number;
+  actionType?: string;
+  championId?: number;
+  timerRemainingMs?: number;
+  durationMs?: number;
+  outcome: string;
+  reason?: string;
+}
+
+export interface DraftEventsSnapshot {
+  sessionKey?: string;
+  events: DraftEvent[];
+  archivedEvents?: DraftEvent[];
+  lastConfirmedAt?: string;
+}
+
 export interface Snapshot {
   Version: string;
   Platform: string;

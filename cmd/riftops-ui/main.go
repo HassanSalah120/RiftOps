@@ -854,12 +854,52 @@ func saveProfile(w http.ResponseWriter, r *http.Request) {
 		profile.StartupStatus = settings.StartupLast
 	}
 	switch strings.ToLower(strings.TrimSpace(string(profile.Status))) {
-	case "online":
+	case "online", "chat":
 		profile.Status = model.StatusOnline
-	case "offline":
-		profile.Status = model.StatusOffline
 	case "mobile":
 		profile.Status = model.StatusMobile
+	case "offline":
+		profile.Status = model.StatusOffline
+	}
+	if !isNew {
+		for _, existing := range backendEngine.LaunchProfiles() {
+			if existing.ID == profile.ID {
+				if profile.Status == "" || !profile.Status.Valid() {
+					profile.Status = existing.Status
+				}
+				if profile.DefaultGame == "" {
+					profile.DefaultGame = existing.DefaultGame
+				}
+				if profile.Patchline == "" {
+					profile.Patchline = existing.Patchline
+				}
+				if profile.LeagueLocale == "" {
+					profile.LeagueLocale = existing.LeagueLocale
+				}
+				if len(profile.RiotClientArgs) == 0 {
+					profile.RiotClientArgs = existing.RiotClientArgs
+				}
+				if len(profile.GameArgs) == 0 {
+					profile.GameArgs = existing.GameArgs
+				}
+				if len(profile.GameStatuses) == 0 {
+					profile.GameStatuses = existing.GameStatuses
+				}
+				break
+			}
+		}
+	}
+	if !profile.Status.Valid() {
+		profile.Status = model.StatusOffline
+	}
+	if profile.DefaultGame == "" {
+		profile.DefaultGame = model.GameLeague
+	}
+	if profile.Patchline == "" {
+		profile.Patchline = "live"
+	}
+	if profile.LeagueLocale == "" {
+		profile.LeagueLocale = settings.DefaultLeagueLocale
 	}
 	if err := backendEngine.SaveLaunchProfile(profile); err != nil {
 		httpError(w, "Failed to save profile", http.StatusInternalServerError)

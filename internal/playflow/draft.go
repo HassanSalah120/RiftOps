@@ -8,7 +8,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"log/slog"
 
 	"github.com/HassanSalah120/RiftOps/internal/qol"
 )
@@ -77,6 +79,41 @@ type draftAttempt struct {
 	lockSubmittedAt time.Time
 }
 
+type EventType string
+
+const (
+	EventActionDetected      EventType = "action-detected"
+	EventCandidateSelected   EventType = "candidate-selected"
+	EventHoverAttempt        EventType = "hover-attempt"
+	EventHoverConfirmed      EventType = "hover-confirmed"
+	EventLockAttempt         EventType = "lock-attempt"
+	EventLockConfirmed       EventType = "lock-confirmed"
+	EventFailedOrBlocked     EventType = "failed-or-blocked"
+	EventManualIntervention  EventType = "manual-intervention"
+	EventConfirmationTimeout EventType = "confirmation-timeout"
+)
+
+type DraftEvent struct {
+	SessionID        string    `json:"sessionId,omitempty"`
+	Timestamp        time.Time `json:"timestamp"`
+	Phase            string    `json:"phase,omitempty"`
+	Type             EventType `json:"type"`
+	ActionID         int       `json:"actionId,omitempty"`
+	ActionType       string    `json:"actionType,omitempty"`
+	ChampionID       int       `json:"championId,omitempty"`
+	TimerRemainingMS int64     `json:"timerRemainingMs,omitempty"`
+	DurationMS       int64     `json:"durationMs,omitempty"`
+	Outcome          string    `json:"outcome"`
+	Reason           string    `json:"reason,omitempty"`
+}
+
+type DraftEventsSnapshot struct {
+	SessionKey      string       `json:"sessionKey,omitempty"`
+	Events          []DraftEvent `json:"events"`
+	ArchivedEvents  []DraftEvent `json:"archivedEvents,omitempty"`
+	LastConfirmedAt *time.Time   `json:"lastConfirmedAt,omitempty"`
+}
+
 type draftRuntime struct {
 	sessionKey          string
 	attempt             draftAttempt
@@ -87,10 +124,34 @@ type draftRuntime struct {
 	aramRequested       int
 	aramManual          bool
 	aramSwapAttempted   map[int]bool
+	events              []DraftEvent
+	onEvent             func(DraftEvent)
+	mu                  sync.Mutex
+	logger              *slog.Logger
 }
 
 func (runtime *draftRuntime) reset() {
-	*runtime = draftRuntime{}
+	l := runtime.logger
+	h := runtime.onEvent
+	*runtime = draftRuntime{logger: l, onEvent: h}
+}
+
+func (runtime *draftRuntime) addEvent(event DraftEvent) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	if event.SessionID == "" {
+		event.SessionID = runtime.sessionKey
+	}
+	runtime.events = append(runtime.events, event)
+	if len(runtime.events) > 100 {
+		runtime.events = runtime.events[1:]
+	}
+	if runtime.onEvent != nil {
+		runtime.onEvent(event)
+	}
 }
 
 func (runtime *draftRuntime) ensureMaps() {
@@ -176,6 +237,14 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	contextKey := actionKey + ":" + string(kind) + ":" + contextRole
 	if runtime.attempt.key != contextKey {
 		runtime.attempt = draftAttempt{key: contextKey, actionID: *action.ID, actionType: actionType, firstSeen: now}
+		runtime.addEvent(DraftEvent{
+			Phase:      timerPhase,
+			Type:       EventActionDetected,
+			ActionID:   *action.ID,
+			ActionType: actionType,
+			Outcome:    "detected",
+			Reason:     fmt.Sprintf("%s turn detected", titleAction(actionType)),
+		})
 	}
 	runtime.attempt.actionID = *action.ID
 	runtime.attempt.actionType = actionType
@@ -186,6 +255,15 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	currentIntent := localPickIntent(session, *action.ID)
 	if currentIntent > 0 && currentIntent != runtime.attempt.ownHoverID {
 		runtime.manualActions[actionKey] = true
+		runtime.addEvent(DraftEvent{
+			Phase:      timerPhase,
+			Type:       EventManualIntervention,
+			ActionID:   *action.ID,
+			ActionType: actionType,
+			ChampionID: currentIntent,
+			Outcome:    "manual_override",
+			Reason:     "Manual champion choice detected. RiftOps is paused for this turn.",
+		})
 		return "Manual champion choice detected. RiftOps is paused for this turn.", 0, nil
 	}
 	if runtime.attempt.mutationBlocked {
@@ -215,6 +293,14 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	occupied := occupiedChampionIDs(session, *action.ID)
 	candidate, runePageID, reason := runtime.chooseCandidate(session, prefs, kind, actionType, actionKey, role, available, occupied)
 	if candidate == 0 {
+		runtime.addEvent(DraftEvent{
+			Phase:      timerPhase,
+			Type:       EventFailedOrBlocked,
+			ActionID:   *action.ID,
+			ActionType: actionType,
+			Outcome:    "blocked",
+			Reason:     reason,
+		})
 		return reason, 0, nil
 	}
 	if runtime.attempt.championID != candidate {
@@ -224,6 +310,15 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 		runtime.attempt.runeAttempted = false
 		runtime.attempt.runeWarning = false
 		runtime.attempt.lockSubmitted = false
+		runtime.addEvent(DraftEvent{
+			Phase:      timerPhase,
+			Type:       EventCandidateSelected,
+			ActionID:   *action.ID,
+			ActionType: actionType,
+			ChampionID: candidate,
+			Outcome:    "selected",
+			Reason:     fmt.Sprintf("%s candidate %d selected", titleAction(actionType), candidate),
+		})
 	}
 
 	if kind == QueueArena || kind == QueueARAM {
@@ -231,7 +326,7 @@ func (runtime *draftRuntime) step(ctx context.Context, client Client, prefs qol.
 	}
 
 	if !runtime.attempt.hoverConfirmed {
-		if err := runtime.hoverAndConfirm(ctx, client, actionKey, *action.ID, candidate); err != nil {
+		if err := runtime.hoverAndConfirm(ctx, client, actionKey, *action.ID, actionType, candidate, timerPhase); err != nil {
 			return err.Error(), 0, nil
 		}
 		return fmt.Sprintf("%s %d is hovered. RiftOps is waiting for the configured lock time.", titleAction(actionType), candidate), 0, nil
@@ -285,11 +380,29 @@ func (runtime *draftRuntime) observeSubmittedLock(session champSession, now time
 	action := actionByID(session, runtime.attempt.actionID)
 	if action == nil {
 		actionType := runtime.attempt.actionType
+		runtime.addEvent(DraftEvent{
+			Phase:      "BAN_PICK",
+			Type:       EventLockConfirmed,
+			ActionID:   runtime.attempt.actionID,
+			ActionType: actionType,
+			ChampionID: runtime.attempt.championID,
+			Outcome:    "confirmed",
+			Reason:     "Action completed and advanced in session.",
+		})
 		runtime.attempt = draftAttempt{}
 		return titleAction(actionType) + " completed. League advanced the draft."
 	}
 	if action.Completed {
 		actionType := runtime.attempt.actionType
+		runtime.addEvent(DraftEvent{
+			Phase:      "BAN_PICK",
+			Type:       EventLockConfirmed,
+			ActionID:   runtime.attempt.actionID,
+			ActionType: actionType,
+			ChampionID: runtime.attempt.championID,
+			Outcome:    "confirmed",
+			Reason:     "Action marked completed by League.",
+		})
 		runtime.attempt = draftAttempt{}
 		return titleAction(actionType) + " locked."
 	}
@@ -298,6 +411,15 @@ func (runtime *draftRuntime) observeSubmittedLock(session champSession, now time
 	}
 	runtime.attempt.lockSubmitted = false
 	runtime.attempt.mutationBlocked = true
+	runtime.addEvent(DraftEvent{
+		Phase:      "BAN_PICK",
+		Type:       EventConfirmationTimeout,
+		ActionID:   runtime.attempt.actionID,
+		ActionType: runtime.attempt.actionType,
+		ChampionID: runtime.attempt.championID,
+		Outcome:    "timeout",
+		Reason:     "League did not confirm the lock before the confirmation window ended.",
+	})
 	return "League did not confirm the lock before the confirmation window ended. RiftOps will not submit it twice."
 }
 
@@ -393,17 +515,15 @@ func localMember(session champSession) *champMember {
 	return nil
 }
 
-func localPickIntent(session champSession, actionID int) int {
-	if action := actionByID(session, actionID); action != nil && action.ChampionID != 0 {
+func localActionHover(session champSession, actionID int) int {
+	if action := actionByID(session, actionID); action != nil && action.ChampionID > 0 {
 		return action.ChampionID
 	}
-	if member := localMember(session); member != nil {
-		if member.ChampionPickIntent != 0 {
-			return member.ChampionPickIntent
-		}
-		return member.ChampionID
-	}
 	return 0
+}
+
+func localPickIntent(session champSession, actionID int) int {
+	return localActionHover(session, actionID)
 }
 
 func localAssignedRole(session champSession) string {
@@ -585,29 +705,59 @@ func (runtime *draftRuntime) chooseCandidate(session champSession, prefs qol.Pla
 	return 0, 0, "Neither configured pick is available. RiftOps left the turn open for a manual choice."
 }
 
-func (runtime *draftRuntime) hoverAndConfirm(ctx context.Context, client Client, actionKey string, actionID, championID int) error {
+func (runtime *draftRuntime) hoverAndConfirm(ctx context.Context, client Client, actionKey string, actionID int, actionType string, championID int, timerPhase string) error {
+	start := time.Now()
+	runtime.addEvent(DraftEvent{
+		Phase:      timerPhase,
+		Type:       EventHoverAttempt,
+		ActionID:   actionID,
+		ActionType: actionType,
+		ChampionID: championID,
+		Outcome:    "attempting",
+	})
+	if runtime.logger != nil {
+		runtime.logger.Debug("hover attempt", "actionID", actionID, "championID", championID)
+	}
 	actionCtx, cancel := context.WithTimeout(ctx, 1800*time.Millisecond)
 	err := client.UpdateChampSelectAction(actionCtx, actionID, championID, false)
 	cancel()
+	durationMS := time.Since(start).Milliseconds()
 	session, readErr := fetchChampSession(ctx, client)
 	if readErr == nil {
 		if current := actionByID(session, actionID); current != nil && current.ChampionID == championID {
 			runtime.attempt.ownHoverID = championID
 			runtime.attempt.hoverConfirmed = true
+			if runtime.logger != nil {
+				runtime.logger.Debug("hover confirmed", "actionID", actionID, "championID", championID)
+			}
+			runtime.addEvent(DraftEvent{
+				Phase:      timerPhase,
+				Type:       EventHoverConfirmed,
+				ActionID:   actionID,
+				ActionType: actionType,
+				ChampionID: championID,
+				DurationMS: durationMS,
+				Outcome:    "confirmed",
+			})
 			return nil
 		}
-		if localPickIntent(session, actionID) == championID {
-			runtime.attempt.ownHoverID = championID
-			runtime.attempt.hoverConfirmed = true
-			return nil
-		}
-	}
-	if err != nil {
-		runtime.attempt.mutationBlocked = true
-		return errors.New("League did not confirm the hover. RiftOps will not retry an ambiguous request.")
 	}
 	runtime.attempt.mutationBlocked = true
-	return errors.New("League accepted the hover request but did not report the selection. RiftOps will not submit it again.")
+	reason := "League accepted the hover request but did not report the selection. RiftOps will not submit it again."
+	if err != nil {
+		reason = "League did not confirm the hover. RiftOps will not retry an ambiguous request."
+	}
+	runtime.addEvent(DraftEvent{
+		Phase:      timerPhase,
+		Type:       EventFailedOrBlocked,
+		ActionID:   actionID,
+		ActionType: actionType,
+		ChampionID: championID,
+		DurationMS: durationMS,
+		Outcome:    "failed",
+		Reason:     reason,
+	})
+	return errors.New(reason)
 }
 
 func (runtime *draftRuntime) lockAfterRefetch(ctx context.Context, client Client, previous champSession, actionKey string, actionID int, actionType string, championID int, now time.Time) (string, error) {
@@ -625,26 +775,82 @@ func (runtime *draftRuntime) lockAfterRefetch(ctx context.Context, client Client
 	intent := localPickIntent(latest, actionID)
 	if intent != 0 && intent != championID {
 		runtime.manualActions[actionKey] = true
+		runtime.addEvent(DraftEvent{
+			Phase:      "BAN_PICK",
+			Type:       EventManualIntervention,
+			ActionID:   actionID,
+			ActionType: actionType,
+			ChampionID: intent,
+			Outcome:    "manual_override",
+			Reason:     "Manual champion choice detected before lock.",
+		})
 		return "Manual champion choice detected. RiftOps is paused for this turn.", nil
 	}
 	if current.ChampionID != 0 && current.ChampionID != championID {
 		runtime.manualActions[actionKey] = true
+		runtime.addEvent(DraftEvent{
+			Phase:      "BAN_PICK",
+			Type:       EventManualIntervention,
+			ActionID:   actionID,
+			ActionType: actionType,
+			ChampionID: current.ChampionID,
+			Outcome:    "manual_override",
+			Reason:     "Manual champion choice detected before lock.",
+		})
 		return "Manual champion choice detected. RiftOps is paused for this turn.", nil
 	}
+
+	remainingDur, _ := correctedTimerRemaining(latest, now)
+	remainingMS := remainingDur.Milliseconds()
+
 	runtime.attempt.lockSubmitted = true
 	runtime.attempt.lockSubmittedAt = now
+	start := time.Now()
+	runtime.addEvent(DraftEvent{
+		Phase:            "BAN_PICK",
+		Type:             EventLockAttempt,
+		ActionID:         actionID,
+		ActionType:       actionType,
+		ChampionID:       championID,
+		TimerRemainingMS: remainingMS,
+		Outcome:          "attempting",
+	})
+
 	actionCtx, cancel := context.WithTimeout(ctx, 1800*time.Millisecond)
 	err = client.UpdateChampSelectAction(actionCtx, actionID, championID, true)
 	cancel()
+	durationMS := time.Since(start).Milliseconds()
+
 	confirmed, readErr := fetchChampSession(ctx, client)
 	if readErr == nil {
 		if action := actionByID(confirmed, actionID); action == nil || action.Completed {
+			runtime.addEvent(DraftEvent{
+				Phase:            "BAN_PICK",
+				Type:             EventLockConfirmed,
+				ActionID:         actionID,
+				ActionType:       actionType,
+				ChampionID:       championID,
+				DurationMS:       durationMS,
+				TimerRemainingMS: remainingMS,
+				Outcome:          "confirmed",
+			})
 			return titleAction(actionType) + " locked.", nil
 		}
 	}
 	if err != nil {
 		runtime.attempt.lockSubmitted = false
 		runtime.attempt.mutationBlocked = true
+		runtime.addEvent(DraftEvent{
+			Phase:            "BAN_PICK",
+			Type:             EventFailedOrBlocked,
+			ActionID:         actionID,
+			ActionType:       actionType,
+			ChampionID:       championID,
+			DurationMS:       durationMS,
+			TimerRemainingMS: remainingMS,
+			Outcome:          "failed",
+			Reason:           err.Error(),
+		})
 		return "League did not confirm the lock. RiftOps will not retry an ambiguous request.", nil
 	}
 	return "Lock submitted. Waiting for League confirmation…", nil
@@ -655,7 +861,7 @@ func (runtime *draftRuntime) executeSpecialPick(ctx context.Context, client Clie
 		return "Waiting for League to activate the special-mode pick…", 0, nil
 	}
 	if !runtime.attempt.hoverConfirmed {
-		err := runtime.hoverAndConfirm(ctx, client, actionKey, *action.ID, championID)
+		err := runtime.hoverAndConfirm(ctx, client, actionKey, *action.ID, "pick", championID, "SPECIAL_PICK")
 		if err != nil {
 			if kind == QueueArena && championID == arenaBraveryChampionID {
 				runtime.braveryRejected[actionKey] = true
@@ -715,12 +921,9 @@ func lockReady(mode string, seconds int, session champSession, firstSeen, now ti
 			return false, 0, "League's draft timer is unavailable. RiftOps will not guess the lock time."
 		}
 		threshold := time.Duration(seconds) * time.Second
-		if remaining <= 0 {
-			return false, 0, "League's draft timer expired before a safe lock could be confirmed."
-		}
-		// The 350 ms window absorbs one 275 ms poll and normal local LCU latency.
-		// If a slow response crosses the threshold, any still-positive remaining
-		// time is safer than intentionally missing the action.
+		// The 350 ms window absorbs normal LCU polling jitter. If remaining time
+		// has reached the threshold (or passed it during a lag spike down to 0),
+		// attempting the lock is safer than refusing to lock and causing an AFK dodge.
 		if remaining <= threshold+350*time.Millisecond {
 			return true, 0, ""
 		}
@@ -735,15 +938,16 @@ func correctedTimerRemaining(session champSession, now time.Time) (time.Duration
 	if timer.IsInfinite {
 		return 24 * time.Hour, true
 	}
+	if timer.Phase == "" && timer.TotalTimeInPhase <= 0 && timer.InternalNowInEpochMS <= 0 &&
+		timer.AdjustedTimeLeftInPhase <= 0 && timer.TimeLeftInPhase <= 0 && timer.TimeLeft <= 0 {
+		return 0, false
+	}
 	remainingMS := timer.AdjustedTimeLeftInPhase
 	if remainingMS <= 0 {
 		remainingMS = timer.TimeLeftInPhase
 	}
 	if remainingMS <= 0 {
 		remainingMS = timer.TimeLeft
-	}
-	if remainingMS <= 0 {
-		return 0, false
 	}
 	if timer.TotalTimeInPhase > 0 && remainingMS > timer.TotalTimeInPhase {
 		remainingMS = timer.TotalTimeInPhase
@@ -754,7 +958,10 @@ func correctedTimerRemaining(session champSession, now time.Time) (time.Duration
 			remainingMS -= elapsed
 		}
 	}
-	return time.Duration(remainingMS * float64(time.Millisecond)), remainingMS > 0
+	if remainingMS < 0 {
+		remainingMS = 0
+	}
+	return time.Duration(remainingMS * float64(time.Millisecond)), true
 }
 
 func (runtime *draftRuntime) maybeSwapARAMBench(ctx context.Context, client Client, session champSession, priority []int) string {

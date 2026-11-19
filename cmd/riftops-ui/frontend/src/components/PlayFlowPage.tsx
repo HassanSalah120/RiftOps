@@ -29,6 +29,7 @@ import { shouldUseArenaBravery } from '../arenaBravery';
 import { arenaEventKey, arenaEventLabel } from '../arenaTelemetry';
 import type { BuildPlan } from '../buildPlanner';
 import { useDialogFocus } from './useDialogFocus';
+import { DraftExecutionMonitor } from './DraftExecutionMonitor';
 
 type ToastFn = (message: string, type?: 'info' | 'success' | 'error') => void;
 
@@ -107,7 +108,6 @@ type FlowPrefs = {
   autoPickOrderToLast: boolean;
   autoPickOrderTarget: PickOrderSwapTarget;
   instantLock: boolean;
-  autoRoleQuestLoadout: boolean;
   arenaBraveryPick: boolean;
   arenaPickPriority: ArenaPriorityItem[];
   aramChampionPriority: number[];
@@ -121,7 +121,7 @@ function loadPrefs(): FlowPrefs {
     banTimingMode: 'immediate', banTimingSeconds: 2,
     selectedQueue: 0,
     autoRoles: true, autoQueue: true, autoAccept: true, autoAcceptDelaySeconds: 0, autoAcceptRandomDelay: false, autoBan: true, autoPick: true, roleAwarePicks: false, rolePickPlans: {}, autoPickOrderToLast: false, autoPickOrderTarget: 'latest', instantLock: false,
-    autoRoleQuestLoadout: false, arenaBraveryPick: false,
+    arenaBraveryPick: false,
     arenaPickPriority: [{ type: 'firstAvailable' }], aramChampionPriority: [],
   };
   try {
@@ -1341,6 +1341,12 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
         <p className="play-flow__save-note">{autoMode ? 'Stopping Full Auto will not cancel League matchmaking or dodge champion select.' : prefsSaveState === 'saving' ? 'Saving choices…' : prefsSaveState === 'local' ? 'Saved locally · League sync unavailable' : 'Choices saved automatically.'}</p>
       </WorkspaceSection>
 
+      <DraftExecutionMonitor
+        champions={champions}
+        version={version}
+        className="mt-4"
+      />
+
       {isCustomSelection && customDirectory && <section className="glass-card p-4 rounded-2xl play-flow__custom-directory" aria-labelledby="custom-directory-title"><div className="flex items-start justify-between gap-3"><div><span className="text-[10px] tracking-[0.14em] text-primary font-black">CUSTOM SESSIONS</span><h2 id="custom-directory-title" className="text-sm font-bold text-white mt-1">Browse custom games</h2><p className="text-xs text-text-muted mt-1">Join only after reviewing the lobby and slot count.</p></div><button type="button" className="btn-secondary text-xs" onClick={() => void refreshLCUCustomGames().then(setCustomDirectory).catch((reason: any) => showToast(reason?.message || 'Could not refresh custom games.', 'error'))}><RefreshCw className="w-3.5" /> Refresh</button></div><div className="space-y-2 mt-3">{customDirectory.invitations.map((invitation) => <div key={invitation.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs"><span><strong className="text-white">Invitation from {invitation.senderName}</strong><small className="block text-text-muted">{invitation.restrictions.length ? invitation.restrictions.join(', ') : 'Ready to review'}</small></span><span className="flex gap-2"><button type="button" className="btn-secondary text-xs" disabled={!invitation.canAccept || acting !== ''} onClick={() => void (async () => { const preview = await previewExpandedReviewedOperation({ kind: 'lobby-invitation-accept', invitation: { invitationId: invitation.id } }); setCustomReview({ previewId: preview.id, kind: preview.kind, title: 'Accept lobby invitation', description: 'Accepting may replace your current lobby.', confirmation: preview.confirmation, targetCount: 1, targetLabels: [invitation.senderName] }); })().catch((reason: any) => showToast(reason?.message || 'Could not prepare the invitation.', 'error'))}>Accept</button><button type="button" className="btn-danger text-xs" disabled={acting !== ''} onClick={() => void actOnLCULobbyInvitation(invitation.id, 'decline').then(() => showToast('Invitation declined.', 'success')).catch((reason: any) => showToast(reason?.message || 'Could not decline invitation.', 'error'))}>Decline</button></span></div>)}{customDirectory.games.slice(0, 8).map((game) => <div key={game.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-black/20 p-3 text-xs"><span><strong className="text-white">{game.name || 'Custom game'}</strong><small className="block text-text-muted">{game.owner} · {game.players.filled}/{game.players.maximum} players · {game.passwordRequired ? 'Password required' : 'Open'}</small></span><span className="flex gap-2"><button type="button" className="btn-secondary text-xs" onClick={() => void reviewCustomJoin(game, true)}>Spectate</button><button type="button" className="btn-primary text-xs" onClick={() => void reviewCustomJoin(game, false)}>Join</button></span></div>)}{customDirectory.games.length === 0 && customDirectory.invitations.length === 0 && <p className="text-xs text-text-muted">No custom games or invitations are available.</p>}</div></section>}
 
       {configureOpen && !remoteClient && (
@@ -1429,7 +1435,7 @@ export default function PlayFlowPage({ showToast: publishToast, onOpenLive, remo
                         </label>
                       )}
                       {!isArenaSelection && !isARAMSelection && <SwitchRow label="Instant lock" description="Lock the selected champion without the hover delay." checked={prefs.instantLock} onChange={(checked) => update('instantLock', checked)} />}
-                      {!isArenaSelection && !isARAMSelection && <SwitchRow label="Role Quest loadout" description={!selectedRoleQuestSpells ? 'No recommended loadout is available for this lane.' : champSelectLive && detectedRole !== 'TOP' ? 'Waiting for League to assign the Top lane.' : 'Apply the recommended spells for your assigned role.'} checked={prefs.autoRoleQuestLoadout} onChange={(checked) => update('autoRoleQuestLoadout', checked)} disabled={!selectedRoleQuestSpells || (champSelectLive && detectedRole !== 'TOP')} />}
+    
                     </div>
                   </div>
                 </div>

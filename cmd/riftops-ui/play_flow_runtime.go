@@ -105,3 +105,20 @@ func playFlowRuntimeStopHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(playFlowRuntime.Stop())
 }
+
+func playFlowDraftEventsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if remoteRequest(r) {
+		httpError(w, "Draft diagnostics are restricted to the RiftOps desktop app", http.StatusForbidden)
+		return
+	}
+	if playFlowRuntime == nil {
+		initPlayFlowRuntime()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(playFlowRuntime.DraftEvents())
+}

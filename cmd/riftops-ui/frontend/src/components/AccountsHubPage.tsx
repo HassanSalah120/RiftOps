@@ -398,6 +398,7 @@ export default function AccountsHubPage({
     if (!modalForm.name.trim()) return;
     try {
       await saveLaunchProfile({
+        ...(editingProfile || {}),
         id: editingProfile?.id || '',
         name: modalForm.name.trim(),
         riotId: modalForm.riotId.trim(),
@@ -406,7 +407,8 @@ export default function AccountsHubPage({
         loginUsername: modalForm.loginUsername.trim(),
         enabled: true,
         status: editingProfile?.status || 'offline',
-        defaultGame: 'lol',
+        defaultGame: editingProfile?.defaultGame || 'lol',
+        patchline: editingProfile?.patchline || 'live',
       });
       setIsModalOpen(false);
       await loadProfiles();
